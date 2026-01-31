@@ -6,13 +6,14 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:main": "node build-electron.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
-    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
+    "electron:dev": "npm run build:main && cross-env ELECTRON_IS_DEV=true concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron . --disable-gpu --log-level=3\"",
     "electron:build": "npm run build && electron-builder",
     "rebuild": "tsc -p tsconfig.node.json"
   },
-  "main": "main/main.js",
+  "main": "dist-main/main.cjs",
   "dependencies": {
     "@tanstack/react-query": "^5.90.20",
     "axios": "^1.13.4",
@@ -28,7 +29,9 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
     "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
     "electron-builder": "^26.4.0",
+    "esbuild": "^0.27.2",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",

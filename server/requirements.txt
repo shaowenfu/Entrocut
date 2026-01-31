@@ -9,7 +9,7 @@ motor==3.5.1
 pymongo==4.10.1
 
 # Vector Search
-dashvector==1.0.0
+dashvector>=1.0.23
 
 # Authentication
 python-jose[cryptography]==3.3.0
@@ -20,6 +20,7 @@ python-multipart==0.0.12
 python-dotenv==1.0.0
 pydantic==2.9.0
 pydantic-settings==2.6.0
+email-validator==2.1.0
 
 # DashScope (通义千问)
 dashscope==1.20.0

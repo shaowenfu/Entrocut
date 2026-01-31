@@ -21,8 +21,9 @@
 团队应遵循以下分支管理规则：
 
 1. **main 分支**：生产环境代码，仅允许通过 Pull Request (PR) 合并，且必须通过自动化测试。
-2. **develop 分支**：开发主分支，所有功能分支在此汇总。
+2. **deve 分支**：开发主分支，所有功能分支在此汇总。
 3. **feature/xxx 分支**：个人开发分支，完成后提交 PR 指向 develop。
+4. **agent/xxx 分支**：各个编程agent分支。
 4. **Code Review**：合并 PR 前，必须至少有一名其他成员审核代码。
 
 ## 3. GitHub Actions 自动化流水线 (CI/CD)

@@ -10,16 +10,48 @@ import { contextBridge, ipcRenderer } from 'electron';
 // 类型定义
 // ============================================
 
+interface SceneSegment {
+  start_frame: number;
+  end_frame: number;
+  start_time: number;
+  end_time: number;
+}
+
+interface HealthResponse {
+  status: string;
+  service: string;
+  version: string;
+}
+
+interface DetectScenesResponse {
+  total_frames: number;
+  fps: number;
+  duration: number;
+  scenes: SceneSegment[];
+}
+
+interface ExtractedFrame {
+  scene_index: number;
+  frame_number: number;
+  timestamp: number;
+  file_path: string;
+}
+
+interface ExtractFramesResponse {
+  video_path: string;
+  extracted_frames: ExtractedFrame[];
+}
+
 interface SidecarAPI {
-  health(): Promise<{ status: string; service: string; version: string }>;
-  detectScenes(videoPath: string, threshold?: number): Promise<any>;
-  extractFrames(videoPath: string, scenes: any[], framesPerScene?: number): Promise<any>;
+  health(): Promise<HealthResponse>;
+  detectScenes(videoPath: string, threshold?: number): Promise<DetectScenesResponse>;
+  extractFrames(videoPath: string, scenes: SceneSegment[], framesPerScene?: number): Promise<ExtractFramesResponse>;
 }
 
 interface ElectronAPI {
   sidecar: SidecarAPI;
   platform: string;
-  versions: typeof process.versions;
+  versions: NodeJS.ProcessVersions;
 }
 
 // ============================================
@@ -30,7 +62,7 @@ const sidecarAPI: SidecarAPI = {
   health: () => ipcRenderer.invoke('sidecar:health'),
   detectScenes: (videoPath: string, threshold?: number) =>
     ipcRenderer.invoke('sidecar:detect-scenes', videoPath, threshold),
-  extractFrames: (videoPath: string, scenes: any[], framesPerScene?: number) =>
+  extractFrames: (videoPath: string, scenes: SceneSegment[], framesPerScene?: number) =>
     ipcRenderer.invoke('sidecar:extract-frames', videoPath, scenes, framesPerScene),
 };
 
@@ -44,7 +76,7 @@ const electronAPI: ElectronAPI = {
 contextBridge.exposeInMainWorld('electron', electronAPI);
 
 // ============================================
-// 类型声明 (供 TypeScript 使用)
+// 类型声明 (供渲染进程 TypeScript 使用)
 // ============================================
 
 declare global {
@@ -52,3 +84,5 @@ declare global {
     electron: ElectronAPI;
   }
 }
+
+export {};
