@@ -1,0 +1,13 @@
+# Entrocut Core - 本地算法 Sidecar 依赖
+
+# Web Framework
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+
+# Video Processing
+scenedetect[opencv]==0.6.2
+ffmpeg-python==0.2.0
+
+# Utilities
+python-dotenv==1.0.0
+pydantic==2.9.0

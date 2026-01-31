@@ -7,8 +7,12 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
+    "electron:build": "npm run build && electron-builder",
+    "rebuild": "tsc -p tsconfig.node.json"
   },
+  "main": "main/main.js",
   "dependencies": {
     "@tanstack/react-query": "^5.90.20",
     "axios": "^1.13.4",
