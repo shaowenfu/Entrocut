@@ -4,9 +4,9 @@
 
 | 角色 | 核心职责 | 交付物 |
 | --- | --- | --- |
-| **client-agent（客户端 Agent（代理））** | Electron（桌面框架）架构、React（前端框架）UI（界面）、SQLite（本地数据库）维护 | Electron（桌面应用）壳程序、本地数据库 Schema（结构规范）、UI（界面） |
-| **core-agent（算法 Agent（代理））** | Python（解释语言）视频切分、抽帧逻辑、云端 API（接口）调用封装 | Python Sidecar（本地算法服务）执行文件、本地算法服务接口 |
-| **server-agent（云端 Agent（代理））** | FastAPI（Python Web 框架）业务逻辑、MongoDB Atlas（云数据库）交互、DashVector（向量数据库）管理 | 业务 API（接口）文档、云端数据库模型、鉴权系统 |
+| **client工程师（客户端）** | Electron（桌面框架）架构、React（前端框架）UI（界面）、SQLite（本地数据库）维护 | Electron（桌面应用）壳程序、本地数据库 Schema（结构规范）、UI（界面） |
+| **core工程师（算法）** | Python（解释语言）视频切分、抽帧逻辑、云端 API（接口）调用封装 | Python Sidecar（本地算法服务）执行文件、本地算法服务接口 |
+| **server工程师（云端）** | FastAPI（Python Web 框架）业务逻辑、MongoDB Atlas（云数据库）交互、DashVector（向量数据库）管理 | 业务 API（接口）文档、云端数据库模型、鉴权系统 |
 | **Design Lead（总设计师）** | 架构决策、Round（轮次）协作节奏、Schema（结构规范）/System Prompt（系统提示词）定义与变更流程 | 协作文档、Schema（结构规范）、契约变更记录 |
 
 ## 2. Environment Setup（开发环境标准化）
@@ -44,8 +44,6 @@
 ```
 
 ## 4. Collaboration Protocol（协同协议）
-
-协作与轮次节奏以各自的 Agent Doc（代理文档）为准，入口为 `docs/*_agent.md`。
 
 ### A. 客户端与本地算法端协同（IPC（进程间通信） + HTTP（协议））
 

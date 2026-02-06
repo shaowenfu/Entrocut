@@ -66,8 +66,7 @@
         
         ```
         
-    - **作用**：此 JSON 数据用于后续的 Agent（代理）交互和复杂业务逻辑判断
-    - **协作约束**：Schema（结构规范）以 `docs/schemas/analysis.json` 为准，变更流程参考 `docs/coordination/INTERFACES.md` 与 `docs/coordination/CHANGE_LOG.md`
+    - **作用**：此 JSON 数据用于后续的agent交互和复杂业务逻辑判断
 
 ### 第四阶段：本地自动化剪辑 (Local Production)
 
