@@ -17,11 +17,21 @@
 - 基线：每轮开始从 `dev` 拉取
 - 合并：Squash Merge（压缩合并）到 `dev`
 
+## Mandatory Git Workflow（强制 Git 流程）
+任务开始前必须执行：
+1. 拉取远程最新代码：`git fetch origin`
+2. 在当前分支同步 `dev`：`git merge origin/dev`
+
+任务完成后必须执行：
+1. 提交到当前分支：`git add -A && git commit -m "round-XXXX: <summary>"`
+2. 推送到远程仓库：`git push origin client-agent`
+
 ## Pre-coding Sync（编码前同步动作）
 1. 阅读 `docs/coordination/STATUS.md`
 2. 领取当前 Round（轮次）：`docs/coordination/rounds/round-XXXX.md`
 3. 阅读 `docs/coordination/INTERFACES.md`
-4. 如需跨模块变更，先在 Round（轮次）文档声明并通知相关 Agent（代理）
+4. 执行 Mandatory Git Workflow（强制 Git 流程）中的“任务开始前步骤”
+5. 如需跨模块变更，先在 Round（轮次）文档声明并通知相关 Agent（代理）
 
 ## Cross-Module Process（跨模块协作流程与注意点）
 1. 在 Round（轮次）任务中明确跨模块影响范围
@@ -32,8 +42,9 @@
 ## Round Flow（轮次流程）
 1. 确认 Scope（范围）与 DoD（完成定义）
 2. 实现 → Unit Test（单元测试） → 记录结果
-3. Integration Window（集成窗口）统一合并到 `dev`
-4. 更新 Round（轮次）文档中的 Test Record（测试记录）
+3. 执行 Mandatory Git Workflow（强制 Git 流程）中的“任务完成后步骤”
+4. Integration Window（集成窗口）统一合并到 `dev`
+5. 更新 Round（轮次）文档中的 Test Record（测试记录）
 
 ## Round Template（轮次模板）
 ```markdown
@@ -77,6 +88,7 @@
 - Unit Test（单元测试）通过并记录
 - 若涉及契约变更，已更新 `CHANGE_LOG.md`
 - 关键决策已更新 `DECISION_LOG.md`
+- 已提交到当前分支并推送到远程仓库
 
 ## Handover（交付记录格式）
 - 变更内容：  
