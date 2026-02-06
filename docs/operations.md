@@ -22,7 +22,7 @@
 
 1. **`main` Branch（发布分支）**：生产环境代码，仅允许通过 Pull Request（合并请求）合并，且必须通过自动化测试。
 2. **`dev` Branch（集成分支）**：统一集成入口，所有 Agent Branch（代理分支）合并至此。
-3. **Agent Branch（代理分支）**：固定为 `client-agent`、`server-agent`、`core-agent`、`data-agent`。
+3. **Agent Branch（代理分支）**：固定为 `client-agent`、`server-agent`、`core-agent`、`design-lead-agent`。
 4. **Code Review（代码评审）**：合并 PR（合并请求）前，必须至少有一名其他成员审核代码。
 
 协作流程以 `docs/*_agent.md` 为准，Round（轮次）发布与对齐信息见 `docs/coordination/STATUS.md` 与 `docs/coordination/rounds/`。

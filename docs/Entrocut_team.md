@@ -7,7 +7,7 @@
 | **client-agent（客户端 Agent（代理））** | Electron（桌面框架）架构、React（前端框架）UI（界面）、SQLite（本地数据库）维护 | Electron（桌面应用）壳程序、本地数据库 Schema（结构规范）、UI（界面） |
 | **core-agent（算法 Agent（代理））** | Python（解释语言）视频切分、抽帧逻辑、云端 API（接口）调用封装 | Python Sidecar（本地算法服务）执行文件、本地算法服务接口 |
 | **server-agent（云端 Agent（代理））** | FastAPI（Python Web 框架）业务逻辑、MongoDB Atlas（云数据库）交互、DashVector（向量数据库）管理 | 业务 API（接口）文档、云端数据库模型、鉴权系统 |
-| **data-agent（数据 Agent（代理））** | UI/UX（交互设计）规范、Qwen-VL（多模态模型）提示词优化、JSON Schema（JSON 结构规范）定义 | 交互原型图、System Prompt（系统提示词）字典、Schema（结构规范） |
+| **Design Lead（总设计师）** | 架构决策、Round（轮次）协作节奏、Schema（结构规范）/System Prompt（系统提示词）定义与变更流程 | 协作文档、Schema（结构规范）、契约变更记录 |
 
 ## 2. Environment Setup（开发环境标准化）
 

@@ -25,10 +25,6 @@
   - DoD（完成定义）: TBD（待定）
   - Test Command（测试命令）: TBD（待定）
 
-- data-agent（数据 Agent（代理））
-  - Scope（范围）: TBD（待定）
-  - DoD（完成定义）: TBD（待定）
-  - Test Command（测试命令）: TBD（待定）
 
 ## Dependencies（依赖）
 - 无
