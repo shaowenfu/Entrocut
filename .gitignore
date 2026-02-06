@@ -53,3 +53,5 @@ htmlcov/
 # Temporary
 *.tmp
 *.temp
+docs/coordination
+scripts/sync_branch.sh
