@@ -312,17 +312,10 @@ class JobOrchestrator:
                 segments=segments,
                 rule=rule,
             )
+            clips = self._validate_edl_response(edl_response)
             edl_json_path = job_dir / "edl.json"
             await self._run_blocking(self._write_json_file, edl_json_path, edl_response)
             await self._update_artifacts(job_id, {"edl_json": str(edl_json_path)})
-            clips = edl_response.get("edl", {}).get("clips", [])
-            if not clips:
-                raise PipelineError(
-                    error_type="runtime_error",
-                    code="RUN_MOCK_DATA_GENERATION_FAILED",
-                    message="No clips returned from EDL",
-                    step="GENERATING_EDL",
-                )
 
             await self._update_phase(job_id, "RENDERING_OUTPUT", 95)
             output_video = str(job_dir / "final.mp4")
@@ -431,7 +424,7 @@ class JobOrchestrator:
         try:
             return await self._run_blocking(mock_client.analyze, job_id, video_path, frames)
         except MockClientError as exc:
-            if self.enable_mock_fallback and exc.error_type == "external_error":
+            if self.enable_mock_fallback and self._can_fallback_for_external_error(exc):
                 self._emit_event(
                     job_id,
                     "MOCK_ANALYZE_FALLBACK",
@@ -458,7 +451,7 @@ class JobOrchestrator:
         try:
             return await self._run_blocking(mock_client.generate_edl, job_id, video_path, segments, rule)
         except MockClientError as exc:
-            if self.enable_mock_fallback and exc.error_type == "external_error":
+            if self.enable_mock_fallback and self._can_fallback_for_external_error(exc):
                 self._emit_event(
                     job_id,
                     "MOCK_EDL_FALLBACK",
@@ -477,6 +470,87 @@ class JobOrchestrator:
                 step="GENERATING_EDL",
                 details=exc.details,
             ) from exc
+
+    @staticmethod
+    def _can_fallback_for_external_error(exc: MockClientError) -> bool:
+        if exc.error_type != "external_error":
+            return False
+        return exc.code in {"EXT_MOCK_UNAVAILABLE", "EXT_MOCK_TIMEOUT"}
+
+    @staticmethod
+    def _validate_edl_response(edl_response: Dict[str, Any]) -> List[Dict[str, Any]]:
+        edl = edl_response.get("edl")
+        if not isinstance(edl, dict):
+            raise PipelineError(
+                error_type="external_error",
+                code="EXT_MOCK_BAD_RESPONSE",
+                message="Invalid EDL response: missing edl object",
+                step="GENERATING_EDL",
+            )
+
+        clips = edl.get("clips")
+        if not isinstance(clips, list) or not clips:
+            raise PipelineError(
+                error_type="external_error",
+                code="EXT_MOCK_BAD_RESPONSE",
+                message="Invalid EDL response: clips must be a non-empty list",
+                step="GENERATING_EDL",
+            )
+
+        normalized: List[Dict[str, Any]] = []
+        for idx, clip in enumerate(clips):
+            if not isinstance(clip, dict):
+                raise PipelineError(
+                    error_type="external_error",
+                    code="EXT_MOCK_BAD_RESPONSE",
+                    message=f"Invalid EDL response: clip[{idx}] is not an object",
+                    step="GENERATING_EDL",
+                )
+
+            src = clip.get("src")
+            start = clip.get("start")
+            end = clip.get("end")
+            if not isinstance(src, str) or not src.strip():
+                raise PipelineError(
+                    error_type="external_error",
+                    code="EXT_MOCK_BAD_RESPONSE",
+                    message=f"Invalid EDL response: clip[{idx}].src is required",
+                    step="GENERATING_EDL",
+                )
+            src_path = Path(src).expanduser().resolve()
+            if not src_path.exists() or not src_path.is_file():
+                raise PipelineError(
+                    error_type="external_error",
+                    code="EXT_MOCK_BAD_RESPONSE",
+                    message=f"Invalid EDL response: clip[{idx}].src not found: {src}",
+                    step="GENERATING_EDL",
+                )
+            try:
+                start_value = float(start)
+                end_value = float(end)
+            except (TypeError, ValueError) as exc:
+                raise PipelineError(
+                    error_type="external_error",
+                    code="EXT_MOCK_BAD_RESPONSE",
+                    message=f"Invalid EDL response: clip[{idx}] start/end must be numbers",
+                    step="GENERATING_EDL",
+                ) from exc
+            if end_value <= start_value:
+                raise PipelineError(
+                    error_type="external_error",
+                    code="EXT_MOCK_BAD_RESPONSE",
+                    message=f"Invalid EDL response: clip[{idx}] end must be greater than start",
+                    step="GENERATING_EDL",
+                )
+            normalized.append(
+                {
+                    "src": str(src_path),
+                    "start": start_value,
+                    "end": end_value,
+                    **{k: v for k, v in clip.items() if k not in {"src", "start", "end"}},
+                }
+            )
+        return normalized
 
     async def _update_phase(self, job_id: str, running_phase: str, progress: int) -> None:
         async with self._lock:

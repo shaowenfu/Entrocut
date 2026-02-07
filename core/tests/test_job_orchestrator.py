@@ -101,6 +101,30 @@ class _ExternalFailMockClient(_FakeMockClient):
         return _FakeMockClient.analyze(self, job_id, video_path, frames)
 
 
+class _InvalidEdlPayloadMockClient(_FakeMockClient):
+    def generate_edl(self, job_id: str, video_path: str, segments, rule: str):
+        return {
+            "contract_version": self.contract_version,
+            "job_id": job_id,
+            "request_id": "req-invalid-edl",
+            "edl": {
+                "clips": [
+                    {"src": "/tmp/not-exists-for-round2.mp4", "start": 0.0, "end": 1.0},
+                ],
+                "output_name": "final.mp4",
+            },
+        }
+
+
+class _BadResponseErrorEdlMockClient(_FakeMockClient):
+    def generate_edl(self, job_id: str, video_path: str, segments, rule: str):
+        raise MockClientError(
+            error_type="external_error",
+            code="EXT_MOCK_BAD_RESPONSE",
+            message="mock bad contract",
+        )
+
+
 class _FakeRenderer:
     def render(self, clips, output_path: str, work_dir: str) -> str:
         Path(work_dir).mkdir(parents=True, exist_ok=True)
@@ -198,6 +222,40 @@ class JobOrchestratorTestCase(unittest.IsolatedAsyncioTestCase):
         started = await orchestrator.start_job(video_path=str(self.video_path))
         finished = await orchestrator.wait_for_completion(started["job_id"], timeout=5.0)
         self.assertEqual(finished["job_state"], "SUCCEEDED")
+
+    async def test_invalid_edl_payload_failed_in_generating_edl(self) -> None:
+        orchestrator = JobOrchestrator(
+            work_root=str(self.temp_dir / "jobs"),
+            use_background_threads=False,
+            detector_factory=lambda threshold, min_len: _FakeDetector(threshold, min_len),
+            extractor_factory=_FakeExtractor,
+            renderer=_FakeRenderer(),
+            mock_client_factory=lambda base_url, version: _InvalidEdlPayloadMockClient(base_url, version),
+            enable_mock_fallback=True,
+        )
+        started = await orchestrator.start_job(video_path=str(self.video_path))
+        finished = await orchestrator.wait_for_completion(started["job_id"], timeout=5.0)
+        self.assertEqual(finished["job_state"], "FAILED")
+        self.assertEqual(finished["running_phase"], "GENERATING_EDL")
+        self.assertEqual(finished["error"]["type"], "external_error")
+        self.assertEqual(finished["error"]["code"], "EXT_MOCK_BAD_RESPONSE")
+
+    async def test_bad_response_error_should_not_fallback(self) -> None:
+        orchestrator = JobOrchestrator(
+            work_root=str(self.temp_dir / "jobs"),
+            use_background_threads=False,
+            detector_factory=lambda threshold, min_len: _FakeDetector(threshold, min_len),
+            extractor_factory=_FakeExtractor,
+            renderer=_FakeRenderer(),
+            mock_client_factory=lambda base_url, version: _BadResponseErrorEdlMockClient(base_url, version),
+            enable_mock_fallback=True,
+        )
+        started = await orchestrator.start_job(video_path=str(self.video_path))
+        finished = await orchestrator.wait_for_completion(started["job_id"], timeout=5.0)
+        self.assertEqual(finished["job_state"], "FAILED")
+        self.assertEqual(finished["running_phase"], "GENERATING_EDL")
+        self.assertEqual(finished["error"]["type"], "external_error")
+        self.assertEqual(finished["error"]["code"], "EXT_MOCK_BAD_RESPONSE")
 
     async def test_cancel_running_job(self) -> None:
         orchestrator = JobOrchestrator(

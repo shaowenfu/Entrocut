@@ -13,13 +13,20 @@ function MainContent() {
   const { data: activeJob } = useJobStatus(activeJobId);
   const { data: history, refetch: refetchHistory } = useJobList();
 
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
   const handleStartJob = async (path: string) => {
+    setErrorMessage(null);
     try {
       const result = await window.electron.job.start(path);
       setActiveJobId(result.job_id);
       refetchHistory();
     } catch (err: any) {
-      alert(err.message);
+      if (err.message === 'JOB_ALREADY_RUNNING') {
+        setErrorMessage('A job is already in progress. Please wait or cancel it.');
+      } else {
+        setErrorMessage(`Failed to start job: ${err.message}`);
+      }
     }
   };
 
@@ -34,6 +41,11 @@ function MainContent() {
             onStart={handleStartJob} 
             disabled={activeJob?.state === 'RUNNING'} 
           />
+          {errorMessage && (
+            <div className="p-2 border border-error bg-error/10 text-error text-[10px] animate-pulse">
+              [SYSTEM_ALERT] {errorMessage}
+            </div>
+          )}
         </section>
 
         {activeJob && (

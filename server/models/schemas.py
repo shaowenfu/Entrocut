@@ -82,6 +82,7 @@ class EDLRequest(BaseModel):
     """Mock EDL 请求"""
     job_id: str = Field(..., description="任务编号（UUID）")
     contract_version: str = Field(..., description="契约版本")
+    video_path: Optional[str] = Field(None, description="视频文件绝对路径（用于生成真实 src）")
     segments: List[SegmentRef] = Field(..., description="片段列表")
     rule: str = Field(default="highlight_first", description="剪辑规则")
 

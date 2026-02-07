@@ -192,12 +192,17 @@ ipcMain.handle('file:select-video', async () => {
  */
 ipcMain.handle('job:start', async (_event, videoPath: string) => {
   try {
-    const response = await fetch(`${CORE_SERVER_URL}/start_job`, {
+    const response = await fetch(`${CORE_SERVER_URL}/jobs/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ video_path: videoPath }),
     });
     const result = (await response.json()) as any;
+    
+    if (response.status === 409) {
+      throw new Error('JOB_ALREADY_RUNNING');
+    }
+
     if (!response.ok) {
       throw new Error(result.error?.message || `HTTP ${response.status}`);
     }
@@ -213,7 +218,7 @@ ipcMain.handle('job:start', async (_event, videoPath: string) => {
     return result;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to start job: ${message}`);
+    throw new Error(message);
   }
 });
 
@@ -222,19 +227,27 @@ ipcMain.handle('job:start', async (_event, videoPath: string) => {
  */
 ipcMain.handle('job:get-status', async (_event, jobId: string) => {
   try {
-    const response = await fetch(`${CORE_SERVER_URL}/job_status/${jobId}`);
-    if (!response.ok) {
+    const response = await fetch(`${CORE_SERVER_URL}/jobs/${jobId}`);
+    if (response.status === 404) {
+      // 任务在 Core 中不存在，可能已重启，返回本地缓存
       return getJob(jobId);
     }
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    
     const status = (await response.json()) as any;
     
+    // 兼容 Core 返回字段：
+    // - 标准: job_state / running_phase / artifacts.output_video
+    // - 兼容: state / phase / output_video
     saveJob({
       id: status.job_id,
-      state: status.job_state,
-      phase: status.running_phase,
+      state: status.job_state ?? status.state,
+      phase: status.running_phase ?? status.phase,
       progress: status.progress,
       error: status.error,
-      output_video: status.artifacts?.output_video
+      output_video: status.artifacts?.output_video ?? status.output_video
     });
 
     return getJob(jobId);
@@ -255,7 +268,7 @@ ipcMain.handle('job:list-all', async () => {
  */
 ipcMain.handle('job:cancel', async (_event, jobId: string) => {
   try {
-    const response = await fetch(`${CORE_SERVER_URL}/cancel_job/${jobId}`, {
+    const response = await fetch(`${CORE_SERVER_URL}/jobs/${jobId}/cancel`, {
       method: 'POST'
     });
     return await response.json();

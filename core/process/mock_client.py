@@ -75,6 +75,7 @@ class MockServerClient:
         payload = {
             "job_id": job_id,
             "contract_version": self.contract_version,
+            "video_path": video_path,
             "segments": segments,
             "rule": rule,
         }

@@ -14,7 +14,8 @@ from models.schemas import (
     CONTRACT_VERSION
 )
 from utils.mock_data import generate_mock_analysis, generate_mock_edl
-from utils.logger import get_request_id, get_logger
+from utils.logger import get_logger
+from middleware.request_tracking import get_request_id
 from middleware.error_handler import (
     ValidationException,
     ErrorCode,
@@ -23,7 +24,7 @@ from middleware.error_handler import (
 
 
 router = APIRouter()
-logger = get_logger("entrocat.api.mock")
+logger = get_logger("entrocut.api.mock")
 
 
 # ============================================
@@ -95,6 +96,9 @@ async def mock_analyze(request: Request, body: AnalyzeRequest) -> AnalyzeRespons
         extra={"job_id": body.job_id, "event": "mock_analyze"}
     )
 
+    # 将 job_id 存入 request.state 供中间件使用
+    request.state.job_id = body.job_id
+
     # 验证契约版本
     validate_contract_version(body.contract_version)
 
@@ -143,10 +147,20 @@ async def mock_edl(request: Request, body: EDLRequest) -> EDLResponse:
     # 验证片段列表
     validate_segments(body.segments)
 
-    # 生成 Mock EDL 数据
-    # 需要从 segments 中获取视频路径，这里使用第一个片段的信息
-    video_path = f"/local/path/to/{body.job_id}.mp4"  # Mock 路径
+    # 获取 video_path：优先使用请求中的，否则使用默认路径
+    # 注意：Core 端应提供真实 video_path 以确保渲染成功
+    video_path = body.video_path
+    if not video_path:
+        logger.warning(
+            f"video_path not provided for job {body.job_id}, using fallback path",
+            extra={"job_id": body.job_id}
+        )
+        video_path = f"/local/path/to/{body.job_id}.mp4"
 
+    # 将 job_id 存入 request.state 供中间件使用
+    request.state.job_id = body.job_id
+
+    # 生成 Mock EDL 数据，使用真实 video_path 作为 clips[].src
     edl_data = generate_mock_edl(
         job_id=body.job_id,
         segments=body.segments,

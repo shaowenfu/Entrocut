@@ -67,6 +67,30 @@ class MockClientTestCase(unittest.TestCase):
         self.assertEqual(result["job_id"], "job-3")
 
     @mock.patch("process.mock_client.urllib_request.urlopen")
+    def test_remote_edl_payload_contains_video_path(self, mocked_urlopen) -> None:
+        mocked_urlopen.return_value = _DummyResponse(
+            200,
+            {
+                "contract_version": "0.1.0-mock",
+                "job_id": "job-edl-1",
+                "edl": {"clips": [{"src": "/tmp/video.mp4", "start": 0.0, "end": 1.0}], "output_name": "final.mp4"},
+            },
+        )
+        client = MockServerClient(base_url="http://127.0.0.1:8001", contract_version="0.1.0-mock")
+        result = client.generate_edl(
+            job_id="job-edl-1",
+            video_path="/tmp/video.mp4",
+            segments=[{"segment_id": "s1", "start_time": 0.0, "end_time": 1.0}],
+            rule="highlight_first",
+        )
+        self.assertEqual(result["job_id"], "job-edl-1")
+
+        request_obj = mocked_urlopen.call_args.args[0]
+        payload = json.loads(request_obj.data.decode("utf-8"))
+        self.assertEqual(payload["video_path"], "/tmp/video.mp4")
+        self.assertEqual(payload["job_id"], "job-edl-1")
+
+    @mock.patch("process.mock_client.urllib_request.urlopen")
     def test_remote_analyze_unavailable_raises_external_error(self, mocked_urlopen) -> None:
         mocked_urlopen.side_effect = urllib_error.URLError("Connection refused")
         client = MockServerClient(base_url="http://127.0.0.1:8001", contract_version="0.1.0-mock")

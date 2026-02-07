@@ -14,7 +14,7 @@ from starlette.types import ASGIApp
 from utils.logger import REQUEST_ID_CTX, JOB_ID_CTX, log_request, log_response, get_logger
 
 
-logger = get_logger("entrocat.middleware")
+logger = get_logger("entrocut.middleware")
 
 
 # ============================================
@@ -32,16 +32,16 @@ class RequestTrackingMiddleware(BaseHTTPMiddleware):
         # 生成或获取 request_id
         request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
 
-        # 获取 job_id（从请求体或查询参数）
-        job_id = None
-        if request.method in ("POST", "PUT", "PATCH"):
-            # 尝试从请求体获取（需要先读取 body）
-            # 由于 FastAPI 的流式处理，这里暂时从 URL 获取
-            pass
-        job_id = request.query_params.get("job_id") or job_id
+        # 获取 job_id：优先从查询参数获取
+        job_id = request.query_params.get("job_id")
 
         # 记录请求开始时间
         start_time = time.time()
+
+        # 设置上下文（请求前）
+        REQUEST_ID_CTX.set(request_id)
+        if job_id:
+            JOB_ID_CTX.set(job_id)
 
         # 记录请求日志
         log_request(
@@ -51,15 +51,16 @@ class RequestTrackingMiddleware(BaseHTTPMiddleware):
             request_id=request_id
         )
 
-        # 设置上下文
-        REQUEST_ID_CTX.set(request_id)
-        if job_id:
-            JOB_ID_CTX.set(job_id)
-
         # 处理请求
         try:
             response = await call_next(request)
             duration_ms = (time.time() - start_time) * 1000
+
+            # 路由处理后，尝试从 request.state 获取 job_id
+            # 路由处理函数可以将 job_id 存入 request.state.job_id
+            if hasattr(request.state, "job_id") and request.state.job_id:
+                job_id = request.state.job_id
+                JOB_ID_CTX.set(job_id)  # 更新上下文
 
             # 添加 request_id 到响应头
             response.headers["X-Request-ID"] = request_id

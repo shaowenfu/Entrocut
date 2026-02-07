@@ -11,7 +11,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from utils.logger import log_error, get_request_id, get_job_id
+from utils.logger import log_error
+from middleware.request_tracking import get_request_id
 
 
 # ============================================

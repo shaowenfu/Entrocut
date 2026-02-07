@@ -11,10 +11,11 @@ export function useJobStatus(jobId: string | null) {
     enabled: !!jobId,
     refetchInterval: (query) => {
       const job = query.state.data as Job | undefined;
+      // 停止轮询条件：任务不存在、成功或失败
       if (!job || job.state === 'SUCCEEDED' || job.state === 'FAILED') {
         return false;
       }
-      return 1000; // Poll every second while running
+      return 1000;
     },
   });
 }
@@ -25,5 +26,6 @@ export function useJobList() {
     queryFn: async () => {
       return await window.electron.job.listAll();
     },
+    refetchInterval: 5000, // 每5秒刷新一次历史列表
   });
 }
