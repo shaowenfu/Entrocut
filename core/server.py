@@ -6,16 +6,17 @@ Entrocut Core - 本地算法 Sidecar 服务
 """
 
 import os
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, File, UploadFile
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import uvicorn
 
 from detect.scene_detector import SceneDetector
 from process.frame_extractor import FrameExtractor
+from process.job_orchestrator import JobOrchestrator, PipelineError
 
 
 # ============================================
@@ -73,6 +74,63 @@ class ExtractFramesResponse(BaseModel):
     extracted_frames: List[ExtractedFrame]
 
 
+class StartJobRequest(BaseModel):
+    """启动任务请求"""
+
+    video_path: str
+    frames_per_scene: int = 3
+    threshold: float = 27.0
+    min_scene_length: int = 15
+    server_base_url: Optional[str] = None
+    contract_version: str = "0.1.0-mock"
+    rule: str = "highlight_first"
+
+
+class JobErrorModel(BaseModel):
+    """任务错误信息"""
+
+    type: str
+    code: str
+    message: str
+    step: str
+    details: Dict[str, Any] = Field(default_factory=dict)
+
+
+class JobArtifactsModel(BaseModel):
+    """任务产物路径"""
+
+    workdir: str = ""
+    scenes_json: str = ""
+    frames_dir: str = ""
+    analysis_json: str = ""
+    edl_json: str = ""
+    output_video: str = ""
+
+
+class JobStatusResponse(BaseModel):
+    """任务状态响应"""
+
+    job_id: str
+    video_path: str
+    job_state: str
+    running_phase: Optional[str] = None
+    progress: int
+    created_at: str
+    updated_at: str
+    finished_at: Optional[str] = None
+    error: Optional[JobErrorModel] = None
+    artifacts: JobArtifactsModel
+
+
+class CancelJobResponse(BaseModel):
+    """取消任务响应"""
+
+    job_id: str
+    job_state: str
+    running_phase: Optional[str] = None
+    progress: int
+
+
 # ============================================
 # Application Lifecycle
 # ============================================
@@ -93,6 +151,7 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan
 )
+orchestrator = JobOrchestrator()
 
 
 # ============================================
@@ -148,6 +207,70 @@ async def extract_frames(request: ExtractFramesRequest):
         raise HTTPException(status_code=404, detail=f"Video file not found: {request.video_path}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Frame extraction failed: {str(e)}")
+
+
+@app.post("/jobs/start", response_model=JobStatusResponse)
+async def start_job(request: StartJobRequest):
+    """
+    启动端到端处理任务
+    """
+    try:
+        status = await orchestrator.start_job(
+            video_path=request.video_path,
+            frames_per_scene=request.frames_per_scene,
+            threshold=request.threshold,
+            min_scene_length=request.min_scene_length,
+            server_base_url=request.server_base_url,
+            contract_version=request.contract_version,
+            rule=request.rule,
+        )
+        return status
+    except PipelineError as exc:
+        if exc.code == "RUN_JOB_ALREADY_ACTIVE":
+            raise HTTPException(status_code=409, detail={
+                "type": exc.error_type,
+                "code": exc.code,
+                "message": str(exc),
+                "step": exc.step,
+                "details": exc.details,
+            }) from exc
+        raise HTTPException(status_code=400, detail={
+            "type": exc.error_type,
+            "code": exc.code,
+            "message": str(exc),
+            "step": exc.step,
+            "details": exc.details,
+        }) from exc
+
+
+@app.get("/jobs/{job_id}", response_model=JobStatusResponse)
+async def get_job(job_id: str):
+    """查询任务状态"""
+    try:
+        return await orchestrator.get_job(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/jobs", response_model=List[JobStatusResponse])
+async def list_jobs():
+    """查询任务列表"""
+    return await orchestrator.list_jobs()
+
+
+@app.post("/jobs/{job_id}/cancel", response_model=CancelJobResponse)
+async def cancel_job(job_id: str):
+    """取消任务"""
+    try:
+        status = await orchestrator.cancel_job(job_id)
+        return {
+            "job_id": status["job_id"],
+            "job_state": status["job_state"],
+            "running_phase": status["running_phase"],
+            "progress": status["progress"],
+        }
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.exception_handler(Exception)

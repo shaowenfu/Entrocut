@@ -27,6 +27,7 @@ const BASE_CONFIG = {
     'child_process',
     'fs',
     'os',
+    'better-sqlite3',
   ],
 };
 

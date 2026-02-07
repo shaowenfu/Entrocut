@@ -9,9 +9,10 @@
  * 注意：此文件编译为 CommonJS 格式，供 Electron 主进程使用
  */
 
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import * as path from 'path';
-import { spawn} from 'child_process';
+import { spawn } from 'child_process';
+import { initDb, saveJob, getJob, getAllJobs } from './db';
 
 // 屏蔽 Chromium 内部不重要的日志 (如 DBus 错误)
 app.commandLine.appendSwitch('log-level', '3');
@@ -176,70 +177,105 @@ function stopSidecar(): void {
 // ============================================
 
 /**
+ * 选择视频文件
+ */
+ipcMain.handle('file:select-video', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile'],
+    filters: [{ name: 'Videos', extensions: ['mp4', 'avi', 'mov', 'mkv'] }]
+  });
+  return result.filePaths[0];
+});
+
+/**
+ * 启动任务
+ */
+ipcMain.handle('job:start', async (_event, videoPath: string) => {
+  try {
+    const response = await fetch(`${CORE_SERVER_URL}/start_job`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ video_path: videoPath }),
+    });
+    const result = (await response.json()) as any;
+    if (!response.ok) {
+      throw new Error(result.error?.message || `HTTP ${response.status}`);
+    }
+    
+    // 初始保存到 SQLite
+    saveJob({
+      id: result.job_id,
+      state: 'RUNNING',
+      video_path: videoPath,
+      phase: 'VALIDATING_INPUT'
+    });
+
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to start job: ${message}`);
+  }
+});
+
+/**
+ * 获取任务状态 (投影到 SQLite)
+ */
+ipcMain.handle('job:get-status', async (_event, jobId: string) => {
+  try {
+    const response = await fetch(`${CORE_SERVER_URL}/job_status/${jobId}`);
+    if (!response.ok) {
+      return getJob(jobId);
+    }
+    const status = (await response.json()) as any;
+    
+    saveJob({
+      id: status.job_id,
+      state: status.job_state,
+      phase: status.running_phase,
+      progress: status.progress,
+      error: status.error,
+      output_video: status.artifacts?.output_video
+    });
+
+    return getJob(jobId);
+  } catch (error) {
+    return getJob(jobId);
+  }
+});
+
+/**
+ * 获取所有历史任务
+ */
+ipcMain.handle('job:list-all', async () => {
+  return getAllJobs();
+});
+
+/**
+ * 取消任务
+ */
+ipcMain.handle('job:cancel', async (_event, jobId: string) => {
+  try {
+    const response = await fetch(`${CORE_SERVER_URL}/cancel_job/${jobId}`, {
+      method: 'POST'
+    });
+    return await response.json();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to cancel job: ${message}`);
+  }
+});
+
+/**
  * 健康检查
  */
 ipcMain.handle('sidecar:health', async () => {
   try {
     const response = await fetch(`${CORE_SERVER_URL}/health`);
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
     return await response.json();
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Sidecar health check failed: ${message}`);
+    throw new Error('Sidecar unavailable');
   }
 });
-
-/**
- * 场景检测
- */
-ipcMain.handle(
-  'sidecar:detect-scenes',
-  async (_event, videoPath: string, threshold?: number) => {
-    try {
-      const response = await fetch(`${CORE_SERVER_URL}/detect-scenes`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ video_path: videoPath, threshold }),
-      });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      return await response.json();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`Scene detection failed: ${message}`);
-    }
-  }
-);
-
-/**
- * 抽帧
- */
-ipcMain.handle(
-  'sidecar:extract-frames',
-  async (_event, videoPath: string, scenes: unknown[], framesPerScene?: number) => {
-    try {
-      const response = await fetch(`${CORE_SERVER_URL}/extract-frames`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          video_path: videoPath,
-          scenes,
-          frames_per_scene: framesPerScene ?? 3,
-        }),
-      });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      return await response.json();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`Frame extraction failed: ${message}`);
-    }
-  }
-);
 
 // ============================================
 // 应用生命周期
@@ -247,6 +283,7 @@ ipcMain.handle(
 
 // 当 Electron 完成初始化时创建窗口
 app.whenReady().then(() => {
+  initDb();
   createWindow();
   startSidecar();
 

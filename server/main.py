@@ -9,13 +9,23 @@ import os
 from typing import Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 import uvicorn
 
-from routes import auth, projects, search
+from routes import auth, projects, search, mock
 from models.database import connect_db, close_db
+from models.schemas import HealthResponse, SERVICE_NAME, SERVICE_VERSION
+from middleware.request_tracking import RequestTrackingMiddleware
+from middleware.error_handler import (
+    EntrocutException,
+    entrocut_exception_handler,
+    validation_exception_handler,
+    http_exception_handler,
+    generic_exception_handler
+)
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 
 # ============================================
@@ -30,13 +40,7 @@ API_PREFIX = f"/api/{API_VERSION}"
 # Request/Response Models
 # ============================================
 
-class HealthResponse(BaseModel):
-    """健康检查响应"""
-    status: str
-    service: str
-    version: str
-    mongodb_connected: bool
-    dashvector_connected: bool
+# HealthResponse 已移至 models/schemas.py
 
 
 # ============================================
@@ -57,8 +61,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Entrocut Server",
-    description="云端后端服务 - 用户管理与向量检索",
-    version="0.1.0",
+    description="云端后端服务 - Mock API (MVP 阶段)",
+    version=SERVICE_VERSION,
     lifespan=lifespan
 )
 
@@ -71,6 +75,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 请求追踪中间件
+app.add_middleware(RequestTrackingMiddleware)
+
+
+# ============================================
+# Exception Handlers
+# ============================================
+
+app.add_exception_handler(EntrocutException, entrocut_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+app.add_exception_handler(Exception, generic_exception_handler)
+
 
 # ============================================
 # Routers
@@ -79,6 +96,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix=f"{API_PREFIX}/auth", tags=["Authentication"])
 app.include_router(projects.router, prefix=f"{API_PREFIX}/projects", tags=["Projects"])
 app.include_router(search.router, prefix=f"{API_PREFIX}/search", tags=["Search"])
+app.include_router(mock.router, prefix=f"{API_PREFIX}/mock", tags=["Mock"])
 
 
 # ============================================
@@ -87,15 +105,15 @@ app.include_router(search.router, prefix=f"{API_PREFIX}/search", tags=["Search"]
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
-    """健康检查"""
-    from models.database import get_db_status
-    db_status = await get_db_status()
+    """
+    健康检查
+
+    Mock 阶段简化版，不检查数据库连接状态
+    """
     return HealthResponse(
-        status="ok",
-        service="entrocut-server",
-        version="0.1.0",
-        mongodb_connected=db_status.get("mongodb", False),
-        dashvector_connected=db_status.get("dashvector", False)
+        status="healthy",
+        service=SERVICE_NAME,
+        version=SERVICE_VERSION
     )
 
 
@@ -103,10 +121,14 @@ async def health_check():
 async def root():
     """根路径"""
     return {
-        "service": "Entrocut Server",
-        "version": "0.1.0",
+        "service": SERVICE_NAME,
+        "version": SERVICE_VERSION,
         "docs": "/docs",
-        "health": "/health"
+        "health": "/health",
+        "mock_api": {
+            "analyze": f"{API_PREFIX}/mock/analyze",
+            "edl": f"{API_PREFIX}/mock/edl"
+        }
     }
 
 
