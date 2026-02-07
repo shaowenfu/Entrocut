@@ -141,9 +141,11 @@ jobs:
 
       # ============================================
       # 清理 GitHub 端旧镜像（保留最新 2 个）
+      # 首次部署时 package 不存在会报错，但这是预期行为
       # ============================================
       - name: Delete old image versions from GHCR
         uses: actions/delete-package-versions@v5
+        continue-on-error: true  # 首次部署时 package 不存在，跳过此错误
         with:
           package-name: ${{ env.IMAGE_NAME }}
           package-type: container
