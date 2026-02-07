@@ -20,6 +20,9 @@ from process.frame_extractor import ExtractResult, FrameExtractor
 from process.mock_client import MockClientError, MockServerClient
 from process.video_renderer import RenderError, VideoRenderer
 
+_PRODUCTION_WORK_ROOT = "/tmp/entrocut_jobs"
+_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".m4v", ".webm"}
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -27,6 +30,42 @@ def _now_iso() -> str:
 
 def _json_log(payload: Dict[str, Any]) -> None:
     print(json.dumps(payload, ensure_ascii=False))
+
+
+def _detect_repo_root() -> Optional[Path]:
+    candidate = Path(__file__).resolve().parents[2]
+    required_dirs = ("client", "core", "server", "docs")
+    if all((candidate / dir_name).exists() for dir_name in required_dirs):
+        return candidate
+    return None
+
+
+def _resolve_default_work_root() -> Path:
+    runtime_env = os.getenv("CORE_RUNTIME_ENV", "").strip().lower()
+    if runtime_env in {"prod", "production"}:
+        return Path(_PRODUCTION_WORK_ROOT).resolve()
+
+    repo_root = _detect_repo_root()
+    is_dev_mode = runtime_env in {"dev", "development"} or os.getenv("CORE_DEV_MODE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    } or os.getenv("ELECTRON_IS_DEV", "").strip().lower() in {"1", "true", "yes", "on"}
+    # 在 monorepo 本地开发场景下，未显式声明 runtime_env 时默认写到项目目录，便于人工联调。
+    if not runtime_env and repo_root is not None:
+        is_dev_mode = True
+    if is_dev_mode and repo_root is not None:
+        return (repo_root / "entrocut_jobs").resolve()
+
+    return Path(_PRODUCTION_WORK_ROOT).resolve()
+
+
+def _normalize_video_path(video_path: str) -> str:
+    candidate = str(video_path or "").strip()
+    if not candidate:
+        return ""
+    return str(Path(candidate).expanduser().resolve())
 
 
 @dataclass
@@ -101,11 +140,12 @@ class JobOrchestrator:
         renderer: Optional[VideoRenderer] = None,
         mock_client_factory: Optional[Callable[[Optional[str], str], MockServerClient]] = None,
     ):
-        self.work_root = Path(
-            work_root
-            or os.getenv("CORE_WORK_ROOT")
-            or "/tmp/entrocut_jobs"
-        ).expanduser().resolve()
+        configured_work_root = work_root or os.getenv("CORE_WORK_ROOT")
+        self.work_root = (
+            Path(configured_work_root).expanduser().resolve()
+            if configured_work_root
+            else _resolve_default_work_root()
+        )
         self.default_server_base_url = default_server_base_url or os.getenv("MOCK_SERVER_BASE_URL")
         self.default_contract_version = default_contract_version
         self.default_rule = default_rule
@@ -144,7 +184,8 @@ class JobOrchestrator:
                 )
 
             job_id = str(uuid.uuid4())
-            job = JobStatus(job_id=job_id, video_path=str(Path(video_path).expanduser().resolve()))
+            normalized_video_path = _normalize_video_path(video_path)
+            job = JobStatus(job_id=job_id, video_path=normalized_video_path)
             job.job_state = "RUNNING"
             job.running_phase = "VALIDATING_INPUT"
             job.progress = 5
@@ -383,12 +424,29 @@ class JobOrchestrator:
         threshold: float,
         min_scene_length: int,
     ) -> None:
-        source = Path(video_path).expanduser().resolve()
+        candidate = str(video_path or "").strip()
+        if not candidate:
+            raise PipelineError(
+                error_type="validation_error",
+                code="VAL_EMPTY_INPUT",
+                message="video_path is required",
+                step="VALIDATING_INPUT",
+            )
+
+        source = Path(candidate).expanduser().resolve()
+        if source.suffix.lower() not in _VIDEO_EXTENSIONS:
+            raise PipelineError(
+                error_type="validation_error",
+                code="VAL_VIDEO_FORMAT_UNSUPPORTED",
+                message=f"Unsupported video format: {source.suffix or '<none>'}",
+                step="VALIDATING_INPUT",
+            )
+
         if not source.exists() or not source.is_file():
             raise PipelineError(
                 error_type="validation_error",
                 code="VAL_VIDEO_NOT_FOUND",
-                message=f"Video file not found: {video_path}",
+                message=f"Video file not found: {candidate}",
                 step="VALIDATING_INPUT",
             )
         if frames_per_scene <= 0:

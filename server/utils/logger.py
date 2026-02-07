@@ -7,7 +7,7 @@
 import logging
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 from contextvars import ContextVar
 
@@ -29,8 +29,9 @@ class JSONFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         """格式化日志记录为 JSON"""
+        timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         log_data = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": timestamp,
             "level": record.levelname,
             "service": "entrocut-mock-server",
             "logger": record.name,

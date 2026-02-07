@@ -71,6 +71,39 @@ def validate_segments(segments: list) -> None:
         )
 
 
+def validate_timestamp(timestamp: float) -> None:
+    """验证时间戳范围（>= 0）"""
+    if timestamp < 0:
+        raise ValidationException(
+            message=f"Invalid timestamp: {timestamp}. Must be >= 0.",
+            code=ErrorCode.VAL_INVALID_FIELD_FORMAT,
+            details={"field": "timestamp", "provided": timestamp}
+        )
+
+
+def validate_time_range(start_time: float, end_time: float) -> None:
+    """验证时间范围（start_time < end_time）"""
+    if start_time >= end_time:
+        raise ValidationException(
+            message=f"Invalid time range: start_time ({start_time}) must be less than end_time ({end_time}).",
+            code=ErrorCode.VAL_INVALID_FIELD_FORMAT,
+            details={"start_time": start_time, "end_time": end_time}
+        )
+
+
+def validate_video_path(video_path: str) -> None:
+    """验证视频路径非空"""
+    normalized = (video_path or "").strip()
+
+    # 兼容 shell 转义导致的字面值 '""' / "''"（应视为无效输入）
+    if not normalized or not normalized.strip("'\"").strip():
+        raise ValidationException(
+            message="video_path cannot be empty",
+            code=ErrorCode.VAL_MISSING_REQUIRED_FIELD,
+            details={"field": "video_path"}
+        )
+
+
 # ============================================
 # Endpoints
 # ============================================
@@ -99,11 +132,18 @@ async def mock_analyze(request: Request, body: AnalyzeRequest) -> AnalyzeRespons
     # 将 job_id 存入 request.state 供中间件使用
     request.state.job_id = body.job_id
 
+    # 验证 video_path 非空
+    validate_video_path(body.video_path)
+
     # 验证契约版本
     validate_contract_version(body.contract_version)
 
     # 验证帧列表
     validate_frames(body.frames)
+
+    # 验证每个帧的时间戳
+    for frame in body.frames:
+        validate_timestamp(frame.timestamp)
 
     # 生成 Mock 分析数据
     analysis_data = generate_mock_analysis(
@@ -146,6 +186,10 @@ async def mock_edl(request: Request, body: EDLRequest) -> EDLResponse:
 
     # 验证片段列表
     validate_segments(body.segments)
+
+    # 验证每个片段的时间范围
+    for segment in body.segments:
+        validate_time_range(segment.start_time, segment.end_time)
 
     # 获取 video_path：优先使用请求中的，否则使用默认路径
     # 注意：Core 端应提供真实 video_path 以确保渲染成功

@@ -6,7 +6,7 @@ Mock API 请求/响应 Schema
 
 from typing import List, Optional
 from pydantic import BaseModel, Field
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 # ============================================
@@ -119,7 +119,7 @@ class HealthResponse(BaseModel):
     status: str = Field(..., description="服务状态")
     service: str = Field(..., description="服务名称")
     version: str = Field(..., description="服务版本")
-    timestamp: datetime = Field(default_factory=datetime.utcnow, description="时间戳")
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="时间戳")
 
 
 # ============================================

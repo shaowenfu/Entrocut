@@ -13,9 +13,10 @@ export interface JobError {
   type: 'validation_error' | 'runtime_error' | 'external_error';
   code: string;
   message: string;
+  step?: string;
   details?: Record<string, unknown>;
   request_id?: string;
-  timestamp: string;
+  timestamp?: string;
 }
 
 export interface Job {

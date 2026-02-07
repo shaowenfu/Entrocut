@@ -5,6 +5,10 @@ import type { Job } from '../src/types/job';
 
 let db: Database.Database;
 
+type DbJobRow = Omit<Job, 'error'> & {
+  error_json: string | null;
+};
+
 export function initDb(customPath?: string) {
   const dbPath = customPath || path.join(app.getPath('userData'), 'entrocut.db');
   db = new Database(dbPath);
@@ -32,7 +36,7 @@ export function saveJob(job: Partial<Job> & { id: string }) {
 
   if (existing) {
     const sets: string[] = [];
-    const values: any[] = [];
+    const values: unknown[] = [];
 
     if (job.state) { sets.push('state = ?'); values.push(job.state); }
     if (job.phase) { sets.push('phase = ?'); values.push(job.phase); }
@@ -61,7 +65,7 @@ export function saveJob(job: Partial<Job> & { id: string }) {
 }
 
 export function getJob(id: string): Job | undefined {
-  const row = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as any;
+  const row = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as DbJobRow | undefined;
   if (!row) return undefined;
 
   return {
@@ -71,7 +75,7 @@ export function getJob(id: string): Job | undefined {
 }
 
 export function getAllJobs(): Job[] {
-  const rows = db.prepare('SELECT * FROM jobs ORDER BY created_at DESC').all() as any[];
+  const rows = db.prepare('SELECT * FROM jobs ORDER BY created_at DESC').all() as DbJobRow[];
   return rows.map(row => ({
     ...row,
     error: row.error_json ? JSON.parse(row.error_json) : undefined

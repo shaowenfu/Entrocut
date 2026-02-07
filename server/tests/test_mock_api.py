@@ -5,16 +5,21 @@ Mock API 测试
 """
 
 import pytest
-from fastapi.testclient import TestClient
-from main import app
+import httpx
+import main as server_main
 from models.schemas import CONTRACT_VERSION
 
+pytestmark = pytest.mark.anyio
 
 # ============================================
 # Fixtures
 # ============================================
 
-client = TestClient(app)
+@pytest.fixture
+async def client():
+    transport = httpx.ASGITransport(app=server_main.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as test_client:
+        yield test_client
 
 
 def get_valid_analyze_request():
@@ -63,9 +68,9 @@ def get_valid_edl_request():
 # Health Check Tests
 # ============================================
 
-def test_health_check():
+async def test_health_check(client):
     """测试健康检查"""
-    response = client.get("/health")
+    response = await client.get("/health")
     assert response.status_code == 200
 
     data = response.json()
@@ -79,10 +84,10 @@ def test_health_check():
 # Mock Analyze API Tests
 # ============================================
 
-def test_mock_analyze_success():
+async def test_mock_analyze_success(client):
     """测试 Mock 分析接口 - 成功场景"""
     request_data = get_valid_analyze_request()
-    response = client.post("/api/v1/mock/analyze", json=request_data)
+    response = await client.post("/api/v1/mock/analyze", json=request_data)
 
     assert response.status_code == 200
 
@@ -94,12 +99,12 @@ def test_mock_analyze_success():
     assert "segments" in data["analysis"]
 
 
-def test_mock_analyze_missing_job_id():
+async def test_mock_analyze_missing_job_id(client):
     """测试 Mock 分析接口 - 缺少 job_id"""
     request_data = get_valid_analyze_request()
     del request_data["job_id"]
 
-    response = client.post("/api/v1/mock/analyze", json=request_data)
+    response = await client.post("/api/v1/mock/analyze", json=request_data)
 
     assert response.status_code == 400
 
@@ -108,7 +113,7 @@ def test_mock_analyze_missing_job_id():
     assert data["error"]["type"] == "validation_error"
 
 
-def test_mock_analyze_empty_frames():
+async def test_mock_analyze_empty_frames(client):
     """测试 Mock 分析接口 - 空帧列表"""
     request_data = {
         "job_id": "test-job-001",
@@ -117,7 +122,7 @@ def test_mock_analyze_empty_frames():
         "frames": []
     }
 
-    response = client.post("/api/v1/mock/analyze", json=request_data)
+    response = await client.post("/api/v1/mock/analyze", json=request_data)
 
     assert response.status_code == 400
 
@@ -126,12 +131,12 @@ def test_mock_analyze_empty_frames():
     assert data["error"]["code"] == "VAL_EMPTY_INPUT"
 
 
-def test_mock_analyze_invalid_contract_version():
+async def test_mock_analyze_invalid_contract_version(client):
     """测试 Mock 分析接口 - 不支持的契约版本"""
     request_data = get_valid_analyze_request()
     request_data["contract_version"] = "9.9.9-invalid"
 
-    response = client.post("/api/v1/mock/analyze", json=request_data)
+    response = await client.post("/api/v1/mock/analyze", json=request_data)
 
     assert response.status_code == 400
 
@@ -144,10 +149,10 @@ def test_mock_analyze_invalid_contract_version():
 # Mock EDL API Tests
 # ============================================
 
-def test_mock_edl_success():
+async def test_mock_edl_success(client):
     """测试 Mock EDL 接口 - 成功场景"""
     request_data = get_valid_edl_request()
-    response = client.post("/api/v1/mock/edl", json=request_data)
+    response = await client.post("/api/v1/mock/edl", json=request_data)
 
     assert response.status_code == 200
 
@@ -160,7 +165,7 @@ def test_mock_edl_success():
     assert data["edl"]["output_name"] == "final.mp4"
 
 
-def test_mock_edl_empty_segments():
+async def test_mock_edl_empty_segments(client):
     """测试 Mock EDL 接口 - 空片段列表"""
     request_data = {
         "job_id": "test-job-001",
@@ -169,7 +174,7 @@ def test_mock_edl_empty_segments():
         "rule": "highlight_first"
     }
 
-    response = client.post("/api/v1/mock/edl", json=request_data)
+    response = await client.post("/api/v1/mock/edl", json=request_data)
 
     assert response.status_code == 400
 
@@ -178,12 +183,12 @@ def test_mock_edl_empty_segments():
     assert data["error"]["code"] == "VAL_EMPTY_INPUT"
 
 
-def test_mock_edl_different_rule():
+async def test_mock_edl_different_rule(client):
     """测试 Mock EDL 接口 - 不同规则"""
     request_data = get_valid_edl_request()
     request_data["rule"] = "all_segments"
 
-    response = client.post("/api/v1/mock/edl", json=request_data)
+    response = await client.post("/api/v1/mock/edl", json=request_data)
 
     assert response.status_code == 200
 
@@ -195,10 +200,10 @@ def test_mock_edl_different_rule():
 # Request ID Tracking Tests
 # ============================================
 
-def test_request_id_tracked():
+async def test_request_id_tracked(client):
     """测试请求 ID 追踪"""
     request_data = get_valid_analyze_request()
-    response = client.post(
+    response = await client.post(
         "/api/v1/mock/analyze",
         json=request_data,
         headers={"X-Request-ID": "test-request-123"}
@@ -209,10 +214,10 @@ def test_request_id_tracked():
     assert response.headers["X-Request-ID"] == "test-request-123"
 
 
-def test_request_id_generated():
+async def test_request_id_generated(client):
     """测试自动生成请求 ID"""
     request_data = get_valid_analyze_request()
-    response = client.post("/api/v1/mock/analyze", json=request_data)
+    response = await client.post("/api/v1/mock/analyze", json=request_data)
 
     assert response.status_code == 200
     assert "X-Request-ID" in response.headers
@@ -225,9 +230,9 @@ def test_request_id_generated():
 # Root Endpoint Tests
 # ============================================
 
-def test_root_endpoint():
+async def test_root_endpoint(client):
     """测试根路径"""
-    response = client.get("/")
+    response = await client.get("/")
 
     assert response.status_code == 200
 
@@ -243,7 +248,7 @@ def test_root_endpoint():
 # Round 2 新增测试
 # ============================================
 
-def test_mock_edl_with_video_path():
+async def test_mock_edl_with_video_path(client):
     """测试 Mock EDL 接口 - 提供真实 video_path"""
     real_video_path = "/home/sherwen/MyProjects/Entrocut/屏幕录制.mp4"
     request_data = {
@@ -265,7 +270,7 @@ def test_mock_edl_with_video_path():
         "rule": "highlight_first"
     }
 
-    response = client.post("/api/v1/mock/edl", json=request_data)
+    response = await client.post("/api/v1/mock/edl", json=request_data)
 
     assert response.status_code == 200
 
@@ -274,7 +279,7 @@ def test_mock_edl_with_video_path():
     assert data["edl"]["clips"][1]["src"] == real_video_path
 
 
-def test_mock_edl_without_video_path_uses_fallback():
+async def test_mock_edl_without_video_path_uses_fallback(client):
     """测试 Mock EDL 接口 - 未提供 video_path 使用回退路径"""
     request_data = {
         "job_id": "test-job-fallback",
@@ -289,7 +294,7 @@ def test_mock_edl_without_video_path_uses_fallback():
         "rule": "highlight_first"
     }
 
-    response = client.post("/api/v1/mock/edl", json=request_data)
+    response = await client.post("/api/v1/mock/edl", json=request_data)
 
     assert response.status_code == 200
 
@@ -299,7 +304,7 @@ def test_mock_edl_without_video_path_uses_fallback():
     assert data["edl"]["clips"][0]["src"] == expected_fallback
 
 
-def test_mock_edl_clips_time_validation():
+async def test_mock_edl_clips_time_validation(client):
     """测试 Mock EDL 接口 - clips 时间范围正确性"""
     request_data = {
         "job_id": "test-job-time",
@@ -320,7 +325,7 @@ def test_mock_edl_clips_time_validation():
         "rule": "highlight_first"
     }
 
-    response = client.post("/api/v1/mock/edl", json=request_data)
+    response = await client.post("/api/v1/mock/edl", json=request_data)
 
     assert response.status_code == 200
 
@@ -336,10 +341,10 @@ def test_mock_edl_clips_time_validation():
         assert clip["src"] == "/test/path/video.mp4"
 
 
-def test_request_id_in_response_body():
+async def test_request_id_in_response_body(client):
     """测试 request_id 在响应体中正确返回"""
     request_data = get_valid_edl_request()
-    response = client.post(
+    response = await client.post(
         "/api/v1/mock/edl",
         json=request_data,
         headers={"X-Request-ID": "round2-test-123"}
@@ -354,27 +359,27 @@ def test_request_id_in_response_body():
     assert response.headers["X-Request-ID"] == "round2-test-123"
 
 
-def test_job_id_tracking_in_analyze():
+async def test_job_id_tracking_in_analyze(client):
     """测试 job_id 在 analyze 接口中的追踪"""
     request_data = get_valid_analyze_request()
-    response = client.post("/api/v1/mock/analyze", json=request_data)
+    response = await client.post("/api/v1/mock/analyze", json=request_data)
 
     assert response.status_code == 200
     data = response.json()
     assert data["job_id"] == "test-job-001"
 
 
-def test_job_id_tracking_in_edl():
+async def test_job_id_tracking_in_edl(client):
     """测试 job_id 在 edl 接口中的追踪"""
     request_data = get_valid_edl_request()
-    response = client.post("/api/v1/mock/edl", json=request_data)
+    response = await client.post("/api/v1/mock/edl", json=request_data)
 
     assert response.status_code == 200
     data = response.json()
     assert data["job_id"] == "test-job-001"
 
 
-def test_mock_edl_round2_sample_data():
+async def test_mock_edl_round2_sample_data(client):
     """
     测试 Mock EDL 接口 - Round 2 演示用样例数据
 
@@ -408,7 +413,7 @@ def test_mock_edl_round2_sample_data():
         "rule": "highlight_first"
     }
 
-    response = client.post("/api/v1/mock/edl", json=request_data)
+    response = await client.post("/api/v1/mock/edl", json=request_data)
 
     assert response.status_code == 200
 
@@ -423,3 +428,150 @@ def test_mock_edl_round2_sample_data():
     # 验证所有 clips 使用真实 video_path
     for clip in clips:
         assert clip["src"] == sample_video_path
+
+
+# ============================================
+# Round 3 新增边界测试
+# ============================================
+
+async def test_mock_analyze_negative_timestamp(client):
+    """测试 Mock 分析接口 - 负数 timestamp"""
+    request_data = get_valid_analyze_request()
+    request_data["frames"][0]["timestamp"] = -1.0
+
+    response = await client.post("/api/v1/mock/analyze", json=request_data)
+
+    assert response.status_code == 400
+
+    data = response.json()
+    assert "error" in data
+    assert data["error"]["code"] == "VAL_INVALID_FIELD_FORMAT"
+    assert data["error"]["details"]["field"] == "timestamp"
+    assert data["error"]["details"]["provided"] == -1.0
+
+
+async def test_mock_edl_invalid_time_range(client):
+    """测试 Mock EDL 接口 - start_time >= end_time"""
+    request_data = get_valid_edl_request()
+    request_data["segments"][0]["start_time"] = 10.0
+    request_data["segments"][0]["end_time"] = 5.0  # end < start
+
+    response = await client.post("/api/v1/mock/edl", json=request_data)
+
+    assert response.status_code == 400
+
+    data = response.json()
+    assert "error" in data
+    assert data["error"]["code"] == "VAL_INVALID_FIELD_FORMAT"
+    assert "start_time" in data["error"]["details"]
+    assert "end_time" in data["error"]["details"]
+
+
+async def test_mock_edl_equal_time_range(client):
+    """测试 Mock EDL 接口 - start_time == end_time"""
+    request_data = get_valid_edl_request()
+    request_data["segments"][0]["start_time"] = 5.0
+    request_data["segments"][0]["end_time"] = 5.0  # equal
+
+    response = await client.post("/api/v1/mock/edl", json=request_data)
+
+    assert response.status_code == 400
+
+    data = response.json()
+    assert "error" in data
+    assert data["error"]["code"] == "VAL_INVALID_FIELD_FORMAT"
+
+
+async def test_mock_analyze_empty_video_path(client):
+    """测试 Mock 分析接口 - 空 video_path"""
+    request_data = get_valid_analyze_request()
+    request_data["video_path"] = ""
+
+    response = await client.post("/api/v1/mock/analyze", json=request_data)
+
+    assert response.status_code == 400
+
+    data = response.json()
+    assert "error" in data
+    assert data["error"]["code"] == "VAL_MISSING_REQUIRED_FIELD"
+    assert data["error"]["details"]["field"] == "video_path"
+
+
+async def test_mock_analyze_whitespace_only_video_path(client):
+    """测试 Mock 分析接口 - video_path 只有空格"""
+    request_data = get_valid_analyze_request()
+    request_data["video_path"] = "   "
+
+    response = await client.post("/api/v1/mock/analyze", json=request_data)
+
+    assert response.status_code == 400
+
+    data = response.json()
+    assert "error" in data
+    assert data["error"]["code"] == "VAL_MISSING_REQUIRED_FIELD"
+
+
+async def test_mock_analyze_quoted_empty_video_path(client):
+    """测试 Mock 分析接口 - video_path 为字面值双引号"""
+    request_data = get_valid_analyze_request()
+    request_data["video_path"] = "\"\""
+
+    response = await client.post("/api/v1/mock/analyze", json=request_data)
+
+    assert response.status_code == 400
+
+    data = response.json()
+    assert "error" in data
+    assert data["error"]["code"] == "VAL_MISSING_REQUIRED_FIELD"
+
+
+async def test_mock_edl_multiple_invalid_time_ranges(client):
+    """测试 Mock EDL 接口 - 多个片段时间范围无效"""
+    request_data = {
+        "job_id": "test-job-003",
+        "contract_version": CONTRACT_VERSION,
+        "segments": [
+            {
+                "segment_id": "seg_001",
+                "start_time": 10.0,
+                "end_time": 5.0
+            },
+            {
+                "segment_id": "seg_002",
+                "start_time": 20.0,
+                "end_time": 15.0
+            }
+        ],
+        "rule": "highlight_first"
+    }
+
+    response = await client.post("/api/v1/mock/edl", json=request_data)
+
+    assert response.status_code == 400
+
+    data = response.json()
+    assert "error" in data
+    assert data["error"]["code"] == "VAL_INVALID_FIELD_FORMAT"
+
+
+async def test_job_id_format_accepts_any_string(client):
+    """测试 job_id 接受任意字符串格式（Mock 阶段不强制 UUID）"""
+    # Mock 阶段允许任意格式的 job_id，便于测试
+    test_cases = [
+        "test-job-001",
+        "simple",
+        "with_underscore",
+        "with-dash",
+        "CamelCase"
+    ]
+
+    for job_id in test_cases:
+        request_data = get_valid_edl_request()
+        request_data["job_id"] = job_id
+
+        response = await client.post("/api/v1/mock/edl", json=request_data)
+
+        assert response.status_code == 200, f"Failed for job_id: {job_id}"
+
+        data = response.json()
+        assert data["job_id"] == job_id

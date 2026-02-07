@@ -4,7 +4,7 @@
 实现 validation_error/runtime_error/external_error 三类错误的统一处理
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict
 from fastapi import Request, status
 from fastapi.exceptions import RequestValidationError
@@ -129,6 +129,7 @@ def build_error_response(
     details: Dict[str, Any] = None
 ) -> Dict[str, Any]:
     """构建错误响应"""
+    timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     return {
         "error": {
             "type": error_type,
@@ -136,7 +137,7 @@ def build_error_response(
             "message": message,
             "details": details or {},
             "request_id": get_request_id(),
-            "timestamp": datetime.utcnow().isoformat() + "Z"
+            "timestamp": timestamp
         }
     }
 

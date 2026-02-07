@@ -8,10 +8,10 @@ interface ElectronAPI {
     start(videoPath: string): Promise<{ job_id: string }>;
     getStatus(jobId: string): Promise<Job | undefined>;
     listAll(): Promise<Job[]>;
-    cancel(jobId: string): Promise<any>;
+    cancel(jobId: string): Promise<unknown>;
   };
   sidecar: {
-    health(): Promise<any>;
+    health(): Promise<unknown>;
   };
   platform: string;
 }

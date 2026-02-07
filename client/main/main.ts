@@ -9,10 +9,12 @@
  * 注意：此文件编译为 CommonJS 格式，供 Electron 主进程使用
  */
 
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, protocol, net } from 'electron';
 import * as path from 'path';
 import { spawn } from 'child_process';
+import { pathToFileURL } from 'url';
 import { initDb, saveJob, getJob, getAllJobs } from './db';
+import type { Job } from '../src/types/job';
 
 // 屏蔽 Chromium 内部不重要的日志 (如 DBus 错误)
 app.commandLine.appendSwitch('log-level', '3');
@@ -32,6 +34,27 @@ const CORE_SERVER_URL = 'http://127.0.0.1:8000';
 
 let mainWindow: BrowserWindow | null = null;
 let sidecarProcess: ReturnType<typeof spawn> | null = null;
+
+type JobStartResponse = {
+  job_id: string;
+  error?: {
+    message?: string;
+  };
+};
+
+type CoreJobStatusResponse = {
+  job_id: string;
+  job_state?: Job['state'];
+  state?: Job['state'];
+  running_phase?: Job['phase'];
+  phase?: Job['phase'];
+  progress: number;
+  error?: Job['error'];
+  artifacts?: {
+    output_video?: string;
+  };
+  output_video?: string;
+};
 
 // ============================================
 // 工具函数
@@ -197,7 +220,7 @@ ipcMain.handle('job:start', async (_event, videoPath: string) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ video_path: videoPath }),
     });
-    const result = (await response.json()) as any;
+    const result = (await response.json()) as JobStartResponse;
     
     if (response.status === 409) {
       throw new Error('JOB_ALREADY_RUNNING');
@@ -236,11 +259,9 @@ ipcMain.handle('job:get-status', async (_event, jobId: string) => {
       throw new Error(`HTTP ${response.status}`);
     }
     
-    const status = (await response.json()) as any;
+    const status = (await response.json()) as CoreJobStatusResponse;
     
-    // 兼容 Core 返回字段：
-    // - 标准: job_state / running_phase / artifacts.output_video
-    // - 兼容: state / phase / output_video
+    // 统一字段映射（兼容 Core 新旧字段，避免跨端漂移导致状态丢失）
     saveJob({
       id: status.job_id,
       state: status.job_state ?? status.state,
@@ -251,7 +272,7 @@ ipcMain.handle('job:get-status', async (_event, jobId: string) => {
     });
 
     return getJob(jobId);
-  } catch (error) {
+  } catch {
     return getJob(jobId);
   }
 });
@@ -285,7 +306,7 @@ ipcMain.handle('sidecar:health', async () => {
   try {
     const response = await fetch(`${CORE_SERVER_URL}/health`);
     return await response.json();
-  } catch (error) {
+  } catch {
     throw new Error('Sidecar unavailable');
   }
 });
@@ -296,6 +317,15 @@ ipcMain.handle('sidecar:health', async () => {
 
 // 当 Electron 完成初始化时创建窗口
 app.whenReady().then(() => {
+  // 注册自定义媒体协议以支持本地播放
+  protocol.handle('media', (request) => {
+    const url = request.url.replace('media://', '');
+    const decodedPath = decodeURIComponent(url);
+    // 确保在不同平台下路径处理正确
+    const fileUrl = pathToFileURL(decodedPath).toString();
+    return net.fetch(fileUrl);
+  });
+
   initDb();
   createWindow();
   startSidecar();

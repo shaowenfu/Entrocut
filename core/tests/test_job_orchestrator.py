@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from detect.scene_detector import DetectResult, SceneSegment
@@ -172,6 +174,54 @@ class JobOrchestratorTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(finished["job_state"], "FAILED")
         self.assertEqual(finished["error"]["code"], "VAL_VIDEO_NOT_FOUND")
 
+    async def test_start_response_is_running_but_finally_failed_for_invalid_video(self) -> None:
+        orchestrator = JobOrchestrator(
+            work_root=str(self.temp_dir / "jobs"),
+            use_background_threads=False,
+            detector_factory=lambda threshold, min_len: _FakeDetector(threshold, min_len),
+            extractor_factory=_FakeExtractor,
+            renderer=_FakeRenderer(),
+            mock_client_factory=lambda base_url, version: _FakeMockClient(base_url, version),
+        )
+        started = await orchestrator.start_job(video_path=str(self.temp_dir / "missing.mp4"))
+        self.assertEqual(started["job_state"], "RUNNING")
+        self.assertEqual(started["running_phase"], "VALIDATING_INPUT")
+        self.assertIsNone(started["error"])
+
+        finished = await orchestrator.wait_for_completion(started["job_id"], timeout=5.0)
+        self.assertEqual(finished["job_state"], "FAILED")
+        self.assertEqual(finished["error"]["code"], "VAL_VIDEO_NOT_FOUND")
+
+    async def test_empty_video_path_fails_with_val_empty_input(self) -> None:
+        orchestrator = JobOrchestrator(
+            work_root=str(self.temp_dir / "jobs"),
+            use_background_threads=False,
+            detector_factory=lambda threshold, min_len: _FakeDetector(threshold, min_len),
+            extractor_factory=_FakeExtractor,
+            renderer=_FakeRenderer(),
+            mock_client_factory=lambda base_url, version: _FakeMockClient(base_url, version),
+        )
+        started = await orchestrator.start_job(video_path="   ")
+        finished = await orchestrator.wait_for_completion(started["job_id"], timeout=5.0)
+        self.assertEqual(finished["job_state"], "FAILED")
+        self.assertEqual(finished["error"]["code"], "VAL_EMPTY_INPUT")
+
+    async def test_unsupported_video_format_fails_with_val_video_format_unsupported(self) -> None:
+        unsupported_video = self.temp_dir / "sample.txt"
+        unsupported_video.write_text("not a video", encoding="utf-8")
+        orchestrator = JobOrchestrator(
+            work_root=str(self.temp_dir / "jobs"),
+            use_background_threads=False,
+            detector_factory=lambda threshold, min_len: _FakeDetector(threshold, min_len),
+            extractor_factory=_FakeExtractor,
+            renderer=_FakeRenderer(),
+            mock_client_factory=lambda base_url, version: _FakeMockClient(base_url, version),
+        )
+        started = await orchestrator.start_job(video_path=str(unsupported_video))
+        finished = await orchestrator.wait_for_completion(started["job_id"], timeout=5.0)
+        self.assertEqual(finished["job_state"], "FAILED")
+        self.assertEqual(finished["error"]["code"], "VAL_VIDEO_FORMAT_UNSUPPORTED")
+
     async def test_single_active_job_enforced(self) -> None:
         orchestrator = JobOrchestrator(
             work_root=str(self.temp_dir / "jobs"),
@@ -281,6 +331,78 @@ class JobOrchestratorTestCase(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0)
         self.assertEqual(status["job_state"], "RUNNING")
         self.assertTrue(background_task.cancelled() or background_task.done())
+
+    async def test_cancel_active_pipeline_marks_failed_with_cancel_code(self) -> None:
+        class _CancellableRunBlockingOrchestrator(JobOrchestrator):
+            async def _run_blocking(self, func, *args):  # type: ignore[override]
+                await asyncio.sleep(0.3)
+                return func(*args)
+
+        orchestrator = _CancellableRunBlockingOrchestrator(
+            work_root=str(self.temp_dir / "jobs"),
+            use_background_threads=False,
+            detector_factory=lambda threshold, min_len: _FakeDetector(threshold, min_len),
+            extractor_factory=_FakeExtractor,
+            renderer=_FakeRenderer(),
+            mock_client_factory=lambda base_url, version: _FakeMockClient(base_url, version),
+        )
+        started = await orchestrator.start_job(video_path=str(self.video_path))
+        await asyncio.sleep(0.05)
+        await orchestrator.cancel_job(started["job_id"])
+        finished = await orchestrator.wait_for_completion(started["job_id"], timeout=5.0)
+        self.assertEqual(finished["job_state"], "FAILED")
+        self.assertEqual(finished["error"]["code"], "RUN_CANCELLED_BY_USER")
+        self.assertEqual(finished["error"]["type"], "runtime_error")
+
+
+class JobOrchestratorWorkRootResolutionTestCase(unittest.TestCase):
+    def test_no_env_uses_repo_local_entrocut_jobs(self) -> None:
+        repo_root = create_temp_dir("repo_root_no_env_")
+        try:
+            for dir_name in ("client", "core", "server", "docs"):
+                (repo_root / dir_name).mkdir(parents=True, exist_ok=True)
+            with mock.patch.dict(os.environ, {}, clear=True):
+                with mock.patch("process.job_orchestrator._detect_repo_root", return_value=repo_root):
+                    orchestrator = JobOrchestrator()
+            self.assertEqual(orchestrator.work_root, (repo_root / "entrocut_jobs").resolve())
+        finally:
+            shutil.rmtree(repo_root, ignore_errors=True)
+
+    def test_dev_env_uses_repo_local_entrocut_jobs(self) -> None:
+        repo_root = create_temp_dir("repo_root_")
+        try:
+            for dir_name in ("client", "core", "server", "docs"):
+                (repo_root / dir_name).mkdir(parents=True, exist_ok=True)
+            with mock.patch.dict(os.environ, {"CORE_RUNTIME_ENV": "development"}, clear=False):
+                with mock.patch("process.job_orchestrator._detect_repo_root", return_value=repo_root):
+                    orchestrator = JobOrchestrator()
+            self.assertEqual(orchestrator.work_root, (repo_root / "entrocut_jobs").resolve())
+        finally:
+            shutil.rmtree(repo_root, ignore_errors=True)
+
+    def test_prod_env_keeps_tmp_work_root(self) -> None:
+        with mock.patch.dict(os.environ, {"CORE_RUNTIME_ENV": "production"}, clear=False):
+            with mock.patch("process.job_orchestrator._detect_repo_root", return_value=self._fake_repo_root()):
+                orchestrator = JobOrchestrator()
+        self.assertEqual(orchestrator.work_root, Path("/tmp/entrocut_jobs").resolve())
+
+    def test_explicit_core_work_root_has_highest_priority(self) -> None:
+        custom_root = create_temp_dir("custom_work_root_")
+        try:
+            with mock.patch.dict(
+                os.environ,
+                {"CORE_RUNTIME_ENV": "production", "CORE_WORK_ROOT": str(custom_root)},
+                clear=False,
+            ):
+                with mock.patch("process.job_orchestrator._detect_repo_root", return_value=self._fake_repo_root()):
+                    orchestrator = JobOrchestrator()
+            self.assertEqual(orchestrator.work_root, custom_root.resolve())
+        finally:
+            shutil.rmtree(custom_root, ignore_errors=True)
+
+    @staticmethod
+    def _fake_repo_root() -> Path:
+        return Path("/tmp/entrocut_fake_repo")
 
 
 if __name__ == "__main__":

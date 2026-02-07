@@ -56,3 +56,5 @@ htmlcov/
 *.temp
 docs/coordination
 scripts/sync_branch.sh
+entrocut_jobs
+tmp_round3_verify

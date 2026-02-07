@@ -21,11 +21,12 @@ function MainContent() {
       const result = await window.electron.job.start(path);
       setActiveJobId(result.job_id);
       refetchHistory();
-    } catch (err: any) {
-      if (err.message === 'JOB_ALREADY_RUNNING') {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message === 'JOB_ALREADY_RUNNING') {
         setErrorMessage('A job is already in progress. Please wait or cancel it.');
       } else {
-        setErrorMessage(`Failed to start job: ${err.message}`);
+        setErrorMessage(`Failed to start job: ${message}`);
       }
     }
   };
@@ -64,9 +65,10 @@ function MainContent() {
                 className={`p-2 text-xs cursor-pointer hover:bg-white/5 flex justify-between items-center ${activeJobId === job.id ? 'bg-white/5 text-primary' : ''}`}
                 onClick={() => setActiveJobId(job.id)}
               >
-                <div className="flex space-x-4">
-                  <span className="font-mono text-foreground/50">{new Date(job.created_at).toLocaleTimeString()}</span>
-                  <span className="truncate max-w-[200px]">{job.video_path.split('/').pop()}</span>
+                <div className="flex space-x-4 items-center">
+                  <span className="font-mono text-[10px] text-foreground/40">{job.id.slice(0, 8)}...</span>
+                  <span className="font-mono text-[10px] text-foreground/50">{new Date(job.created_at).toLocaleTimeString()}</span>
+                  <span className="truncate max-w-[150px]">{job.video_path.split(/[/\\]/).pop()}</span>
                 </div>
                 <span className={job.state === 'SUCCEEDED' ? 'text-primary' : job.state === 'FAILED' ? 'text-error' : ''}>
                   {job.state}
