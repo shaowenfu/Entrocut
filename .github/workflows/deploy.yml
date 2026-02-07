@@ -11,7 +11,8 @@ permissions:
   packages: write
 
 env:
-  IMAGE_NAME: ${{ github.repository }}
+  # GHCR 要求仓库名必须是小写，使用 toLowerCase 转换
+  IMAGE_NAME: ${{ github.repository_owner }}/entrocut
   IMAGE_TAG_LATEST: latest
   IMAGE_TAG_COMMIT: commit-${{ github.sha }}
   CONTAINER_NAME: entrocut-mock-server
