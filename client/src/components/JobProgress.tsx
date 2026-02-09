@@ -22,8 +22,8 @@ export const JobProgress: React.FC<JobProgressProps> = ({ job }) => {
   const isFailed = job.state === 'FAILED';
   const [videoError, setVideoError] = React.useState<string | null>(null);
 
-  const videoUrl = job.output_video 
-    ? `media://${encodeURIComponent(job.output_video)}`
+  const videoUrl = job.output_video
+    ? `http://127.0.0.1:8000/videos/${encodeURIComponent(job.output_video)}`
     : '';
 
   React.useEffect(() => {

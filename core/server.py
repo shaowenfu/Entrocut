@@ -10,9 +10,10 @@ from typing import Any, Dict, List, Optional
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel, Field
 import uvicorn
+from pathlib import Path
 
 from detect.scene_detector import SceneDetector
 from process.frame_extractor import FrameExtractor
@@ -271,6 +272,31 @@ async def cancel_job(job_id: str):
         }
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/videos/{file_path:path}")
+async def get_video(file_path: str):
+    """
+    提供视频文件访问
+
+    用于前端通过 HTTP 协议播放本地生成的视频文件。
+    """
+    full_path = Path(file_path).resolve()
+
+    if not full_path.exists():
+        raise HTTPException(status_code=404, detail="Video file not found")
+
+    if not full_path.is_file():
+        raise HTTPException(status_code=400, detail="Path is not a file")
+
+    return FileResponse(
+        full_path,
+        media_type="video/mp4",
+        headers={
+            "Accept-Ranges": "bytes",
+            "Content-Disposition": "inline"
+        }
+    )
 
 
 @app.exception_handler(Exception)

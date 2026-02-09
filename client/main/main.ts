@@ -9,10 +9,9 @@
  * 注意：此文件编译为 CommonJS 格式，供 Electron 主进程使用
  */
 
-import { app, BrowserWindow, ipcMain, dialog, protocol, net } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import * as path from 'path';
 import { spawn } from 'child_process';
-import { pathToFileURL } from 'url';
 import { initDb, saveJob, getJob, getAllJobs } from './db';
 import type { Job } from '../src/types/job';
 
@@ -317,23 +316,6 @@ ipcMain.handle('sidecar:health', async () => {
 
 // 当 Electron 完成初始化时创建窗口
 app.whenReady().then(() => {
-  // 注册自定义媒体协议以支持本地播放
-  protocol.handle('media', (request) => {
-    try {
-      const rawPath = request.url.replace(/^media:\/\//, '');
-      const decodedPath = decodeURIComponent(rawPath);
-      const fileUrl = pathToFileURL(decodedPath).toString();
-      return net.fetch(fileUrl, {
-        method: request.method,
-        headers: request.headers,
-        bypassCustomProtocolHandlers: true
-      });
-    } catch (e) {
-      console.error('[Protocol] Error:', e);
-      return new Response('Protocol Error', { status: 500 });
-    }
-  });
-
   initDb();
   createWindow();
   startSidecar();
