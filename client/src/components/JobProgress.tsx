@@ -95,13 +95,13 @@ export const JobProgress: React.FC<JobProgressProps> = ({ job }) => {
           <div className="text-[10px] text-foreground/40 bg-black/30 p-1 truncate border border-border/30">
             PATH: {job.output_video}
           </div>
-          <video 
-            controls 
+          <video
+            controls
             className="w-full border border-border mt-2 bg-black"
             src={videoUrl}
             onError={(e) => {
               const video = e.target as HTMLVideoElement;
-              setVideoError(video.error?.message || 'Unknown playback error');
+              setVideoError(video.error?.message || 'Playback failed');
             }}
           />
         </div>

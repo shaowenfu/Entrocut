@@ -319,11 +319,19 @@ ipcMain.handle('sidecar:health', async () => {
 app.whenReady().then(() => {
   // 注册自定义媒体协议以支持本地播放
   protocol.handle('media', (request) => {
-    const url = request.url.replace('media://', '');
-    const decodedPath = decodeURIComponent(url);
-    // 确保在不同平台下路径处理正确
-    const fileUrl = pathToFileURL(decodedPath).toString();
-    return net.fetch(fileUrl);
+    try {
+      const rawPath = request.url.replace(/^media:\/\//, '');
+      const decodedPath = decodeURIComponent(rawPath);
+      const fileUrl = pathToFileURL(decodedPath).toString();
+      return net.fetch(fileUrl, {
+        method: request.method,
+        headers: request.headers,
+        bypassCustomProtocolHandlers: true
+      });
+    } catch (e) {
+      console.error('[Protocol] Error:', e);
+      return new Response('Protocol Error', { status: 500 });
+    }
   });
 
   initDb();

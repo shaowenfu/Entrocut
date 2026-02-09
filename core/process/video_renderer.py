@@ -48,6 +48,8 @@ class VideoRenderer:
             encoding="utf-8",
         )
         self._concat_segments(concat_file, target)
+        # 修复 moov 原子位置：浏览器需要 moov 在文件开头才能流式播放
+        self._fix_moov_atom(target)
         return str(target)
 
     @staticmethod
@@ -106,3 +108,26 @@ class VideoRenderer:
             subprocess.run(command, check=True, capture_output=True, text=True)
         except subprocess.CalledProcessError as exc:
             raise RenderError(f"FFmpeg failed to {action}: {exc.stderr}") from exc
+
+    @staticmethod
+    def _fix_moov_atom(video_path: Path) -> None:
+        """将 moov 原子移到文件开头，使视频可流式播放。
+
+        concat 使用 -c copy 不会重新排列 moov 原子，导致 moov 在文件末尾。
+        浏览器需要 moov 在开头才能解析并播放视频。
+        """
+        temp_output = video_path.with_suffix('.tmp.mp4')
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            str(video_path),
+            "-c", "copy",           # 不重新编码，只重新排列原子
+            "-movflags", "+faststart",  # 将 moov 移到文件开头
+            str(temp_output),
+        ]
+        VideoRenderer._run_command(cmd, "fix moov atom")
+        # 替换原文件
+        temp_output.replace(video_path)
