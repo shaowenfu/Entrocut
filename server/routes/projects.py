@@ -2,12 +2,16 @@
 项目管理相关路由
 
 创建项目、查询项目列表、更新项目等。
+
+Round 4: 项目管理功能未实现，返回 501 Not Implemented
 """
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
+
+from middleware.error_handler import NotImplementedException
 
 router = APIRouter()
 
@@ -47,13 +51,10 @@ async def list_projects(skip: int = 0, limit: int = 20):
     """
     获取用户的项目列表
 
-    TODO: 从 MongoDB 查询用户的项目
+    Round 4: 项目管理功能未实现，返回 501
+    计划在 Round 5+ 实现 MongoDB 集成
     """
-    # 临时实现
-    return ProjectListResponse(
-        projects=[],
-        total=0
-    )
+    raise NotImplementedException("Project Management: List Projects")
 
 
 @router.post("", response_model=ProjectResponse)
@@ -61,17 +62,10 @@ async def create_project(request: ProjectCreate):
     """
     创建新项目
 
-    TODO: 在 MongoDB 中创建项目文档
+    Round 4: 项目管理功能未实现，返回 501
+    计划在 Round 5+ 实现 MongoDB 集成
     """
-    # 临时实现
-    return ProjectResponse(
-        id="temp_project_id",
-        name=request.name,
-        description=request.description,
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
-        video_count=0
-    )
+    raise NotImplementedException("Project Management: Create Project")
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
@@ -79,17 +73,10 @@ async def get_project(project_id: str):
     """
     获取项目详情
 
-    TODO: 从 MongoDB 查询项目详情
+    Round 4: 项目管理功能未实现，返回 501
+    计划在 Round 5+ 实现 MongoDB 集成
     """
-    # 临时实现
-    return ProjectResponse(
-        id=project_id,
-        name="Temp Project",
-        description=None,
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
-        video_count=0
-    )
+    raise NotImplementedException("Project Management: Get Project")
 
 
 @router.delete("/{project_id}")
@@ -97,6 +84,7 @@ async def delete_project(project_id: str):
     """
     删除项目
 
-    TODO: 从 MongoDB 删除项目及相关数据
+    Round 4: 项目管理功能未实现，返回 501
+    计划在 Round 5+ 实现 MongoDB 集成
     """
-    return {"message": f"Project {project_id} deleted"}
+    raise NotImplementedException("Project Management: Delete Project")

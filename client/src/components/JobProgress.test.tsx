@@ -46,7 +46,7 @@ describe('JobProgress Component', () => {
     expect(screen.getByText(/DETECTING_SCENES/i)).toBeInTheDocument();
   });
 
-  it('renders output video in succeeded state with media protocol', () => {
+  it('renders output video in succeeded state with HTTP protocol via Core', () => {
     const succeededJob: Job = {
       ...mockJob,
       state: 'SUCCEEDED',
@@ -58,6 +58,21 @@ describe('JobProgress Component', () => {
     
     const videoElement = document.querySelector('video');
     expect(videoElement).toBeInTheDocument();
-    expect(videoElement?.src).toContain('media://%2Ftmp%2Ffinal.mp4');
+    // 应该使用 Core 端的 HTTP 地址，且路径经过编码
+    expect(videoElement?.src).toBe('http://127.0.0.1:8000/videos/%2Ftmp%2Ffinal.mp4');
+  });
+
+  it('handles Chinese and space characters in output_video path', () => {
+    const specialJob: Job = {
+      ...mockJob,
+      state: 'SUCCEEDED',
+      output_video: '/home/user/视频/output video.mp4'
+    };
+    render(<JobProgress job={specialJob} />);
+    
+    const videoElement = document.querySelector('video');
+    // 验证 encodeURIComponent 是否正确工作
+    const expectedPath = encodeURIComponent('/home/user/视频/output video.mp4');
+    expect(videoElement?.src).toBe(`http://127.0.0.1:8000/videos/${expectedPath}`);
   });
 });

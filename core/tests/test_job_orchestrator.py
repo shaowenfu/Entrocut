@@ -38,6 +38,11 @@ class _SlowDetector(_FakeDetector):
         return super().detect(video_path)
 
 
+class _CrashDetector(_FakeDetector):
+    def detect(self, video_path: str) -> DetectResult:
+        raise RuntimeError("detector exploded")
+
+
 class _FakeExtractor:
     def extract(self, video_path: str, scenes, frames_per_scene: int, output_dir: str) -> ExtractResult:
         Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -133,6 +138,15 @@ class _FakeRenderer:
         target = Path(output_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(b"video")
+        return str(target)
+
+
+class _EmptyRenderer:
+    def render(self, clips, output_path: str, work_dir: str) -> str:
+        Path(work_dir).mkdir(parents=True, exist_ok=True)
+        target = Path(output_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"")
         return str(target)
 
 
@@ -354,6 +368,39 @@ class JobOrchestratorTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(finished["error"]["code"], "RUN_CANCELLED_BY_USER")
         self.assertEqual(finished["error"]["type"], "runtime_error")
 
+    async def test_unhandled_exception_maps_to_run_unhandled_exception(self) -> None:
+        orchestrator = JobOrchestrator(
+            work_root=str(self.temp_dir / "jobs"),
+            use_background_threads=False,
+            detector_factory=lambda threshold, min_len: _CrashDetector(threshold, min_len),
+            extractor_factory=_FakeExtractor,
+            renderer=_FakeRenderer(),
+            mock_client_factory=lambda base_url, version: _FakeMockClient(base_url, version),
+        )
+        started = await orchestrator.start_job(video_path=str(self.video_path))
+        finished = await orchestrator.wait_for_completion(started["job_id"], timeout=5.0)
+        self.assertEqual(finished["job_state"], "FAILED")
+        self.assertEqual(finished["error"]["type"], "runtime_error")
+        self.assertEqual(finished["error"]["code"], "RUN_UNHANDLED_EXCEPTION")
+        self.assertEqual(finished["error"]["step"], "UNKNOWN")
+
+    async def test_empty_rendered_output_fails_with_run_render_failed(self) -> None:
+        orchestrator = JobOrchestrator(
+            work_root=str(self.temp_dir / "jobs"),
+            use_background_threads=False,
+            detector_factory=lambda threshold, min_len: _FakeDetector(threshold, min_len),
+            extractor_factory=_FakeExtractor,
+            renderer=_EmptyRenderer(),
+            mock_client_factory=lambda base_url, version: _FakeMockClient(base_url, version),
+        )
+        started = await orchestrator.start_job(video_path=str(self.video_path))
+        finished = await orchestrator.wait_for_completion(started["job_id"], timeout=5.0)
+        self.assertEqual(finished["job_state"], "FAILED")
+        self.assertEqual(finished["running_phase"], "RENDERING_OUTPUT")
+        self.assertEqual(finished["error"]["type"], "runtime_error")
+        self.assertEqual(finished["error"]["code"], "RUN_RENDER_FAILED")
+        self.assertIn("empty", finished["error"]["message"])
+
 
 class JobOrchestratorWorkRootResolutionTestCase(unittest.TestCase):
     def test_no_env_uses_repo_local_entrocut_jobs(self) -> None:
@@ -399,6 +446,30 @@ class JobOrchestratorWorkRootResolutionTestCase(unittest.TestCase):
             self.assertEqual(orchestrator.work_root, custom_root.resolve())
         finally:
             shutil.rmtree(custom_root, ignore_errors=True)
+
+    def test_legacy_entrocut_jobs_root_is_supported(self) -> None:
+        legacy_root = create_temp_dir("legacy_work_root_")
+        try:
+            with mock.patch.dict(os.environ, {"ENTROCUT_JOBS_ROOT": str(legacy_root)}, clear=True):
+                orchestrator = JobOrchestrator()
+            self.assertEqual(orchestrator.work_root, legacy_root.resolve())
+        finally:
+            shutil.rmtree(legacy_root, ignore_errors=True)
+
+    def test_core_work_root_takes_precedence_over_legacy_env(self) -> None:
+        core_root = create_temp_dir("core_work_root_")
+        legacy_root = create_temp_dir("legacy_work_root_")
+        try:
+            with mock.patch.dict(
+                os.environ,
+                {"CORE_WORK_ROOT": str(core_root), "ENTROCUT_JOBS_ROOT": str(legacy_root)},
+                clear=True,
+            ):
+                orchestrator = JobOrchestrator()
+            self.assertEqual(orchestrator.work_root, core_root.resolve())
+        finally:
+            shutil.rmtree(core_root, ignore_errors=True)
+            shutil.rmtree(legacy_root, ignore_errors=True)
 
     @staticmethod
     def _fake_repo_root() -> Path:

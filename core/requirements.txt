@@ -11,3 +11,6 @@ ffmpeg-python==0.2.0
 # Utilities
 python-dotenv==1.0.0
 pydantic==2.9.0
+
+# Testing Support（测试支持）
+httpx==0.28.1

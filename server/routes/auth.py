@@ -2,10 +2,14 @@
 认证相关路由
 
 用户注册、登录、登出等。
+
+Round 4: 认证功能未实现，返回 501 Not Implemented
 """
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr
+
+from middleware.error_handler import NotImplementedException
 
 router = APIRouter()
 
@@ -44,14 +48,10 @@ async def register(request: RegisterRequest):
     """
     用户注册
 
-    TODO: 实现密码哈希、用户创建、JWT 生成
+    Round 4: 认证功能未实现，返回 501
+    计划在 Round 5+ 实现 MongoDB + JWT
     """
-    # 临时实现
-    return AuthResponse(
-        access_token="temp_token",
-        user_id="temp_user_id",
-        username=request.username
-    )
+    raise NotImplementedException("Authentication: User Registration")
 
 
 @router.post("/login", response_model=AuthResponse)
@@ -59,14 +59,10 @@ async def login(request: LoginRequest):
     """
     用户登录
 
-    TODO: 验证密码、生成 JWT
+    Round 4: 认证功能未实现，返回 501
+    计划在 Round 5+ 实现 MongoDB + JWT
     """
-    # 临时实现
-    return AuthResponse(
-        access_token="temp_token",
-        user_id="temp_user_id",
-        username="temp_user"
-    )
+    raise NotImplementedException("Authentication: User Login")
 
 
 @router.post("/logout")
@@ -74,6 +70,7 @@ async def logout():
     """
     用户登出
 
-    TODO: 实现 token 黑名单机制
+    Round 4: 认证功能未实现，返回 501
+    计划在 Round 5+ 实现 Token 黑名单
     """
-    return {"message": "Logged out successfully"}
+    raise NotImplementedException("Authentication: User Logout")

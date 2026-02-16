@@ -36,10 +36,15 @@ class VideoRenderer:
             if end <= start:
                 raise RenderError(f"Invalid clip time range: start={start}, end={end}")
             if not src.exists() or not src.is_file():
-                raise RenderError(f"Clip source not found: {src}")
+                raise RenderError(f"Clip[{idx}] source not found: {src}")
 
             segment_path = segments_dir / f"segment_{idx:04d}.mp4"
-            self._cut_segment(src, segment_path, start, end)
+            try:
+                self._cut_segment(src, segment_path, start, end)
+            except RenderError as exc:
+                raise RenderError(
+                    f"Failed clip[{idx}] (src={src}, start={start:.6f}, end={end:.6f}): {exc}"
+                ) from exc
             segment_files.append(segment_path)
 
         concat_file = temp_dir / "concat.txt"
@@ -47,9 +52,16 @@ class VideoRenderer:
             "".join(f"file '{segment_file.as_posix()}'\n" for segment_file in segment_files),
             encoding="utf-8",
         )
-        self._concat_segments(concat_file, target)
+        try:
+            self._concat_segments(concat_file, target)
+        except RenderError as exc:
+            raise RenderError(f"Failed to concat {len(segment_files)} segments: {exc}") from exc
         # 修复 moov 原子位置：浏览器需要 moov 在文件开头才能流式播放
-        self._fix_moov_atom(target)
+        try:
+            self._fix_moov_atom(target)
+        except RenderError as exc:
+            raise RenderError(f"Failed to optimize output for streaming: {exc}") from exc
+        self._validate_output(target)
         return str(target)
 
     @staticmethod
@@ -131,3 +143,35 @@ class VideoRenderer:
         VideoRenderer._run_command(cmd, "fix moov atom")
         # 替换原文件
         temp_output.replace(video_path)
+
+    @staticmethod
+    def _validate_output(video_path: Path) -> None:
+        if not video_path.exists() or not video_path.is_file():
+            raise RenderError(f"Rendered output not found: {video_path}")
+        if video_path.stat().st_size <= 0:
+            raise RenderError(f"Rendered output is empty: {video_path}")
+
+        # 尝试用 ffprobe 做基础完整性校验；若系统无 ffprobe，则退化为文件级校验。
+        probe_cmd = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(video_path),
+        ]
+        try:
+            result = subprocess.run(probe_cmd, check=True, capture_output=True, text=True)
+        except FileNotFoundError:
+            return
+        except subprocess.CalledProcessError as exc:
+            raise RenderError(f"FFprobe validation failed: {exc.stderr}") from exc
+
+        try:
+            duration = float((result.stdout or "").strip())
+        except ValueError as exc:
+            raise RenderError("FFprobe returned invalid duration") from exc
+        if duration <= 0:
+            raise RenderError(f"Rendered output has non-positive duration: {duration}")

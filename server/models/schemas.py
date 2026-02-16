@@ -79,10 +79,13 @@ class SegmentRef(BaseModel):
 
 
 class EDLRequest(BaseModel):
-    """Mock EDL 请求"""
+    """Mock EDL 请求
+
+    Round 4 硬收口：video_path 现在是必填字段，缺失将返回 VAL_MISSING_REQUIRED_FIELD 错误
+    """
     job_id: str = Field(..., description="任务编号（UUID）")
     contract_version: str = Field(..., description="契约版本")
-    video_path: Optional[str] = Field(None, description="视频文件绝对路径（用于生成真实 src）")
+    video_path: str = Field(..., description="视频文件绝对路径（必填，Round 4 硬收口）")
     segments: List[SegmentRef] = Field(..., description="片段列表")
     rule: str = Field(default="highlight_first", description="剪辑规则")
 

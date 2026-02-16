@@ -6,10 +6,12 @@ Entrocut Core - 本地算法 Sidecar 服务
 """
 
 import os
+import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel, Field
 import uvicorn
@@ -132,6 +134,44 @@ class CancelJobResponse(BaseModel):
     progress: int
 
 
+class ErrorModel(BaseModel):
+    """统一错误响应"""
+
+    type: str
+    code: str
+    message: str
+    step: str
+    details: Dict[str, Any] = Field(default_factory=dict)
+    request_id: str
+    timestamp: str
+
+
+class ErrorEnvelope(BaseModel):
+    error: ErrorModel
+
+
+class CoreApiError(Exception):
+    """Core API 显式错误。"""
+
+    def __init__(
+        self,
+        *,
+        status_code: int,
+        error_type: str,
+        code: str,
+        message: str,
+        step: str,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.error_type = error_type
+        self.code = code
+        self.message = message
+        self.step = step
+        self.details = details or {}
+
+
 # ============================================
 # Application Lifecycle
 # ============================================
@@ -155,9 +195,52 @@ app = FastAPI(
 orchestrator = JobOrchestrator()
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _request_id_from_state(request: Request) -> str:
+    value = getattr(request.state, "request_id", None)
+    if isinstance(value, str) and value:
+        return value
+    fallback = str(uuid.uuid4())
+    request.state.request_id = fallback
+    return fallback
+
+
+def _error_payload(
+    *,
+    request: Request,
+    error_type: str,
+    code: str,
+    message: str,
+    step: str,
+    details: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    return {
+        "error": {
+            "type": error_type,
+            "code": code,
+            "message": message,
+            "step": step,
+            "details": details or {},
+            "request_id": _request_id_from_state(request),
+            "timestamp": _now_iso(),
+        }
+    }
+
+
 # ============================================
 # Endpoints
 # ============================================
+
+@app.middleware("http")
+async def request_tracking_middleware(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
@@ -183,10 +266,22 @@ async def detect_scenes(request: DetectScenesRequest):
         )
         result = detector.detect(request.video_path)
         return result
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=f"Video file not found: {request.video_path}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Scene detection failed: {str(e)}")
+    except FileNotFoundError as exc:
+        raise CoreApiError(
+            status_code=404,
+            error_type="validation_error",
+            code="VAL_VIDEO_NOT_FOUND",
+            message=f"Video file not found: {request.video_path}",
+            step="DETECTING_SCENES",
+        ) from exc
+    except Exception as exc:
+        raise CoreApiError(
+            status_code=500,
+            error_type="runtime_error",
+            code="RUN_SCENE_DETECT_FAILED",
+            message=f"Scene detection failed: {str(exc)}",
+            step="DETECTING_SCENES",
+        ) from exc
 
 
 @app.post("/extract-frames", response_model=ExtractFramesResponse)
@@ -204,10 +299,22 @@ async def extract_frames(request: ExtractFramesRequest):
             frames_per_scene=request.frames_per_scene
         )
         return result
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=f"Video file not found: {request.video_path}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Frame extraction failed: {str(e)}")
+    except FileNotFoundError as exc:
+        raise CoreApiError(
+            status_code=404,
+            error_type="validation_error",
+            code="VAL_VIDEO_NOT_FOUND",
+            message=f"Video file not found: {request.video_path}",
+            step="EXTRACTING_FRAMES",
+        ) from exc
+    except Exception as exc:
+        raise CoreApiError(
+            status_code=500,
+            error_type="runtime_error",
+            code="RUN_FRAME_EXTRACT_FAILED",
+            message=f"Frame extraction failed: {str(exc)}",
+            step="EXTRACTING_FRAMES",
+        ) from exc
 
 
 @app.post("/jobs/start", response_model=JobStatusResponse)
@@ -228,20 +335,22 @@ async def start_job(request: StartJobRequest):
         return status
     except PipelineError as exc:
         if exc.code == "RUN_JOB_ALREADY_ACTIVE":
-            raise HTTPException(status_code=409, detail={
-                "type": exc.error_type,
-                "code": exc.code,
-                "message": str(exc),
-                "step": exc.step,
-                "details": exc.details,
-            }) from exc
-        raise HTTPException(status_code=400, detail={
-            "type": exc.error_type,
-            "code": exc.code,
-            "message": str(exc),
-            "step": exc.step,
-            "details": exc.details,
-        }) from exc
+            status_code = 409
+        elif exc.error_type == "validation_error":
+            status_code = 400
+        elif exc.error_type == "external_error":
+            status_code = 502
+        else:
+            status_code = 500
+
+        raise CoreApiError(
+            status_code=status_code,
+            error_type=exc.error_type,
+            code=exc.code,
+            message=str(exc),
+            step=exc.step,
+            details=exc.details,
+        ) from exc
 
 
 @app.get("/jobs/{job_id}", response_model=JobStatusResponse)
@@ -250,7 +359,14 @@ async def get_job(job_id: str):
     try:
         return await orchestrator.get_job(job_id)
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise CoreApiError(
+            status_code=404,
+            error_type="validation_error",
+            code="VAL_JOB_NOT_FOUND",
+            message=str(exc),
+            step="GET_JOB",
+            details={"job_id": job_id},
+        ) from exc
 
 
 @app.get("/jobs", response_model=List[JobStatusResponse])
@@ -271,7 +387,14 @@ async def cancel_job(job_id: str):
             "progress": status["progress"],
         }
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise CoreApiError(
+            status_code=404,
+            error_type="validation_error",
+            code="VAL_JOB_NOT_FOUND",
+            message=str(exc),
+            step="CANCEL_JOB",
+            details={"job_id": job_id},
+        ) from exc
 
 
 @app.get("/videos/{file_path:path}")
@@ -281,13 +404,38 @@ async def get_video(file_path: str):
 
     用于前端通过 HTTP 协议播放本地生成的视频文件。
     """
-    full_path = Path(file_path).resolve()
+    full_path = Path(file_path).expanduser().resolve()
+    work_root = Path(orchestrator.work_root).resolve()
+
+    if not full_path.is_relative_to(work_root):
+        raise CoreApiError(
+            status_code=403,
+            error_type="validation_error",
+            code="VAL_VIDEO_ACCESS_DENIED",
+            message="Video path is outside work root",
+            step="GET_VIDEO",
+            details={"file_path": str(full_path), "work_root": str(work_root)},
+        )
 
     if not full_path.exists():
-        raise HTTPException(status_code=404, detail="Video file not found")
+        raise CoreApiError(
+            status_code=404,
+            error_type="validation_error",
+            code="VAL_VIDEO_NOT_FOUND",
+            message="Video file not found",
+            step="GET_VIDEO",
+            details={"file_path": str(full_path)},
+        )
 
     if not full_path.is_file():
-        raise HTTPException(status_code=400, detail="Path is not a file")
+        raise CoreApiError(
+            status_code=400,
+            error_type="validation_error",
+            code="VAL_INVALID_PATH",
+            message="Path is not a file",
+            step="GET_VIDEO",
+            details={"file_path": str(full_path)},
+        )
 
     return FileResponse(
         full_path,
@@ -299,12 +447,34 @@ async def get_video(file_path: str):
     )
 
 
+@app.exception_handler(CoreApiError)
+async def core_api_error_handler(request: Request, exc: CoreApiError):
+    """Core 业务异常处理。"""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=_error_payload(
+            request=request,
+            error_type=exc.error_type,
+            code=exc.code,
+            message=exc.message,
+            step=exc.step,
+            details=exc.details,
+        ),
+    )
+
+
 @app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
-    """全局异常处理"""
+async def global_exception_handler(request: Request, exc: Exception):
+    """全局异常处理。"""
     return JSONResponse(
         status_code=500,
-        content={"detail": f"Internal server error: {str(exc)}"}
+        content=_error_payload(
+            request=request,
+            error_type="runtime_error",
+            code="RUN_UNHANDLED_EXCEPTION",
+            message="An unexpected error occurred",
+            step="UNKNOWN",
+        ),
     )
 
 

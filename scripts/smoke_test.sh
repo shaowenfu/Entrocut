@@ -163,7 +163,9 @@ test_mock_edl_invalid_time_range() {
 
 test_request_id_tracking() {
     local test_id="req-track-$(date +%s)"
-    response=$(curl -s -X POST \
+
+    # Round 4: 增强测试，同时验证响应体和响应头中的 request_id
+    response_headers=$(curl -s -i -X POST \
         -H 'Content-Type: application/json' \
         -H "X-Request-ID: $test_id" \
         -d '{
@@ -174,14 +176,35 @@ test_request_id_tracking() {
         }' \
         "$BASE_URL/api/v1/mock/analyze")
 
-    if echo "$response" | grep -q "$test_id"; then
-        log_info "测试: Request ID 追踪"
+    # 提取响应体（去掉头部）
+    response_body=$(echo "$response_headers" | sed -n '/^{/,$p')
+
+    # 提取响应头中的 X-Request-ID
+    response_x_request_id=$(echo "$response_headers" | grep -i "^X-Request-ID:" | tr -d '\r' | cut -d' ' -f2)
+
+    # 检查响应体中的 request_id（使用更宽松的 grep 模式）
+    body_has_id=$(echo "$response_body" | grep -q "request_id.*$test_id" && echo "true" || echo "false")
+
+    # 检查响应头中的 X-Request-ID
+    header_has_id=$([ "$response_x_request_id" = "$test_id" ] && echo "true" || echo "false")
+
+    echo ""
+    log_info "测试: Request ID 追踪"
+
+    if [ "$body_has_id" = "true" ] && [ "$header_has_id" = "true" ]; then
         log_info "  ✓ 通过 (request_id: $test_id)"
+        log_info "    - 响应体包含 request_id"
+        log_info "    - 响应头 X-Request-ID 正确透传"
         PASSED=$((PASSED + 1))
     else
-        log_error "测试: Request ID 追踪"
-        log_error "  ✗ 失败 (未找到 request_id: $test_id)"
-        echo "$response"
+        log_error "  ✗ 失败"
+        if [ "$body_has_id" != "true" ]; then
+            log_error "    - 响应体未包含正确的 request_id"
+        fi
+        if [ "$header_has_id" != "true" ]; then
+            log_error "    - 响应头 X-Request-ID 未正确透传 (期望: $test_id, 实际: $response_x_request_id)"
+        fi
+        echo "Response body: $response_body"
         FAILED=$((FAILED + 1))
     fi
 }

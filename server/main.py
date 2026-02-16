@@ -119,16 +119,27 @@ async def health_check():
 
 @app.get("/")
 async def root():
-    """根路径"""
+    """
+    根路径
+
+    Round 4: 明确 MVP API 白名单，非 MVP 路由返回 501 Not Implemented
+    """
     return {
         "service": SERVICE_NAME,
         "version": SERVICE_VERSION,
+        "phase": "MVP (Mock API Only)",
         "docs": "/docs",
         "health": "/health",
-        "mock_api": {
-            "analyze": f"{API_PREFIX}/mock/analyze",
-            "edl": f"{API_PREFIX}/mock/edl"
-        }
+        "mvp_apis": {
+            "mock_analyze": f"{API_PREFIX}/mock/analyze",
+            "mock_edl": f"{API_PREFIX}/mock/edl"
+        },
+        "not_implemented": {
+            "auth": f"{API_PREFIX}/auth/*",
+            "projects": f"{API_PREFIX}/projects/*",
+            "search": f"{API_PREFIX}/search/*"
+        },
+        "note": "非 MVP 功能返回 501 Not Implemented，计划在 Round 5+ 实现"
     }
 
 

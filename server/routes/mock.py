@@ -191,15 +191,9 @@ async def mock_edl(request: Request, body: EDLRequest) -> EDLResponse:
     for segment in body.segments:
         validate_time_range(segment.start_time, segment.end_time)
 
-    # 获取 video_path：优先使用请求中的，否则使用默认路径
-    # 注意：Core 端应提供真实 video_path 以确保渲染成功
-    video_path = body.video_path
-    if not video_path:
-        logger.warning(
-            f"video_path not provided for job {body.job_id}, using fallback path",
-            extra={"job_id": body.job_id}
-        )
-        video_path = f"/local/path/to/{body.job_id}.mp4"
+    # 验证 video_path 非空（Round 4: 硬收口，不再沉默回退）
+    validate_video_path(body.video_path)
+    video_path = body.video_path.strip()
 
     # 将 job_id 存入 request.state 供中间件使用
     request.state.job_id = body.job_id

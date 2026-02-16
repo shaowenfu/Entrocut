@@ -21,6 +21,8 @@ from process.mock_client import MockClientError, MockServerClient
 from process.video_renderer import RenderError, VideoRenderer
 
 _PRODUCTION_WORK_ROOT = "/tmp/entrocut_jobs"
+_PRIMARY_WORK_ROOT_ENV = "CORE_WORK_ROOT"
+_LEGACY_WORK_ROOT_ENV = "ENTROCUT_JOBS_ROOT"
 _VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".m4v", ".webm"}
 
 
@@ -140,12 +142,22 @@ class JobOrchestrator:
         renderer: Optional[VideoRenderer] = None,
         mock_client_factory: Optional[Callable[[Optional[str], str], MockServerClient]] = None,
     ):
-        configured_work_root = work_root or os.getenv("CORE_WORK_ROOT")
+        configured_work_root, config_warning = self._resolve_work_root_config(work_root)
         self.work_root = (
             Path(configured_work_root).expanduser().resolve()
             if configured_work_root
             else _resolve_default_work_root()
         )
+        if config_warning:
+            _json_log(
+                {
+                    "timestamp": _now_iso(),
+                    "level": "WARNING",
+                    "event": "WORK_ROOT_CONFIG_WARNING",
+                    "message": config_warning,
+                    "work_root": str(self.work_root),
+                }
+            )
         self.default_server_base_url = default_server_base_url or os.getenv("MOCK_SERVER_BASE_URL")
         self.default_contract_version = default_contract_version
         self.default_rule = default_rule
@@ -163,6 +175,28 @@ class JobOrchestrator:
         self._jobs: Dict[str, JobStatus] = {}
         self._tasks: Dict[str, asyncio.Task] = {}
         self._active_job_id: Optional[str] = None
+
+    @staticmethod
+    def _resolve_work_root_config(explicit_work_root: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+        if explicit_work_root:
+            return explicit_work_root, None
+
+        primary = os.getenv(_PRIMARY_WORK_ROOT_ENV)
+        legacy = os.getenv(_LEGACY_WORK_ROOT_ENV)
+        if primary:
+            if legacy and Path(primary).expanduser().resolve() != Path(legacy).expanduser().resolve():
+                warning = (
+                    f"{_PRIMARY_WORK_ROOT_ENV} and {_LEGACY_WORK_ROOT_ENV} are both set; "
+                    f"{_PRIMARY_WORK_ROOT_ENV} takes precedence."
+                )
+                return primary, warning
+            return primary, None
+
+        if legacy:
+            warning = f"{_LEGACY_WORK_ROOT_ENV} is deprecated; use {_PRIMARY_WORK_ROOT_ENV} instead."
+            return legacy, warning
+
+        return None, None
 
     async def start_job(
         self,
@@ -377,6 +411,13 @@ class JobOrchestrator:
                     message="Rendered output file not found",
                     step="RENDERING_OUTPUT",
                 )
+            if Path(output_video).stat().st_size <= 0:
+                raise PipelineError(
+                    error_type="runtime_error",
+                    code="RUN_RENDER_FAILED",
+                    message="Rendered output file is empty",
+                    step="RENDERING_OUTPUT",
+                )
 
             await self._update_phase(job_id, "FINALIZING_RESULT", 100)
             await self._mark_succeeded(job_id, output_video)
@@ -407,7 +448,7 @@ class JobOrchestrator:
                 job_id=job_id,
                 error=JobError(
                     type="runtime_error",
-                    code="RUN_UNEXPECTED_ERROR",
+                    code="RUN_UNHANDLED_EXCEPTION",
                     message=str(exc),
                     step="UNKNOWN",
                 ),

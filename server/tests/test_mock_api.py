@@ -48,6 +48,7 @@ def get_valid_edl_request():
     return {
         "job_id": "test-job-001",
         "contract_version": CONTRACT_VERSION,
+        "video_path": "/test/path/video.mp4",  # Round 4: video_path 现在是必填字段
         "segments": [
             {
                 "segment_id": "seg_001",
@@ -170,6 +171,7 @@ async def test_mock_edl_empty_segments(client):
     request_data = {
         "job_id": "test-job-001",
         "contract_version": CONTRACT_VERSION,
+        "video_path": "/test/video.mp4",
         "segments": [],
         "rule": "highlight_first"
     }
@@ -241,7 +243,10 @@ async def test_root_endpoint(client):
     assert "version" in data
     assert "docs" in data
     assert "health" in data
-    assert "mock_api" in data
+    # Round 4: 根路径响应结构更新，使用 mvp_apis 代替 mock_api
+    assert "mvp_apis" in data
+    assert "not_implemented" in data
+    assert "phase" in data
 
 
 # ============================================
@@ -279,8 +284,8 @@ async def test_mock_edl_with_video_path(client):
     assert data["edl"]["clips"][1]["src"] == real_video_path
 
 
-async def test_mock_edl_without_video_path_uses_fallback(client):
-    """测试 Mock EDL 接口 - 未提供 video_path 使用回退路径"""
+async def test_mock_edl_empty_video_path_returns_error(client):
+    """测试 Mock EDL 接口 - 空 video_path 返回错误 (Round 4 硬收口)"""
     request_data = {
         "job_id": "test-job-fallback",
         "contract_version": CONTRACT_VERSION,
@@ -296,12 +301,13 @@ async def test_mock_edl_without_video_path_uses_fallback(client):
 
     response = await client.post("/api/v1/mock/edl", json=request_data)
 
-    assert response.status_code == 200
+    # Round 4: video_path 现在是必填字段（Pydantic schema 层面验证）
+    assert response.status_code == 400
 
     data = response.json()
-    # 应使用回退路径 /local/path/to/{job_id}.mp4
-    expected_fallback = "/local/path/to/test-job-fallback.mp4"
-    assert data["edl"]["clips"][0]["src"] == expected_fallback
+    assert "error" in data
+    # Pydantic 返回 VAL_INVALID_FIELD_FORMAT 表示缺少必填字段
+    assert data["error"]["code"] == "VAL_INVALID_FIELD_FORMAT"
 
 
 async def test_mock_edl_clips_time_validation(client):
@@ -575,3 +581,54 @@ async def test_job_id_format_accepts_any_string(client):
 
         data = response.json()
         assert data["job_id"] == job_id
+
+
+# ============================================
+# Round 4 新增测试
+# ============================================
+
+async def test_mock_edl_empty_string_video_path(client):
+    """测试 Mock EDL 接口 - video_path 为空字符串 (Round 4 硬收口)"""
+    request_data = get_valid_edl_request()
+    request_data["video_path"] = ""
+
+    response = await client.post("/api/v1/mock/edl", json=request_data)
+
+    assert response.status_code == 400
+
+    data = response.json()
+    assert "error" in data
+    assert data["error"]["code"] == "VAL_MISSING_REQUIRED_FIELD"
+    assert data["error"]["details"]["field"] == "video_path"
+
+
+async def test_mock_edl_whitespace_only_video_path(client):
+    """测试 Mock EDL 接口 - video_path 只有空格 (Round 4 硬收口)"""
+    request_data = get_valid_edl_request()
+    request_data["video_path"] = "   "
+
+    response = await client.post("/api/v1/mock/edl", json=request_data)
+
+    assert response.status_code == 400
+
+    data = response.json()
+    assert "error" in data
+    assert data["error"]["code"] == "VAL_MISSING_REQUIRED_FIELD"
+    assert data["error"]["details"]["field"] == "video_path"
+
+
+async def test_contract_version_frozen_to_010_mock(client):
+    """测试契约版本冻结为 0.1.0-mock (Round 4 硬收口)"""
+    # 支持的版本列表是固定的
+    supported_versions = ["0.1.0-mock", "0.1.0"]
+
+    for version in supported_versions:
+        request_data = get_valid_analyze_request()
+        request_data["contract_version"] = version
+
+        response = await client.post("/api/v1/mock/analyze", json=request_data)
+
+        assert response.status_code == 200, f"Supported version {version} should work"
+
+        data = response.json()
+        assert data["contract_version"] == "0.1.0-mock"  # 响应总是返回冻结的版本

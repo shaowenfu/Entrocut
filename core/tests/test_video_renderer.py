@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from process.video_renderer import RenderError, VideoRenderer
 from tests.utils import create_sample_video, create_temp_dir
@@ -39,6 +40,18 @@ class VideoRendererTestCase(unittest.TestCase):
                 output_path=str(self.temp_dir / "bad.mp4"),
                 work_dir=str(self.temp_dir / "bad_render"),
             )
+
+    def test_render_cut_segment_error_contains_clip_context(self) -> None:
+        renderer = VideoRenderer()
+        with mock.patch.object(VideoRenderer, "_cut_segment", side_effect=RenderError("ffmpeg cut failed")):
+            with self.assertRaises(RenderError) as ctx:
+                renderer.render(
+                    clips=[{"src": str(self.video_path), "start": 0.0, "end": 0.6}],
+                    output_path=str(self.temp_dir / "cut_fail.mp4"),
+                    work_dir=str(self.temp_dir / "cut_fail_work"),
+                )
+        self.assertIn("clip[0]", str(ctx.exception).lower())
+        self.assertIn("start=0.000000", str(ctx.exception))
 
 
 if __name__ == "__main__":

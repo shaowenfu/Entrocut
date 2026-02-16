@@ -232,20 +232,30 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 ## API 端点
 
-### Mock API
+### MVP API（可用）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | POST | `/api/v1/mock/analyze` | Mock 分析接口 |
 | POST | `/api/v1/mock/edl` | Mock EDL 接口 |
 
-### 其他
+### 其他端点
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/` | 服务信息 |
+| GET | `/` | 服务信息（包含 MVP 边界说明） |
 | GET | `/health` | 健康检查 |
 | GET | `/docs` | API 文档（Swagger） |
+
+### 非 MVP 功能（返回 501 Not Implemented）
+
+以下路由计划在 Round 5+ 实现，当前返回 501 Not Implemented：
+
+| 路由前缀 | 说明 |
+|---------|------|
+| `/api/v1/auth/*` | 用户认证（注册、登录、登出） |
+| `/api/v1/projects/*` | 项目管理（CRUD 操作） |
+| `/api/v1/search/*` | 向量检索（语义搜索、相似帧查找） |
 
 ---
 

@@ -2,11 +2,15 @@
 向量检索相关路由
 
 使用 DashVector 进行语义搜索。
+
+Round 4: 向量检索功能未实现，返回 501 Not Implemented
 """
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import List, Optional
+
+from middleware.error_handler import NotImplementedException
 
 router = APIRouter()
 
@@ -47,19 +51,10 @@ async def semantic_search(request: SearchRequest):
     """
     语义搜索
 
-    使用 DashScope 将 query 转为向量，然后在 DashVector 中检索。
-
-    TODO:
-    1. 调用 DashScope API 获取 query 的向量表示
-    2. 在 DashVector 中进行相似度搜索
-    3. 返回匹配的帧
+    Round 4: 向量检索功能未实现，返回 501
+    计划在 Round 5+ 实现 DashScope + DashVector 集成
     """
-    # 临时实现
-    return SearchResponse(
-        query=request.query,
-        results=[],
-        total=0
-    )
+    raise NotImplementedException("Vector Search: Semantic Search")
 
 
 @router.get("/similar/{frame_id}")
@@ -67,11 +62,7 @@ async def find_similar_frames(frame_id: str, top_k: int = 10):
     """
     查找相似帧
 
-    基于给定的帧 ID，查找视觉上相似的帧。
-
-    TODO: 使用 DashVector 的向量搜索
+    Round 4: 向量检索功能未实现，返回 501
+    计划在 Round 5+ 实现 DashVector 集成
     """
-    return {
-        "frame_id": frame_id,
-        "similar_frames": []
-    }
+    raise NotImplementedException("Vector Search: Find Similar Frames")

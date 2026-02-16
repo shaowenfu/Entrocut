@@ -55,6 +55,9 @@ class ErrorCode:
     EXT_MOCK_BAD_RESPONSE = "EXT_MOCK_BAD_RESPONSE"
     EXT_UPSTREAM_UNAVAILABLE = "EXT_UPSTREAM_UNAVAILABLE"
 
+    # not_implemented (501)
+    NOT_IMPLEMENTED = "NOT_IMPLEMENTED"
+
 
 # ============================================
 # Custom Exceptions
@@ -115,6 +118,20 @@ class ExternalException(EntrocutException):
             error_type=ErrorType.EXTERNAL,
             status_code=status.HTTP_502_BAD_GATEWAY,
             details=details
+        )
+
+
+class NotImplementedException(EntrocutException):
+    """未实现异常（Round 4: 显式标记非 MVP 功能）"""
+
+    def __init__(self, feature_name: str, details: Dict[str, Any] = None):
+        merged_details = {"feature": feature_name, **(details or {})}
+        super().__init__(
+            message=f"'{feature_name}' is not implemented in this version (MVP: Mock API only)",
+            code=ErrorCode.NOT_IMPLEMENTED,
+            error_type=ErrorType.RUNTIME,
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            details=merged_details
         )
 
 
