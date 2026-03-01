@@ -1,42 +1,9 @@
-import { contextBridge, ipcRenderer } from 'electron';
-import type { Job } from '../src/types/job';
+/**
+ * Electron Preload（预加载）占位文件。
+ *
+ * TODO:
+ * 1. Define secure API surface（定义安全 API 暴露面）
+ * 2. Keep context isolation enabled（保持隔离上下文）
+ */
 
-interface ElectronAPI {
-  file: {
-    selectVideo(): Promise<string>;
-  };
-  job: {
-    start(videoPath: string): Promise<{ job_id: string }>;
-    getStatus(jobId: string): Promise<Job | undefined>;
-    listAll(): Promise<Job[]>;
-    cancel(jobId: string): Promise<unknown>;
-  };
-  sidecar: {
-    health(): Promise<unknown>;
-  };
-  platform: string;
-}
-
-const electronAPI: ElectronAPI = {
-  file: {
-    selectVideo: () => ipcRenderer.invoke('file:select-video'),
-  },
-  job: {
-    start: (videoPath: string) => ipcRenderer.invoke('job:start', videoPath),
-    getStatus: (jobId: string) => ipcRenderer.invoke('job:get-status', jobId),
-    listAll: () => ipcRenderer.invoke('job:list-all'),
-    cancel: (jobId: string) => ipcRenderer.invoke('job:cancel', jobId),
-  },
-  sidecar: {
-    health: () => ipcRenderer.invoke('sidecar:health'),
-  },
-  platform: process.platform,
-};
-
-contextBridge.exposeInMainWorld('electron', electronAPI);
-
-declare global {
-  interface Window {
-    electron: ElectronAPI;
-  }
-}
+export {};

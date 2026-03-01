@@ -1,12 +1,14 @@
-# Docs Index（文档索引）
+# Docs Baseline
 
-## 当前有效文档（SSOT（单一事实源））
-1. `docs/UI_UX_design.md`：UI/UX（界面/体验）设计规范。
-2. `docs/user_scene.md`：用户场景与功能方向（长期）。
-3. `docs/functional_spec_v0_1.md`：v0.1 功能规格（AI-first 框架版）。
-4. `docs/product_principles.md`：产品原则与系统约束。
-5. `docs/architecture_v0_1.md`：v0.1 架构说明（框架与扩展位）。
+当前 `docs` 目录已清理为最小文档集合，仅保留重构启动所需内容。
 
-## 说明
-- v0.1 目标是搭建框架，AI 能力只保留扩展位。
-- 旧版 MVP（端到端 Mock）文档已清理，避免与现行方向冲突。
+## 文档清单
+
+1. `docs/BASELINE_ARCHITECTURE.md`：`Monorepo Architecture（单仓架构）` 基线。
+2. `docs/CONTRACT_BASELINE.md`：`API Contract（接口契约）` 占位定义。
+3. `docs/NON_GOALS.md`：`Non-goals（非目标）` 边界。
+
+## 约束
+
+1. 旧验证阶段文档（`Mock API`、`Round` 记录、历史流程）已删除。
+2. 新增功能前，先更新 `Contract（契约）`，再实现代码。

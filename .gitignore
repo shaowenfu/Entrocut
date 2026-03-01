@@ -1,62 +1,47 @@
-# Dependencies
-node_modules/
-venv/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
+# System
+.DS_Store
+Thumbs.db
 
-# Environment
-.env
-.env.local
-.env.*.local
-
-# Database
-*.db
-*.sqlite
-*.sqlite3
-
-# Build outputs
-dist/
-dist-main/
-build/
-out/
-*.exe
-*.dmg
-*.pkg
-
-Mydocs
-# Logs
-# *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-
-# IDE
+# Editor
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# OS
-.DS_Store
-Thumbs.db
+# Environment
+.env
+.env.local
+.env.*.local
 
-# Testing
-.pytest_cache/
+# Python
+**/venv/
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.pytest_cache/
 .coverage
 htmlcov/
-*.cover
 
-# Temporary
+# Node
+**/node_modules/
+**/dist/
+**/dist-main/
+**/.vite/
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Runtime temp
+tmp/
+tmp_*/
 *.tmp
 *.temp
-docs/coordination
-docs/rounds/
-scripts/sync_branch.sh
-entrocut_jobs
-tmp_round3_verify
-
+entrocut_jobs/

@@ -1,58 +1,55 @@
-@import "tailwindcss";
-
-@theme {
-  --color-background: #0b0b0b;
-  --color-foreground: #d1d1d1;
-  --color-primary: #00ff41;
-  --color-secondary: #008f11;
-  --color-border: #333333;
-  --color-error: #ff3131;
-
-  --font-mono: "JetBrains Mono", "Fira Code", monospace;
-
-  --radius-none: 0;
+:root {
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #0f1115;
+  color: #e6e8ef;
 }
 
-@layer base {
-  body {
-    @apply bg-background text-foreground font-mono m-0 p-0 overflow-hidden;
-    user-select: none;
-  }
-
-  * {
-    @apply border-border rounded-none;
-  }
-
-  h1, h2, h3, h4 {
-    @apply font-bold tracking-tight;
-  }
+* {
+  box-sizing: border-box;
 }
 
-@layer components {
-  .terminal-border {
-    @apply border border-border;
-  }
-
-  .btn {
-    @apply px-4 py-2 bg-transparent border border-border text-foreground hover:border-primary hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
-  }
-
-  .btn-primary {
-    @apply border-primary text-primary hover:bg-primary hover:text-black;
-  }
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: radial-gradient(circle at 20% 10%, #1d2639, #0f1115 45%);
 }
 
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+.shell {
+  margin: 0 auto;
+  max-width: 980px;
+  padding: 24px;
 }
-::-webkit-scrollbar-track {
-  background: var(--color-background);
+
+.shell-header h1 {
+  margin: 0;
+  font-size: 28px;
 }
-::-webkit-scrollbar-thumb {
-  background: var(--color-border);
+
+.shell-header p {
+  margin-top: 8px;
+  color: #b6bdd0;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-secondary);
+
+.panel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.panel {
+  border: 1px solid #283248;
+  border-radius: 12px;
+  background: #141a27;
+  padding: 16px;
+}
+
+.panel h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.panel p {
+  margin: 0;
+  color: #9da6bd;
 }

@@ -1,56 +1,24 @@
 {
-  "name": "client",
+  "name": "entrocut-client",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "build:main": "node build-electron.mjs",
-    "lint": "eslint .",
     "preview": "vite preview",
-    "electron:dev": "npm run build:main && cross-env ELECTRON_IS_DEV=true concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron . --disable-gpu --log-level=3\"",
-    "electron:build": "npm run build && electron-builder",
-    "rebuild": "tsc -p tsconfig.node.json"
+    "typecheck": "tsc --noEmit",
+    "electron:dev": "echo \"TODO: wire Electron dev runtime\""
   },
-  "main": "dist-main/main.cjs",
   "dependencies": {
-    "@tailwindcss/postcss": "^4.1.18",
-    "@tanstack/react-query": "^5.90.20",
-    "autoprefixer": "^10.4.24",
-    "axios": "^1.13.4",
-    "better-sqlite3": "^12.6.2",
-    "electron": "^40.1.0",
-    "lucide-react": "^0.563.0",
-    "postcss": "^8.5.6",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "tailwindcss": "^4.1.18",
-    "zod": "^4.3.6"
+    "react-dom": "^19.2.0"
   },
   "devDependencies": {
-    "@electron/rebuild": "^4.0.3",
-    "@eslint/js": "^9.39.1",
-    "@testing-library/jest-dom": "^6.9.1",
-    "@testing-library/react": "^16.3.2",
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^24.10.1",
-    "@types/react": "^19.2.5",
+    "@types/react": "^19.2.4",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
-    "concurrently": "^9.2.1",
-    "cross-env": "^10.1.0",
-    "electron-builder": "^26.4.0",
-    "esbuild": "^0.27.2",
-    "eslint": "^9.39.1",
-    "eslint-plugin-react-hooks": "^7.0.1",
-    "eslint-plugin-react-refresh": "^0.4.24",
-    "globals": "^16.5.0",
-    "jsdom": "^27.0.1",
-    "typescript": "~5.9.3",
-    "typescript-eslint": "^8.46.4",
-    "vite": "^7.2.4",
-    "vitest": "^3.2.4",
-    "wait-on": "^9.0.3"
+    "typescript": "^5.9.3",
+    "vite": "^7.2.4"
   }
 }
