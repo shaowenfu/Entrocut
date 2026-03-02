@@ -19,11 +19,12 @@
 ## 场景二：意图编排与初剪（Orchestration）
 
 1. 用户输入：“帮我剪一个 30 秒京都宁静视频，慢节奏。”
-2. `client -> server`: `POST /api/v1/agent/plan`。
+2. `client -> server`: `POST /api/v1/chat`。
 3. `server` 执行：
-   1. 意图理解。
-   2. 语义检索。
-   3. 生成 `EntroVideoProject` + `reasoning`。
+   1. `Context Engineering`（上下文工程）。
+   2. `Intent Classification`（意图判断）。
+   3. `Logic Routing`（逻辑路由）。
+   4. 语义检索与契约生成。
 4. `client -> core`: `POST /api/v1/render`。
 5. `core` 返回 `preview stream`，用户可播放预览。
 
@@ -35,8 +36,8 @@
 ## 场景三：语义微调（Refinement）
 
 1. 用户选中某片段输入：“这个镜头有人，换成没人且构图更好看。”
-2. `client -> server`: `POST /api/v1/agent/refine`（携带选中片段上下文）。
-3. `server` 返回 `patch` 与替换理由。
+2. `client -> server`: `POST /api/v1/chat`（携带选中片段上下文与当前契约）。
+3. `server` 在接口内部完成意图判断并返回 `patch` 或更新后的 `project`。
 4. `client` 应用 `patch` 更新本地契约。
 5. `client -> core`: 触发重渲染，预览实时更新。
 
@@ -48,6 +49,6 @@
 ## 时延预算（MVP）
 
 1. Ingest（1 小时素材）：`<= 60s` 首次可检索。
-2. Plan 请求：`<= 10s` 返回第一版契约。
-3. Refine 请求：`<= 6s` 返回替换方案。
+2. Chat 首轮请求：`<= 10s` 返回第一版契约。
+3. Chat 微调请求：`<= 6s` 返回替换方案或契约补丁。
 4. Render 预览启动：`<= 5s` 开始播放。

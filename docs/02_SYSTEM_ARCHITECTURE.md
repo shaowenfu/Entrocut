@@ -26,7 +26,7 @@
 
 ### `server/` - The Brain（云端大脑）
 
-1. 执行 `Prompt Orchestration（提示词编排）`。
+1. 执行 `Prompt Orchestration（提示词编排）`，调用大模型进行智能交互和决策，agent的主体所在。
 2. 调用 `Qwen3-VL-Embedding` 进行向量化。
 3. 调用 `DashVector` 执行语义检索（强制 `user_id` 过滤）。
 4. 生成 `EntroVideoProject` 契约与 `reasoning`。
@@ -40,6 +40,7 @@ User
 client (Electron + React)
   |--HTTP--> core (localhost, Python FastAPI)
   |--HTTPS-> server (Cloud FastAPI)
+               |--> LLM User interaction
                |--> Qwen3-VL-Embedding
                |--> Qwen3-VL-Flash
                |--> DashVector

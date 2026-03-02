@@ -1,22 +1,51 @@
-# Entrocut Monorepo Baseline
+# EntroCut Monorepo
 
-本仓库已清理为最小 `Monorepo（单仓多包）` 骨架，仅保留：
+`EntroCut` 当前进入 `MVP` 重构阶段，目标是交付 `Chat-to-Cut（对话生成剪辑）` 闭环。
 
-1. `client/`：前端壳层（React + Vite）。
-2. `core/`：本地算法服务壳层（FastAPI）。
-3. `server/`：云端编排服务壳层（FastAPI）。
-4. `docs/`：基线文档与契约说明。
+## 目录结构
+
+1. `client/`：`Electron + React` 客户端壳层，承载 `AI Copilot` 界面与状态同步。
+2. `core/`：本地 `Python Sidecar`，负责切分、抽帧、渲染与导出。
+3. `server/`：云端 `FastAPI`，负责 `Agent` 编排、向量化与会话管理。
+4. `docs/`：MVP 设计与开发文档集（当前唯一规范源）。
+
+## MVP 主路径
+
+1. `Ingest`：本地素材导入、切分、关键帧拼图与向量索引。
+2. `Agent`：通过单一 `POST /api/v1/chat` 处理所有自然语言交互。
+3. `Render`：基于 `EntroVideoProject Contract（契约）` 生成可预览结果。
+
+## API 入口（当前规范）
+
+1. `core`（本地）：
+   1. `GET /health`
+   2. `POST /api/v1/ingest`
+   3. `POST /api/v1/search`
+   4. `POST /api/v1/render`
+   5. `POST /api/v1/export`
+2. `server`（云端）：
+   1. `GET /health`
+   2. `POST /api/v1/index/upsert-clips`
+   3. `POST /api/v1/chat`（唯一 `Agent` 对外入口）
+
+详细契约见 `docs/`：
+
+1. `docs/04_CONTRACTS.md`
+2. `docs/05_API_CORE_LOCAL.md`
+3. `docs/06_API_SERVER_CLOUD.md`
 
 ## 快速启动
 
-1. Client（前端壳层）
+1. 启动 `client`
+
 ```bash
 cd client
 pnpm install
 pnpm run dev
 ```
 
-2. Core（本地服务壳层）
+2. 启动 `core`
+
 ```bash
 cd core
 python -m venv venv
@@ -25,7 +54,8 @@ pip install -r requirements.txt
 uvicorn server:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-3. Server（云端服务壳层）
+3. 启动 `server`
+
 ```bash
 cd server
 python -m venv venv
@@ -34,7 +64,8 @@ pip install -r requirements.txt
 uvicorn main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
-## 当前状态
+## 当前实现状态
 
-1. 仅提供 `Health API（健康接口）` 与 `Contract Placeholder（契约占位接口）`。
-2. 历史验证链路代码（`Mock API`、旧 `Pipeline`、旧脚本和测试资产）已移除。
+1. 代码层仍是 `Shell（壳层）` 实现，接口主体多为占位返回。
+2. 设计层已经完成 `MVP` 文档重构，可据此分阶段开发。
+3. 历史验证阶段代码和过时文档已清理。
