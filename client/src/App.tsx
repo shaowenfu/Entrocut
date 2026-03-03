@@ -16,6 +16,14 @@ import {
   Tag,
   Wand2,
 } from "lucide-react";
+import {
+  createInitialHealthSnapshot,
+  probeServiceHealth,
+  type HealthState,
+  type ServiceHealthSnapshot,
+  type ServiceTarget,
+} from "./services/health";
+import { getOrCreateSessionId } from "./utils/session";
 
 type MediaTab = "assets" | "clips";
 type DraggingTarget = "left" | "mid" | null;
@@ -159,6 +167,9 @@ const SUGGESTION_CHIPS = [
   "Replace scene 2 with a cleaner close-up",
   "Make pacing slightly slower",
 ];
+const WORKSPACE_NAME = "Beach_Trip_V4";
+const PROJECT_ID = "proj_beach_trip_v4";
+const HEALTH_POLL_INTERVAL_MS = 10000;
 
 function isDecisionTurn(turn: ChatTurn): turn is AssistantDecisionTurn {
   return turn.role === "assistant";
@@ -186,7 +197,29 @@ function formatTimecode(seconds: number): string {
     .padStart(2, "0")}:${secs.toString().padStart(2, "0")}:00`;
 }
 
+function healthStateLabel(state: HealthState): string {
+  switch (state) {
+    case "online":
+      return "online";
+    case "offline":
+      return "offline";
+    default:
+      return "checking";
+  }
+}
+
+function buildHealthTitle(target: ServiceTarget, snapshot: ServiceHealthSnapshot): string {
+  if (snapshot.state === "online") {
+    return `${target} is online (${snapshot.latencyMs ?? "-"}ms)`;
+  }
+  if (snapshot.state === "checking") {
+    return `${target} is checking`;
+  }
+  return `${target} is offline (${snapshot.message ?? "unknown"})`;
+}
+
 function App() {
+  const [sessionId] = useState(() => getOrCreateSessionId(PROJECT_ID));
   const [isThinking, setIsThinking] = useState(false);
   const [chatTurns, setChatTurns] = useState<ChatTurn[]>(INITIAL_CHAT);
   const [storyboard, setStoryboard] = useState<StoryboardScene[]>(INITIAL_STORYBOARD);
@@ -202,6 +235,10 @@ function App() {
   const [patchPulseId, setPatchPulseId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTimeSec, setCurrentTimeSec] = useState(12);
+  const [serviceHealth, setServiceHealth] = useState<Record<ServiceTarget, ServiceHealthSnapshot>>({
+    core: createInitialHealthSnapshot(),
+    server: createInitialHealthSnapshot(),
+  });
 
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -211,10 +248,50 @@ function App() {
   );
   const safeTotalDurationSec = Math.max(1, totalDurationSec);
   const playbackProgress = Math.min(1, currentTimeSec / safeTotalDurationSec);
+  const sessionLabel = `Session #${sessionId.slice(-8).toUpperCase()}`;
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatTurns, isThinking]);
+
+  useEffect(() => {
+    let disposed = false;
+    let polling = false;
+    let intervalId: number | null = null;
+
+    async function pollHealth() {
+      if (disposed || polling) {
+        return;
+      }
+      polling = true;
+      try {
+        const [coreSnapshot, serverSnapshot] = await Promise.all([
+          probeServiceHealth("core"),
+          probeServiceHealth("server"),
+        ]);
+        if (!disposed) {
+          setServiceHealth({
+            core: coreSnapshot,
+            server: serverSnapshot,
+          });
+        }
+      } finally {
+        polling = false;
+      }
+    }
+
+    void pollHealth();
+    intervalId = window.setInterval(() => {
+      void pollHealth();
+    }, HEALTH_POLL_INTERVAL_MS);
+
+    return () => {
+      disposed = true;
+      if (intervalId !== null) {
+        window.clearInterval(intervalId);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     function handleMouseMove(event: MouseEvent) {
@@ -385,19 +462,25 @@ function App() {
           <div className="workspace-path">
             <span>Workspace</span>
             <ChevronRight size={12} />
-            <span className="workspace-path-current">Beach_Trip_V4</span>
+            <span className="workspace-path-current">{WORKSPACE_NAME}</span>
           </div>
         </div>
 
         <div className="topbar-right">
           <div className="health-cluster">
-            <span className="health-pill">
-              <span className="health-dot" />
-              core
+            <span
+              className={`health-pill health-pill-${serviceHealth.core.state}`}
+              title={buildHealthTitle("core", serviceHealth.core)}
+            >
+              <span className={`health-dot health-dot-${serviceHealth.core.state}`} />
+              core {healthStateLabel(serviceHealth.core.state)}
             </span>
-            <span className="health-pill">
-              <span className="health-dot" />
-              server
+            <span
+              className={`health-pill health-pill-${serviceHealth.server.state}`}
+              title={buildHealthTitle("server", serviceHealth.server)}
+            >
+              <span className={`health-dot health-dot-${serviceHealth.server.state}`} />
+              server {healthStateLabel(serviceHealth.server.state)}
             </span>
             {isEditLocked ? <span className="lock-pill">EDIT LOCKED</span> : null}
           </div>
@@ -495,7 +578,7 @@ function App() {
               <MessageSquare size={16} />
               <span>AI Copilot</span>
             </h2>
-            <span className="session-badge">Session #B1X9</span>
+            <span className="session-badge">{sessionLabel}</span>
           </div>
 
           <div className="chat-thread">

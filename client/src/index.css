@@ -145,13 +145,42 @@ textarea {
   font-family: "IBM Plex Sans", "MiSans", sans-serif;
 }
 
+.health-pill-online {
+  color: #b7f3d5;
+  border-color: rgba(68, 222, 138, 0.36);
+}
+
+.health-pill-checking {
+  color: #f0de9d;
+  border-color: rgba(240, 205, 120, 0.36);
+}
+
+.health-pill-offline {
+  color: #f7b0b0;
+  border-color: rgba(241, 91, 91, 0.4);
+}
+
 .health-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
+}
+
+.health-dot-online {
   background: #44de8a;
   box-shadow: 0 0 8px rgba(68, 222, 138, 0.6);
   animation: breathe 1.6s ease-in-out infinite;
+}
+
+.health-dot-checking {
+  background: #f0cd78;
+  box-shadow: 0 0 8px rgba(240, 205, 120, 0.64);
+  animation: breathe 1.4s ease-in-out infinite;
+}
+
+.health-dot-offline {
+  background: #f15b5b;
+  box-shadow: 0 0 6px rgba(241, 91, 91, 0.48);
 }
 
 .lock-pill {
