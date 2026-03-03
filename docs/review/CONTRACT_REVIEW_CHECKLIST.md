@@ -1,8 +1,8 @@
-# Slice 0 契约评审清单（Contract Baseline Review）
+# 契约评审清单（Contract Baseline Review）
 
 版本：`v1.0`  
 目标：提供一份可直接评审、可直接签字冻结的 `Contract Baseline（契约基线）` 清单。  
-范围：仅文档与模型定义，不涉及实现代码。
+范围：适用于任一功能切片开始前的契约冻结，不涉及实现代码。
 
 ---
 
@@ -202,7 +202,7 @@ MVP 最小操作集合（建议冻结）：
 
 ---
 
-## 6. 必须在 Slice 0 明确的开放问题（Blocking Questions）
+## 6. 评审时必须明确的开放问题（Blocking Questions）
 
 1. `APPLY_PATCH_ONLY` 的 `patch` 是否采用 `JSON Patch（RFC6902）`，还是自定义 `Ops DSL（操作描述语法）`？
 2. `ASK_USER_CLARIFICATION` 是否需要独立字段 `clarification_question`？
@@ -212,8 +212,8 @@ MVP 最小操作集合（建议冻结）：
 
 处理规则：
 
-1. 上述问题在 Slice 0 必须“明确决策”或“明确暂缓并写入 Non-goal”。
-2. 不允许带着未定语义进入 Slice 1 代码实现。
+1. 上述问题在当前评审轮次必须“明确决策”或“明确暂缓并写入 Non-goal”。
+2. 不允许带着未定语义进入代码实现阶段。
 
 ---
 
@@ -230,4 +230,3 @@ MVP 最小操作集合（建议冻结）：
 1. 本清单 `3.x` 全部打勾。
 2. `6` 章开放问题全部落地结论。
 3. 版本写入：`contract_version = 1.0.0`（或会议确认版本）。
-

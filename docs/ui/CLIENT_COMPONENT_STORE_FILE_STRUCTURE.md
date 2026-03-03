@@ -102,7 +102,7 @@ client/src
 10. `render/request_started`
 11. `render/request_finished`
 
-## 5. 第一阶段可交付范围（Phase-1 Deliverable）
+## 5. 当前落地范围（Current Scope）
 
 1. 三列布局与拖拽分栏可用。
 2. `Assets/Clips` 视图切换可用。
@@ -110,7 +110,7 @@ client/src
 4. 右侧预览舞台 + 底部分镜卡可交互高亮。
 5. 暂时允许使用 `Mock Flow（模拟流程）` 替代真实 API。
 
-## 6. 第二阶段接线位（Phase-2 Wiring）
+## 6. 后续接线位（Next Wiring）
 
 1. `chat-service.ts` 接 `POST /api/v1/chat`。
 2. `render-service.ts` 接 `POST /api/v1/render`。

@@ -1,8 +1,8 @@
 # EntroCut Workspace UI 组件与交互规格（v2, High-Fidelity）
 
 版本：`v2.0`  
-设计源：`high-fidelity_prototype.txt`（当前可用设计输入）  
-备注：`EntroCut_design.md` 当前为空，待你补充后可做 v2.1 再收敛。
+设计源：`docs/archive/high-fidelity_prototype.txt`、`docs/archive/high-fidelity_prototype_v2.txt`  
+参考规范：`docs/ui/EntroCut_design.md`。
 
 ---
 
@@ -267,10 +267,10 @@ type ClipItem = {
 
 ---
 
-## 8. 分阶段实现（Implementation Slices）
+## 8. 功能增量建议（Feature Backlog）
 
-1. `Slice A`：静态布局 + 主题样式 + 响应式。
-2. `Slice B`：聊天流转与 `DecisionCard`。
-3. `Slice C`：分镜卡高亮与替换逻辑。
-4. `Slice D`：可拖拽分栏。
-5. `Slice E`：接入 `POST /api/v1/chat` 与 `POST /api/v1/render`。
+1. `Layout`：三列布局与拖拽分栏稳定性。
+2. `Copilot`：聊天输入、`DecisionCard` 展示与状态流转。
+3. `Storyboard`：高亮、定位、补丁替换反馈。
+4. `Health`：顶栏服务状态与会话信息展示。
+5. `API Wiring`：接入 `POST /api/v1/chat` 与 `POST /api/v1/render`。

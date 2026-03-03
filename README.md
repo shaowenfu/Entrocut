@@ -36,15 +36,21 @@
 
 ## 快速启动
 
-1. 启动 `client`
+1. 一键启动本地三端（推荐）
+
+```bash
+./scripts/dev_up.sh
+```
+
+2. 手动启动 `client`
 
 ```bash
 cd client
-pnpm install
-pnpm run dev
+npm install
+npm run dev -- --host 127.0.0.1 --port 5173
 ```
 
-2. 启动 `core`
+3. 手动启动 `core`
 
 ```bash
 cd core
@@ -54,7 +60,7 @@ pip install -r requirements.txt
 uvicorn server:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-3. 启动 `server`
+4. 手动启动 `server`
 
 ```bash
 cd server
@@ -67,5 +73,5 @@ uvicorn main:app --host 127.0.0.1 --port 8001 --reload
 ## 当前实现状态
 
 1. 代码层仍是 `Shell（壳层）` 实现，接口主体多为占位返回。
-2. 设计层已经完成 `MVP` 文档重构，可据此分阶段开发。
+2. 设计层已归档到 `docs/`，按 `Feature-driven Development（按功能切片开发）` 推进。
 3. 历史验证阶段代码和过时文档已清理。
