@@ -19,10 +19,13 @@
 
 1. `core`（本地）：
    1. `GET /health`
-   2. `POST /api/v1/ingest`
-   3. `POST /api/v1/search`
-   4. `POST /api/v1/render`
-   5. `POST /api/v1/export`
+   2. `GET /api/v1/projects`
+   3. `POST /api/v1/projects`
+   4. `POST /api/v1/projects/import`
+   5. `POST /api/v1/ingest`
+   6. `POST /api/v1/search`
+   7. `POST /api/v1/render`
+   8. `POST /api/v1/export`
 2. `server`（云端）：
    1. `GET /health`
    2. `POST /api/v1/index/upsert-clips`
@@ -72,6 +75,6 @@ uvicorn main:app --host 127.0.0.1 --port 8001 --reload
 
 ## 当前实现状态
 
-1. 代码层仍是 `Shell（壳层）` 实现，接口主体多为占位返回。
+1. 启动台主路径已接入真实项目接口；其余核心能力仍以 `Shell（壳层）` 为主。
 2. 设计层已归档到 `docs/`，按 `Feature-driven Development（按功能切片开发）` 推进。
 3. 历史验证阶段代码和过时文档已清理。

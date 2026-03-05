@@ -5,7 +5,7 @@
 ## 当前能力
 
 1. `GET /health` 健康检查。
-2. `POST /api/v1/chat` 占位接口。
+2. `POST /api/v1/chat` 最小 `accepted` 响应（用于启动台 Prompt 握手）。
 
 ## 说明
 

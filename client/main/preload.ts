@@ -1,9 +1,21 @@
-/**
- * Electron Preload（预加载）占位文件。
- *
- * TODO:
- * 1. Define secure API surface（定义安全 API 暴露面）
- * 2. Keep context isolation enabled（保持隔离上下文）
- */
+import { contextBridge, ipcRenderer } from "electron";
 
-export {};
+interface OpenDirectoryDialogResult {
+  canceled: boolean;
+  filePaths: string[];
+}
+
+const electronBridge = {
+  version: process.versions.electron,
+  async showOpenDirectory(): Promise<string | null> {
+    const result = (await ipcRenderer.invoke(
+      "dialog:open-directory"
+    )) as OpenDirectoryDialogResult | null;
+    if (!result || result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+    return result.filePaths[0] ?? null;
+  },
+};
+
+contextBridge.exposeInMainWorld("electron", electronBridge);

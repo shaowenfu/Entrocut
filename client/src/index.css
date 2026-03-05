@@ -1233,6 +1233,11 @@ textarea {
   background: rgba(16, 16, 20, 0.96);
 }
 
+.intent-drop-surface.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .intent-drop-icon {
   width: 60px;
   height: 60px;

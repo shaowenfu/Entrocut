@@ -112,7 +112,13 @@ function LaunchpadPage() {
 
           <div className={`intent-drop-shell ${isDropHovering ? "is-hovering" : ""}`}>
             <div
-              className="intent-drop-surface"
+              className={`intent-drop-surface ${isCreating || isImporting ? "is-disabled" : ""}`}
+              onClick={() => {
+                if (isCreating || isImporting) {
+                  return;
+                }
+                void importLocalFolder();
+              }}
               onDragOver={(event) => {
                 event.preventDefault();
                 setIsDropHovering(true);
