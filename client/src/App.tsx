@@ -1,26 +1,20 @@
-import { useState } from "react";
 import LaunchpadPage from "./pages/LaunchpadPage";
 import WorkspacePage from "./pages/WorkspacePage";
-
-type AppView = "launchpad" | "workspace";
+import { useLaunchpadStore } from "./store/useLaunchpadStore";
 
 function App() {
-  const [view, setView] = useState<AppView>("launchpad");
-  const [activeWorkspaceName, setActiveWorkspaceName] = useState("Beach Trip Vlog");
+  const activeWorkspaceId = useLaunchpadStore((state) => state.activeWorkspaceId);
+  const activeWorkspaceName = useLaunchpadStore((state) => state.activeWorkspaceName);
+  const clearActiveWorkspace = useLaunchpadStore((state) => state.clearActiveWorkspace);
 
-  function handleOpenWorkspace(workspaceName: string) {
-    setActiveWorkspaceName(workspaceName);
-    setView("workspace");
-  }
-
-  if (view === "launchpad") {
-    return <LaunchpadPage onOpenWorkspace={handleOpenWorkspace} />;
+  if (!activeWorkspaceId) {
+    return <LaunchpadPage />;
   }
 
   return (
     <WorkspacePage
-      workspaceName={activeWorkspaceName}
-      onBackLaunchpad={() => setView("launchpad")}
+      workspaceName={activeWorkspaceName ?? activeWorkspaceId}
+      onBackLaunchpad={clearActiveWorkspace}
     />
   );
 }

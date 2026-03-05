@@ -1,4 +1,4 @@
-import { useMemo, useState, type DragEvent } from "react";
+import { useEffect, useMemo, useState, type DragEvent } from "react";
 import {
   CheckCircle2,
   ChevronRight,
@@ -12,35 +12,71 @@ import {
   Search,
   Sparkles,
 } from "lucide-react";
-import { MOCK_LAUNCHPAD_HINTS, MOCK_LAUNCHPAD_PROJECTS } from "../mocks/launchpad";
+import { useLaunchpadStore } from "../store/useLaunchpadStore";
 
-type LaunchpadPageProps = {
-  onOpenWorkspace: (workspaceName: string) => void;
-};
+const PROMPT_HINTS = [
+  "A fast-paced recap of my Tokyo trip",
+  "一个 30 秒的产品开场，节奏紧凑",
+  "生成旅行 vlog 的第一版粗剪",
+];
 
-function LaunchpadPage({ onOpenWorkspace }: LaunchpadPageProps) {
+function LaunchpadPage() {
   const [prompt, setPrompt] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [isDropHovering, setIsDropHovering] = useState(false);
   const [hintIndex, setHintIndex] = useState(0);
+  const recentProjects = useLaunchpadStore((state) => state.recentProjects);
+  const isLoadingProjects = useLaunchpadStore((state) => state.isLoadingProjects);
+  const isImporting = useLaunchpadStore((state) => state.isImporting);
+  const isCreating = useLaunchpadStore((state) => state.isCreating);
+  const lastError = useLaunchpadStore((state) => state.lastError);
+  const fetchRecentProjects = useLaunchpadStore((state) => state.fetchRecentProjects);
+  const importLocalFolder = useLaunchpadStore((state) => state.importLocalFolder);
+  const createEmptyProject = useLaunchpadStore((state) => state.createEmptyProject);
+  const createProjectFromPrompt = useLaunchpadStore((state) => state.createProjectFromPrompt);
+  const openWorkspace = useLaunchpadStore((state) => state.openWorkspace);
+  const clearLastError = useLaunchpadStore((state) => state.clearLastError);
+
+  useEffect(() => {
+    void fetchRecentProjects();
+  }, [fetchRecentProjects]);
+
+  const displayProjects = useMemo(() => {
+    const keyword = searchQuery.trim().toLowerCase();
+    if (!keyword) {
+      return recentProjects;
+    }
+    return recentProjects.filter((project) => project.title.toLowerCase().includes(keyword));
+  }, [recentProjects, searchQuery]);
 
   const promptPlaceholder = useMemo(
-    () => `Or type an idea: "${MOCK_LAUNCHPAD_HINTS[hintIndex]}"`,
+    () => `Or type an idea: "${PROMPT_HINTS[hintIndex]}"`,
     [hintIndex]
   );
 
-  function handleCreateFromPrompt() {
+  async function handleCreateFromPrompt() {
     if (!prompt.trim()) {
       return;
     }
-    // TODO(api): 改为真实 `POST /api/v1/projects` 后再跳转到 Workspace。
-    onOpenWorkspace(prompt.trim().slice(0, 32));
+    try {
+      await createProjectFromPrompt(prompt.trim());
+      setPrompt("");
+    } catch {
+      // 错误已由 store 收敛到 lastError。
+    }
   }
 
-  function handleDrop(event: DragEvent<HTMLDivElement>) {
+  function extractDroppedPath(event: DragEvent<HTMLDivElement>): string | null {
+    const firstFile = event.dataTransfer.files?.item(0);
+    const electronPath = (firstFile as File & { path?: string } | null)?.path;
+    return typeof electronPath === "string" && electronPath.trim().length > 0 ? electronPath : null;
+  }
+
+  async function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setIsDropHovering(false);
-    // TODO(api): 改为真实 `POST /api/v1/projects/import`，并上传本地索引任务。
-    onOpenWorkspace("Imported Workspace");
+    const droppedPath = extractDroppedPath(event);
+    await importLocalFolder(droppedPath ?? undefined);
   }
 
   return (
@@ -53,11 +89,16 @@ function LaunchpadPage({ onOpenWorkspace }: LaunchpadPageProps) {
           <span>EntroCut</span>
         </div>
 
-        <button className="launchpad-search" type="button">
+        <label className="launchpad-search">
           <Search size={14} />
-          <span>Search projects...</span>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Search projects..."
+          />
           <kbd>Ctrl+K</kbd>
-        </button>
+        </label>
 
         <div className="launchpad-user">ME</div>
       </header>
@@ -93,13 +134,21 @@ function LaunchpadPage({ onOpenWorkspace }: LaunchpadPageProps) {
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
                 placeholder={promptPlaceholder}
-                onFocus={() => setHintIndex((current) => (current + 1) % MOCK_LAUNCHPAD_HINTS.length)}
+                onFocus={() => setHintIndex((current) => (current + 1) % PROMPT_HINTS.length)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void handleCreateFromPrompt();
+                  }
+                }}
+                disabled={isCreating || isImporting}
               />
               <button
                 type="button"
                 className={prompt.trim() ? "is-active" : ""}
-                onClick={handleCreateFromPrompt}
+                onClick={() => void handleCreateFromPrompt()}
                 aria-label="create workspace"
+                disabled={isCreating || isImporting}
               >
                 <Plus size={16} />
               </button>
@@ -107,15 +156,20 @@ function LaunchpadPage({ onOpenWorkspace }: LaunchpadPageProps) {
           </div>
 
           <div className="intent-actions">
-            <button type="button" onClick={() => onOpenWorkspace("Untitled Sequence")}>
+            <button type="button" onClick={() => void createEmptyProject()} disabled={isCreating || isImporting}>
               <FileVideo size={14} />
               <span>Empty Sequence</span>
             </button>
-            <button type="button">
+            <button type="button" onClick={() => void importLocalFolder()} disabled={isCreating || isImporting}>
               <Cloud size={14} />
-              <span>Connect Drive</span>
+              <span>Browse Folder</span>
             </button>
           </div>
+          {lastError ? (
+            <p className="launchpad-error-banner" role="alert" onClick={clearLastError}>
+              {lastError.code}: {lastError.message}
+            </p>
+          ) : null}
         </section>
 
         <section className="recent-zone">
@@ -128,8 +182,8 @@ function LaunchpadPage({ onOpenWorkspace }: LaunchpadPageProps) {
           </div>
 
           <div className="recent-grid">
-            {MOCK_LAUNCHPAD_PROJECTS.map((project) => (
-              <article key={project.id} className="recent-card" onClick={() => onOpenWorkspace(project.title)}>
+            {displayProjects.map((project) => (
+              <article key={project.id} className="recent-card" onClick={() => openWorkspace(project)}>
                 <div className={`recent-thumb ${project.thumbnailClassName}`}>
                   <div className="recent-thumb-top">
                     <span className="storage-pill">
@@ -161,6 +215,18 @@ function LaunchpadPage({ onOpenWorkspace }: LaunchpadPageProps) {
                 </div>
               </article>
             ))}
+
+            {isLoadingProjects ? (
+              <article className="archive-card" aria-label="loading projects">
+                <span>Loading projects...</span>
+              </article>
+            ) : null}
+
+            {!isLoadingProjects && displayProjects.length === 0 ? (
+              <article className="archive-card" aria-label="empty projects">
+                <span>No projects</span>
+              </article>
+            ) : null}
 
             <button className="archive-card" type="button">
               <ChevronRight size={20} />
