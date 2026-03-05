@@ -1,5 +1,19 @@
 # 07. Workflow Walkthrough（流程走查）
 
+## 场景零：启动台进入工作台（Launchpad Entry）
+
+1. 用户打开客户端，默认进入 `Launchpad`。
+2. 用户可选择两种启动方式：
+   1. 拖入素材文件夹到 `Intent Drop-Zone`。
+   2. 输入 Prompt 并创建新项目。
+3. 用户也可点击 `Recent Workspaces` 卡片直接回到历史项目。
+4. 页面进入 `Workspace` 后开始后续摄入、对话、渲染链路。
+
+验收点：
+
+1. 启动台可见项目 AI 状态（如 `Analyzed x clips`、`Last AI Edit`）。
+2. 启动路径与工作台路径切换稳定，无页面状态错乱。
+
 ## 场景一：冷启动与素材摄入（Ingestion）
 
 1. 用户在 `client` 导入 `travel_kyoto.mp4`。

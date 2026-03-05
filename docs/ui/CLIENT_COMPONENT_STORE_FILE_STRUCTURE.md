@@ -1,117 +1,97 @@
-# Client UI 文件结构（基于新版 High-Fidelity Prototype）
+# Client 组件与状态文件结构（Launchpad + Workspace）
 
-本文档定义 `client` 第一阶段 UI 重构后的目标结构。核心变化：从“左 AI + 右工作台”切到 `3-Column Workspace（三列工作台）`，并将底部交互改为 `AI Storyboard（AI 分镜卡片）`。
+本文档描述当前 `client` 的落地结构与下一步拆分方向。  
+目标：先保证页面级稳定，再按功能切片逐步模块化。
 
-## 1. 目标目录树（Target Tree）
+## 1. 当前结构（已落地）
 
 ```text
 client/src
 ├── App.tsx
-├── main.tsx
 ├── index.css
-├── styles
-│   └── workspace.css
+├── main.tsx
+├── mocks
+│   └── launchpad.ts
+├── pages
+│   ├── LaunchpadPage.tsx
+│   └── WorkspacePage.tsx
+├── services
+│   └── health.ts
+└── utils
+    └── session.ts
+```
+
+## 2. 文件职责
+
+1. `App.tsx`
+   1. 页面壳层。
+   2. 管理 `launchpad/workspace` 视图切换。
+2. `pages/LaunchpadPage.tsx`
+   1. 启动台 UI。
+   2. 混合输入区（拖拽 + Prompt）。
+   3. 最近项目卡片列表。
+3. `pages/WorkspacePage.tsx`
+   1. 三栏工作台 UI。
+   2. `Copilot + Preview + Storyboard` 交互。
+   3. 顶栏 `Health` 与导出锁状态。
+4. `mocks/launchpad.ts`
+   1. 启动台 mock 数据集中定义。
+   2. 明确 `TODO(contract/api)` 替换位。
+5. `services/health.ts`
+   1. `core/server` 健康探测。
+6. `utils/session.ts`
+   1. 基于 `project_id` 的 `session_id` 生成与缓存。
+
+## 3. 状态切分（当前形态）
+
+### 3.1 App-level State
+
+1. `view: "launchpad" | "workspace"`
+2. `activeWorkspaceName: string`
+
+### 3.2 LaunchpadPage State
+
+1. `prompt: string`
+2. `isDropHovering: boolean`
+3. `hintIndex: number`
+
+### 3.3 WorkspacePage State
+
+1. `chatTurns`
+2. `isThinking`
+3. `storyboard`
+4. `layout widths`
+5. `isExporting / isEditLocked`
+6. `serviceHealth`
+7. `playback state`
+
+## 4. 下一步目标结构（按功能演进）
+
+```text
+client/src
 ├── components
-│   ├── topbar
-│   │   └── TopBar.tsx
-│   ├── workspace
-│   │   ├── WorkspaceLayout.tsx
-│   │   ├── ResizeHandle.tsx
-│   │   └── WorkspaceShell.tsx
-│   ├── media-dock
-│   │   ├── MediaDock.tsx
-│   │   ├── MediaTabSwitch.tsx
-│   │   ├── AssetGrid.tsx
-│   │   └── ClipList.tsx
-│   ├── copilot
-│   │   ├── CopilotPane.tsx
-│   │   ├── ChatThread.tsx
-│   │   ├── DecisionCard.tsx
-│   │   └── PromptComposer.tsx
-│   └── stage
+│   ├── launchpad
+│   │   ├── IntentDropZone.tsx
+│   │   ├── RecentWorkspaceGrid.tsx
+│   │   └── RecentWorkspaceCard.tsx
+│   └── workspace
+│       ├── TopBar.tsx
+│       ├── MediaDock.tsx
+│       ├── CopilotPane.tsx
 │       ├── PreviewStage.tsx
-│       ├── ScrubberBar.tsx
-│       ├── StoryboardRail.tsx
-│       └── StoryboardCard.tsx
+│       └── StoryboardRail.tsx
 ├── store
-│   ├── types.ts
-│   ├── actions.ts
-│   ├── reducer.ts
-│   ├── selectors.ts
-│   ├── initial-state.ts
-│   └── workspace-context.tsx
+│   ├── app-store.ts
+│   ├── launchpad-store.ts
+│   └── workspace-store.ts
 └── services
-    ├── api-client.ts
+    ├── project-service.ts
     ├── chat-service.ts
     └── render-service.ts
 ```
 
-## 2. 组件职责映射（Component Mapping）
+## 5. 接线顺序（严格）
 
-1. `TopBar`
-   1. 品牌、项目名、`Settings（设置）`、`Export（导出）`。
-2. `MediaDock`
-   1. 左列素材入口，`Assets/Clips` 双视图。
-3. `CopilotPane`
-   1. 中列 `AI Copilot` 对话与 `DecisionCard` 决策解释。
-4. `PreviewStage`
-   1. 右列上半部分播放器舞台与 `Scrubber（进度条）`。
-5. `StoryboardRail`
-   1. 右列下半部分只读分镜卡，替代旧 `Timeline（时间线）`。
-6. `ResizeHandle`
-   1. 左右两条可拖拽分栏线，控制列宽。
-
-## 3. Store 结构（State Store）
-
-### 3.1 `UiLayoutState`
-
-1. `leftWidth: number`
-2. `midWidth: number`
-3. `dragging: 'left' | 'mid' | null`
-4. `mediaTab: 'assets' | 'clips'`
-
-### 3.2 `CopilotState`
-
-1. `chatTurns: ChatTurn[]`
-2. `promptText: string`
-3. `isThinking: boolean`
-
-### 3.3 `StageState`
-
-1. `highlightStoryboardId: string | null`
-2. `isPreviewBusy: boolean`
-3. `playbackProgress: number`
-
-### 3.4 `DomainDataState`
-
-1. `assets: AssetItem[]`
-2. `clips: ClipItem[]`
-3. `storyboard: StoryboardScene[]`
-
-## 4. Action 设计（Action Contract）
-
-1. `layout/resize_started`
-2. `layout/resize_updated`
-3. `layout/resize_ended`
-4. `media/tab_changed`
-5. `copilot/prompt_changed`
-6. `chat/request_started`
-7. `chat/response_received`
-8. `storyboard/scene_highlighted`
-9. `storyboard/scene_replaced`
-10. `render/request_started`
-11. `render/request_finished`
-
-## 5. 当前落地范围（Current Scope）
-
-1. 三列布局与拖拽分栏可用。
-2. `Assets/Clips` 视图切换可用。
-3. `Copilot` 对话区可输入与显示决策卡。
-4. 右侧预览舞台 + 底部分镜卡可交互高亮。
-5. 暂时允许使用 `Mock Flow（模拟流程）` 替代真实 API。
-
-## 6. 后续接线位（Next Wiring）
-
-1. `chat-service.ts` 接 `POST /api/v1/chat`。
-2. `render-service.ts` 接 `POST /api/v1/render`。
-3. 将 `DecisionCard.ops` 与 `StoryboardRail` 的 replace 动作绑定。
+1. `Launchpad` 先接 `Project Summary API`（替换 `mocks/launchpad.ts`）。
+2. `Workspace` 再接 `chat/render`，替换本地模拟流转。
+3. 每次替换只动一个功能切片，确保可回归测试。

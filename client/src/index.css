@@ -72,6 +72,17 @@ textarea {
   gap: 14px;
 }
 
+.topbar-back-btn {
+  gap: 6px;
+  border: 1px solid var(--line-subtle);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 6px 10px;
+}
+
+.topbar-back-btn span {
+  font-size: 11px;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -1055,6 +1066,464 @@ textarea {
   border-color: rgba(77, 217, 244, 0.45);
 }
 
+.launchpad-root {
+  min-height: 100vh;
+  width: 100vw;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(circle at 84% -10%, rgba(102, 85, 221, 0.22) 0%, transparent 34%),
+    radial-gradient(circle at 8% -20%, rgba(69, 163, 219, 0.18) 0%, transparent 35%),
+    #09090b;
+}
+
+.launchpad-topbar {
+  height: 64px;
+  display: grid;
+  grid-template-columns: auto minmax(300px, 540px) auto;
+  align-items: center;
+  gap: 20px;
+  padding: 0 30px;
+  border-bottom: 1px solid var(--line-subtle);
+  background: rgba(9, 9, 11, 0.88);
+  backdrop-filter: blur(14px);
+}
+
+.launchpad-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-family: "Sora", "MiSans", sans-serif;
+  font-size: 17px;
+  letter-spacing: 0.01em;
+}
+
+.launchpad-brand-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(118deg, #625cff, #7f53ff, #41d8f7);
+  box-shadow: 0 8px 22px rgba(75, 94, 230, 0.36);
+}
+
+.launchpad-search {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  color: #9ca3b8;
+  border-radius: 10px;
+  height: 38px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-start;
+  cursor: pointer;
+}
+
+.launchpad-search:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #d2d8ec;
+}
+
+.launchpad-search kbd {
+  margin-left: auto;
+  font-size: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  padding: 2px 6px;
+  color: #dce1f4;
+  background: rgba(0, 0, 0, 0.34);
+  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+}
+
+.launchpad-user {
+  justify-self: end;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: linear-gradient(140deg, #5f4fff, #2f8fff);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.launchpad-main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(420px, 44%) 1fr;
+  min-height: 0;
+}
+
+.intent-zone,
+.recent-zone {
+  min-height: 0;
+  padding: 44px 40px;
+}
+
+.intent-zone {
+  border-right: 1px solid var(--line-subtle);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.intent-heading h1 {
+  margin: 0;
+  font-size: 44px;
+  font-family: "Sora", "MiSans", sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.intent-heading p {
+  margin: 10px 0 0;
+  color: #8e95aa;
+  font-size: 14px;
+  max-width: 560px;
+  line-height: 1.55;
+}
+
+.intent-drop-shell {
+  margin-top: 32px;
+  border-radius: 24px;
+  padding: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  transition: transform 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
+}
+
+.intent-drop-shell.is-hovering {
+  transform: translateY(-2px);
+  background: linear-gradient(115deg, #595aff, #8a5bff, #3bc9f7);
+  box-shadow: 0 16px 42px rgba(57, 79, 210, 0.32);
+}
+
+.intent-drop-surface {
+  border-radius: 23px 23px 0 0;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.12);
+  height: 228px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  cursor: pointer;
+  background: rgba(12, 12, 14, 0.96);
+}
+
+.intent-drop-surface:hover {
+  background: rgba(16, 16, 20, 0.96);
+}
+
+.intent-drop-icon {
+  width: 60px;
+  height: 60px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  color: #80a2ff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+
+.intent-drop-surface h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.intent-drop-surface p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #7f879f;
+}
+
+.intent-input-row {
+  height: 70px;
+  border-radius: 0 0 23px 23px;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 14px;
+  color: #79819a;
+}
+
+.intent-input-row input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: #e6ebfd;
+  outline: none;
+  font-size: 14px;
+}
+
+.intent-input-row input::placeholder {
+  color: #5f667f;
+}
+
+.intent-input-row button {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.06);
+  color: #767f97;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.intent-input-row button.is-active {
+  border-color: rgba(122, 131, 255, 0.48);
+  background: rgba(99, 102, 241, 0.22);
+  color: #b8beff;
+}
+
+.intent-actions {
+  margin-top: 18px;
+  display: flex;
+  gap: 10px;
+}
+
+.intent-actions button {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: #c7cce0;
+  border-radius: 10px;
+  height: 36px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.intent-actions button:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.recent-zone {
+  position: relative;
+  overflow: auto;
+}
+
+.recent-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.recent-head h2 {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.recent-head h2 svg {
+  color: #848da8;
+}
+
+.recent-head button {
+  border: 0;
+  background: transparent;
+  color: #8b84ff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.recent-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.recent-card,
+.archive-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 18px;
+}
+
+.recent-card {
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.recent-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(122, 131, 255, 0.32);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.recent-thumb {
+  height: 136px;
+  padding: 10px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.recent-thumb::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.72));
+  pointer-events: none;
+}
+
+.launch-thumb-cyan {
+  background: linear-gradient(145deg, #085277, #11295f);
+}
+
+.launch-thumb-indigo {
+  background: linear-gradient(145deg, #362d7f, #321d5c);
+}
+
+.launch-thumb-zinc {
+  background: linear-gradient(145deg, #2f2f36, #191a20);
+}
+
+.launch-thumb-rose {
+  background: linear-gradient(145deg, #6e2e4d, #5d2d1e);
+}
+
+.recent-thumb-top,
+.recent-thumb h3 {
+  position: relative;
+  z-index: 1;
+}
+
+.recent-thumb-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.storage-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.36);
+  font-size: 10px;
+  color: #dde3f4;
+  padding: 3px 8px;
+  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+}
+
+.recent-thumb button {
+  border: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.28);
+  color: #dce2f5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.recent-card:hover .recent-thumb button {
+  opacity: 1;
+}
+
+.recent-thumb h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #ffffff;
+  text-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+}
+
+.recent-meta {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  background: rgba(9, 9, 11, 0.72);
+}
+
+.recent-meta-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #8991a8;
+}
+
+.ai-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #7ad8ef;
+  border: 1px solid rgba(122, 216, 239, 0.24);
+  background: rgba(122, 216, 239, 0.1);
+  border-radius: 999px;
+  padding: 2px 7px;
+}
+
+.recent-meta p {
+  margin: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  color: #9fa6bc;
+  font-size: 12px;
+}
+
+.recent-meta p svg {
+  color: #8c8dff;
+  margin-top: 1px;
+  flex-shrink: 0;
+}
+
+.recent-meta p em {
+  font-style: normal;
+  color: #6f768e;
+  margin-right: 6px;
+}
+
+.archive-card {
+  min-height: 230px;
+  border-style: dashed;
+  color: #666d84;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  cursor: pointer;
+}
+
+.archive-card:hover {
+  color: #cad1e5;
+  border-color: rgba(151, 159, 245, 0.3);
+  background: rgba(255, 255, 255, 0.05);
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -1096,6 +1565,19 @@ textarea {
 }
 
 @media (max-width: 1200px) {
+  .launchpad-main {
+    grid-template-columns: 1fr;
+  }
+
+  .intent-zone {
+    border-right: 0;
+    border-bottom: 1px solid var(--line-subtle);
+  }
+
+  .recent-grid {
+    grid-template-columns: 1fr;
+  }
+
   .health-cluster {
     display: none;
   }
@@ -1122,5 +1604,26 @@ textarea {
 
   .stage-column {
     min-height: 520px;
+  }
+}
+
+@media (max-width: 900px) {
+  .launchpad-topbar {
+    grid-template-columns: 1fr auto;
+    gap: 12px;
+    padding: 0 16px;
+  }
+
+  .launchpad-search {
+    display: none;
+  }
+
+  .intent-zone,
+  .recent-zone {
+    padding: 24px 16px;
+  }
+
+  .intent-heading h1 {
+    font-size: 32px;
   }
 }
