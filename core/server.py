@@ -6,7 +6,7 @@ from threading import Lock
 from typing import Any, Literal
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -88,6 +88,7 @@ _THUMBNAIL_CLASSES = [
     "launch-thumb-zinc",
     "launch-thumb-rose",
 ]
+_VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm"}
 _PROJECTS: dict[str, _ProjectRecord] = {}
 _PROJECT_LOCK = Lock()
 
@@ -181,6 +182,13 @@ def _build_project_meta(record: _ProjectRecord) -> ProjectMeta:
     )
 
 
+def _is_video_upload(file: UploadFile) -> bool:
+    filename = (file.filename or "").strip()
+    content_type = (file.content_type or "").strip().lower()
+    ext = Path(filename).suffix.lower()
+    return content_type.startswith("video/") or ext in _VIDEO_EXTENSIONS
+
+
 def _create_project_record(*, title: str, source_folder_path: str | None, ai_status: str, last_ai_edit: str) -> _ProjectRecord:
     now = _now()
     return _ProjectRecord(
@@ -266,6 +274,42 @@ def import_project(request: ImportProjectRequest) -> CreateProjectResponse:
             last_ai_edit="Imported from local folder",
         )
         _PROJECTS[record.id] = record
+
+    return CreateProjectResponse(project_id=record.id, title=record.title)
+
+
+@app.post("/api/v1/projects/upload", response_model=CreateProjectResponse)
+async def upload_project(
+    files: list[UploadFile] = File(..., description="Video files（视频文件）"),
+    title: str | None = Form(default=None),
+) -> CreateProjectResponse:
+    valid_videos = [file for file in files if _is_video_upload(file)]
+    if not valid_videos:
+        _http_error(
+            status_code=400,
+            code="CORE_INVALID_UPLOAD_FILES",
+            message="No valid video files were provided.",
+            details={"accepted_ext": sorted(_VIDEO_EXTENSIONS), "total_received": len(files)},
+        )
+
+    normalized_title = title.strip() if title and title.strip() else ""
+    if not normalized_title:
+        sample_name = (valid_videos[0].filename or "").strip()
+        normalized_title = Path(sample_name).stem if sample_name else "Uploaded Workspace"
+    if not normalized_title:
+        normalized_title = "Uploaded Workspace"
+
+    with _PROJECT_LOCK:
+        record = _create_project_record(
+            title=normalized_title,
+            source_folder_path=None,
+            ai_status=f"Uploaded {len(valid_videos)} videos",
+            last_ai_edit="Uploaded from browser picker",
+        )
+        _PROJECTS[record.id] = record
+
+    for file in files:
+        await file.close()
 
     return CreateProjectResponse(project_id=record.id, title=record.title)
 

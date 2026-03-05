@@ -22,10 +22,11 @@
    2. `GET /api/v1/projects`
    3. `POST /api/v1/projects`
    4. `POST /api/v1/projects/import`
-   5. `POST /api/v1/ingest`
-   6. `POST /api/v1/search`
-   7. `POST /api/v1/render`
-   8. `POST /api/v1/export`
+   5. `POST /api/v1/projects/upload`
+   6. `POST /api/v1/ingest`
+   7. `POST /api/v1/search`
+   8. `POST /api/v1/render`
+   9. `POST /api/v1/export`
 2. `server`（云端）：
    1. `GET /health`
    2. `POST /api/v1/index/upsert-clips`

@@ -34,7 +34,7 @@ interface LaunchpadState {
   isThinking: boolean;
   lastError: LaunchpadError | null;
   fetchRecentProjects: () => Promise<void>;
-  importLocalFolder: (folderPath?: string) => Promise<string | null>;
+  importLocalFolder: (input?: ImportMediaInput) => Promise<string | null>;
   createEmptyProject: () => Promise<string>;
   createProjectFromPrompt: (prompt: string, folderPath?: string) => Promise<string>;
   openWorkspace: (project: ProjectMeta) => void;
@@ -62,6 +62,11 @@ interface CreateProjectPayload {
 interface CreateProjectResponse {
   project_id: string;
   title?: string;
+}
+
+interface ImportMediaInput {
+  folderPath?: string;
+  files?: File[];
 }
 
 const REQUEST_TIMEOUT_MS = 3000;
@@ -121,6 +126,29 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   }
 }
 
+async function fetchFormData<T>(url: string, formData: FormData): Promise<T> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      body: formData,
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw toLaunchpadError("HTTP_ERROR", `request_failed_${response.status}`);
+    }
+    return (await response.json()) as T;
+  } catch (error) {
+    if ((error as LaunchpadError)?.code) {
+      throw error;
+    }
+    throw toLaunchpadError("NETWORK_ERROR", "network_unreachable", error);
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 function mapProject(item: ProjectsResponse["items"][number]): ProjectMeta {
   return {
     id: item.id,
@@ -157,6 +185,14 @@ async function coreImportProject(folderPath: string): Promise<CreateProjectRespo
   });
 }
 
+async function coreUploadProject(files: File[]): Promise<CreateProjectResponse> {
+  const formData = new FormData();
+  files.forEach((file) => {
+    formData.append("files", file, file.name);
+  });
+  return fetchFormData<CreateProjectResponse>(`${getCoreBaseUrl()}/api/v1/projects/upload`, formData);
+}
+
 async function serverStartChat(projectId: string, prompt: string): Promise<void> {
   await fetchJson<{ ok?: boolean }>(`${getServerBaseUrl()}/api/v1/chat`, {
     method: "POST",
@@ -170,13 +206,56 @@ async function serverStartChat(projectId: string, prompt: string): Promise<void>
 async function pickFolderFromElectron(): Promise<string | null> {
   const bridge = window.electron;
   if (!bridge?.showOpenDirectory) {
-    throw toLaunchpadError("BRIDGE_UNAVAILABLE", "electron_bridge_missing");
+    return null;
   }
   const pickedPath = await bridge.showOpenDirectory();
   if (!pickedPath) {
     return null;
   }
   return pickedPath;
+}
+
+async function pickVideoFilesFromBrowser(): Promise<File[] | null> {
+  if (typeof document === "undefined") {
+    throw toLaunchpadError("BRIDGE_UNAVAILABLE", "browser_picker_unavailable");
+  }
+
+  return new Promise<File[] | null>((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.accept = "video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi";
+    input.style.display = "none";
+    let settled = false;
+
+    const cleanup = () => {
+      input.value = "";
+      window.removeEventListener("focus", handleWindowFocus, true);
+      input.remove();
+    };
+
+    const handleWindowFocus = () => {
+      window.setTimeout(() => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        resolve(null);
+      }, 0);
+    };
+
+    input.onchange = () => {
+      settled = true;
+      const list = input.files ? Array.from(input.files) : [];
+      cleanup();
+      resolve(list.length > 0 ? list : null);
+    };
+
+    document.body.appendChild(input);
+    window.addEventListener("focus", handleWindowFocus, true);
+    input.click();
+  });
 }
 
 export const useLaunchpadStore = create<LaunchpadState>((set, get) => ({
@@ -204,14 +283,30 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => ({
     }
   },
 
-  importLocalFolder: async (folderPath?: string) => {
+  importLocalFolder: async (input?: ImportMediaInput) => {
     set({ isImporting: true, lastError: null });
     try {
-      const pickedPath = folderPath ?? (await pickFolderFromElectron());
-      if (!pickedPath) {
-        return null;
+      const explicitFolderPath = input?.folderPath?.trim();
+      const explicitFiles = input?.files?.filter((file) => file.size > 0) ?? [];
+
+      let created: CreateProjectResponse | null = null;
+      if (explicitFolderPath) {
+        created = await coreImportProject(explicitFolderPath);
+      } else if (explicitFiles.length > 0) {
+        created = await coreUploadProject(explicitFiles);
+      } else {
+        const pickedPath = await pickFolderFromElectron();
+        if (pickedPath) {
+          created = await coreImportProject(pickedPath);
+        } else {
+          const pickedFiles = await pickVideoFilesFromBrowser();
+          if (!pickedFiles || pickedFiles.length === 0) {
+            return null;
+          }
+          created = await coreUploadProject(pickedFiles);
+        }
       }
-      const created = await coreImportProject(pickedPath);
+
       const workspaceName = created.title?.trim() || "Imported Workspace";
       set({
         activeWorkspaceId: created.project_id,

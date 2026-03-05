@@ -72,11 +72,22 @@ function LaunchpadPage() {
     return typeof electronPath === "string" && electronPath.trim().length > 0 ? electronPath : null;
   }
 
+  function extractDroppedFiles(event: DragEvent<HTMLDivElement>): File[] {
+    return Array.from(event.dataTransfer.files ?? []).filter((file) => file.size > 0);
+  }
+
   async function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setIsDropHovering(false);
     const droppedPath = extractDroppedPath(event);
-    await importLocalFolder(droppedPath ?? undefined);
+    const droppedFiles = extractDroppedFiles(event);
+    if (!droppedPath && droppedFiles.length === 0) {
+      return;
+    }
+    await importLocalFolder({
+      folderPath: droppedPath ?? undefined,
+      files: droppedFiles,
+    });
   }
 
   return (
@@ -107,7 +118,7 @@ function LaunchpadPage() {
         <section className="intent-zone">
           <div className="intent-heading">
             <h1>早上好。</h1>
-            <p>描述你的想法，或直接拖入素材文件夹来唤醒 AI Copilot。</p>
+            <p>描述你的想法，或直接拖入素材文件夹/视频文件来唤醒 AI Copilot。</p>
           </div>
 
           <div className={`intent-drop-shell ${isDropHovering ? "is-hovering" : ""}`}>
@@ -129,8 +140,8 @@ function LaunchpadPage() {
               <div className="intent-drop-icon">
                 <FolderUp size={22} />
               </div>
-              <h3>Drop media folder here</h3>
-              <p>or click to browse local files</p>
+              <h3>Drop media here</h3>
+              <p>or click to browse and upload videos</p>
             </div>
 
             <div className="intent-input-row">
@@ -168,7 +179,7 @@ function LaunchpadPage() {
             </button>
             <button type="button" onClick={() => void importLocalFolder()} disabled={isCreating || isImporting}>
               <Cloud size={14} />
-              <span>Browse Folder</span>
+              <span>Browse Media</span>
             </button>
           </div>
           {lastError ? (
