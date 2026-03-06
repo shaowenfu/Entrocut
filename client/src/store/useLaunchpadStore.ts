@@ -1,4 +1,17 @@
 import { create } from "zustand";
+import {
+  coreCreateProject,
+  coreImportProject,
+  coreListProjects,
+  coreUploadProject,
+  type CoreProjectMetaDTO,
+} from "../services/coreApi";
+import {
+  normalizeMediaInput,
+  pickMediaFromSystem,
+  type MediaPickInput,
+} from "../services/electronBridge";
+import { useWorkspaceStore } from "./useWorkspaceStore";
 
 export interface ProjectMeta {
   id: string;
@@ -24,6 +37,13 @@ export interface LaunchpadError {
   cause?: string;
 }
 
+interface StartLaunchInput extends MediaPickInput {
+  prompt?: string;
+  shouldPickMedia?: boolean;
+}
+
+type ImportMediaInput = MediaPickInput;
+
 interface LaunchpadState {
   recentProjects: ProjectMeta[];
   activeWorkspaceId: string | null;
@@ -34,61 +54,13 @@ interface LaunchpadState {
   isThinking: boolean;
   lastError: LaunchpadError | null;
   fetchRecentProjects: () => Promise<void>;
+  startWorkspaceFromLaunchpad: (input?: StartLaunchInput) => Promise<string | null>;
   importLocalFolder: (input?: ImportMediaInput) => Promise<string | null>;
   createEmptyProject: () => Promise<string>;
   createProjectFromPrompt: (prompt: string, folderPath?: string) => Promise<string>;
   openWorkspace: (project: ProjectMeta) => void;
   clearActiveWorkspace: () => void;
   clearLastError: () => void;
-}
-
-interface ProjectsResponse {
-  items: Array<{
-    id: string;
-    title: string;
-    storage_type?: "cloud" | "local";
-    last_active_text?: string;
-    ai_status?: string;
-    last_ai_edit?: string;
-    thumbnail_class_name?: string;
-  }>;
-}
-
-interface CreateProjectPayload {
-  title?: string;
-  source_folder_path?: string;
-}
-
-interface CreateProjectResponse {
-  project_id: string;
-  title?: string;
-}
-
-interface ImportMediaInput {
-  folderPath?: string;
-  files?: File[];
-}
-
-const REQUEST_TIMEOUT_MS = 3000;
-const DEFAULT_CORE_BASE_URL = "http://127.0.0.1:8000";
-const DEFAULT_SERVER_BASE_URL = "http://127.0.0.1:8001";
-
-function trimTrailingSlash(url: string): string {
-  return url.endsWith("/") ? url.slice(0, -1) : url;
-}
-
-function envBaseUrl(key: "VITE_CORE_BASE_URL" | "VITE_SERVER_BASE_URL", fallback: string): string {
-  const env = import.meta.env as Record<string, string | undefined>;
-  const value = env[key]?.trim();
-  return trimTrailingSlash(value && value.length > 0 ? value : fallback);
-}
-
-function getCoreBaseUrl(): string {
-  return envBaseUrl("VITE_CORE_BASE_URL", DEFAULT_CORE_BASE_URL);
-}
-
-function getServerBaseUrl(): string {
-  return envBaseUrl("VITE_SERVER_BASE_URL", DEFAULT_SERVER_BASE_URL);
 }
 
 function toLaunchpadError(code: ErrorCode, message: string, cause?: unknown): LaunchpadError {
@@ -99,57 +71,7 @@ function toLaunchpadError(code: ErrorCode, message: string, cause?: unknown): La
   };
 }
 
-async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, {
-      ...init,
-      headers: {
-        "Content-Type": "application/json",
-        ...(init?.headers ?? {}),
-      },
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      throw toLaunchpadError("HTTP_ERROR", `request_failed_${response.status}`);
-    }
-    return (await response.json()) as T;
-  } catch (error) {
-    if ((error as LaunchpadError)?.code) {
-      throw error;
-    }
-    throw toLaunchpadError("NETWORK_ERROR", "network_unreachable", error);
-  } finally {
-    window.clearTimeout(timer);
-  }
-}
-
-async function fetchFormData<T>(url: string, formData: FormData): Promise<T> {
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      body: formData,
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw toLaunchpadError("HTTP_ERROR", `request_failed_${response.status}`);
-    }
-    return (await response.json()) as T;
-  } catch (error) {
-    if ((error as LaunchpadError)?.code) {
-      throw error;
-    }
-    throw toLaunchpadError("NETWORK_ERROR", "network_unreachable", error);
-  } finally {
-    window.clearTimeout(timer);
-  }
-}
-
-function mapProject(item: ProjectsResponse["items"][number]): ProjectMeta {
+function mapProject(item: CoreProjectMetaDTO): ProjectMeta {
   return {
     id: item.id,
     title: item.title,
@@ -159,103 +81,6 @@ function mapProject(item: ProjectsResponse["items"][number]): ProjectMeta {
     aiStatus: item.ai_status ?? "Unknown",
     lastAiEdit: item.last_ai_edit ?? "None",
   };
-}
-
-async function coreListProjects(): Promise<ProjectMeta[]> {
-  const data = await fetchJson<ProjectsResponse>(`${getCoreBaseUrl()}/api/v1/projects`, {
-    method: "GET",
-  });
-  if (!Array.isArray(data.items)) {
-    throw toLaunchpadError("SCHEMA_ERROR", "projects_items_invalid");
-  }
-  return data.items.map(mapProject);
-}
-
-async function coreCreateProject(payload: CreateProjectPayload): Promise<CreateProjectResponse> {
-  return fetchJson<CreateProjectResponse>(`${getCoreBaseUrl()}/api/v1/projects`, {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-}
-
-async function coreImportProject(folderPath: string): Promise<CreateProjectResponse> {
-  return fetchJson<CreateProjectResponse>(`${getCoreBaseUrl()}/api/v1/projects/import`, {
-    method: "POST",
-    body: JSON.stringify({ folder_path: folderPath }),
-  });
-}
-
-async function coreUploadProject(files: File[]): Promise<CreateProjectResponse> {
-  const formData = new FormData();
-  files.forEach((file) => {
-    formData.append("files", file, file.name);
-  });
-  return fetchFormData<CreateProjectResponse>(`${getCoreBaseUrl()}/api/v1/projects/upload`, formData);
-}
-
-async function serverStartChat(projectId: string, prompt: string): Promise<void> {
-  await fetchJson<{ ok?: boolean }>(`${getServerBaseUrl()}/api/v1/chat`, {
-    method: "POST",
-    body: JSON.stringify({
-      project_id: projectId,
-      message: prompt,
-    }),
-  });
-}
-
-async function pickFolderFromElectron(): Promise<string | null> {
-  const bridge = window.electron;
-  if (!bridge?.showOpenDirectory) {
-    return null;
-  }
-  const pickedPath = await bridge.showOpenDirectory();
-  if (!pickedPath) {
-    return null;
-  }
-  return pickedPath;
-}
-
-async function pickVideoFilesFromBrowser(): Promise<File[] | null> {
-  if (typeof document === "undefined") {
-    throw toLaunchpadError("BRIDGE_UNAVAILABLE", "browser_picker_unavailable");
-  }
-
-  return new Promise<File[] | null>((resolve) => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.multiple = true;
-    input.accept = "video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi";
-    input.style.display = "none";
-    let settled = false;
-
-    const cleanup = () => {
-      input.value = "";
-      window.removeEventListener("focus", handleWindowFocus, true);
-      input.remove();
-    };
-
-    const handleWindowFocus = () => {
-      window.setTimeout(() => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        cleanup();
-        resolve(null);
-      }, 0);
-    };
-
-    input.onchange = () => {
-      settled = true;
-      const list = input.files ? Array.from(input.files) : [];
-      cleanup();
-      resolve(list.length > 0 ? list : null);
-    };
-
-    document.body.appendChild(input);
-    window.addEventListener("focus", handleWindowFocus, true);
-    input.click();
-  });
 }
 
 export const useLaunchpadStore = create<LaunchpadState>((set, get) => ({
@@ -271,73 +96,106 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => ({
   fetchRecentProjects: async () => {
     set({ isLoadingProjects: true, lastError: null });
     try {
-      const projects = await coreListProjects();
-      set({ recentProjects: projects });
+      const data = await coreListProjects();
+      if (!Array.isArray(data.items)) {
+        throw toLaunchpadError("SCHEMA_ERROR", "projects_items_invalid");
+      }
+      set({ recentProjects: data.items.map(mapProject) });
     } catch (error) {
       set({
         recentProjects: [],
-        lastError: (error as LaunchpadError) ?? toLaunchpadError("NETWORK_ERROR", "fetch_projects_failed"),
+        lastError:
+          (error as LaunchpadError) ??
+          toLaunchpadError("NETWORK_ERROR", "fetch_projects_failed", error),
       });
     } finally {
       set({ isLoadingProjects: false });
     }
   },
 
-  importLocalFolder: async (input?: ImportMediaInput) => {
-    set({ isImporting: true, lastError: null });
+  startWorkspaceFromLaunchpad: async (input) => {
+    set({ isCreating: true, isImporting: true, lastError: null });
     try {
-      const explicitFolderPath = input?.folderPath?.trim();
-      const explicitFiles = input?.files?.filter((file) => file.size > 0) ?? [];
-
-      let created: CreateProjectResponse | null = null;
-      if (explicitFolderPath) {
-        created = await coreImportProject(explicitFolderPath);
-      } else if (explicitFiles.length > 0) {
-        created = await coreUploadProject(explicitFiles);
-      } else {
-        const pickedPath = await pickFolderFromElectron();
-        if (pickedPath) {
-          created = await coreImportProject(pickedPath);
-        } else {
-          const pickedFiles = await pickVideoFilesFromBrowser();
-          if (!pickedFiles || pickedFiles.length === 0) {
-            return null;
-          }
-          created = await coreUploadProject(pickedFiles);
+      const trimmedPrompt = input?.prompt?.trim() ?? "";
+      let media = normalizeMediaInput(input);
+      if (!media && input?.shouldPickMedia) {
+        media = await pickMediaFromSystem();
+        if (!media) {
+          return null;
         }
       }
 
-      const workspaceName = created.title?.trim() || "Imported Workspace";
+      const hasMedia = Boolean(media?.folderPath || (media?.files && media.files.length > 0));
+      if (!hasMedia && !trimmedPrompt) {
+        const appError = toLaunchpadError("INVALID_INPUT", "prompt_or_media_required");
+        set({ lastError: appError });
+        return null;
+      }
+
+      let created: { project_id: string; title: string };
+      if (hasMedia && media?.folderPath) {
+        created = await coreImportProject(media.folderPath);
+      } else if (hasMedia && media?.files && media.files.length > 0) {
+        created = await coreUploadProject(media.files);
+      } else {
+        created = await coreCreateProject({
+          title: trimmedPrompt.slice(0, 32) || "Untitled Sequence",
+        });
+      }
+
+      const workspaceName = created.title?.trim() || "Untitled Sequence";
       set({
         activeWorkspaceId: created.project_id,
         activeWorkspaceName: workspaceName,
       });
+
       await get().fetchRecentProjects();
+      void useWorkspaceStore.getState().bootstrapFromLaunch({
+        projectId: created.project_id,
+        workspaceName,
+        prompt: trimmedPrompt || undefined,
+        hasMedia,
+      });
       return created.project_id;
     } catch (error) {
       set({
         lastError:
-          (error as LaunchpadError) ?? toLaunchpadError("NETWORK_ERROR", "import_local_folder_failed", error),
+          (error as LaunchpadError) ??
+          toLaunchpadError("NETWORK_ERROR", "start_workspace_from_launchpad_failed", error),
       });
       return null;
     } finally {
-      set({ isImporting: false });
+      set({ isCreating: false, isImporting: false, isThinking: false });
     }
+  },
+
+  importLocalFolder: async (input) => {
+    return get().startWorkspaceFromLaunchpad({
+      ...input,
+      shouldPickMedia: !input?.folderPath && !(input?.files && input.files.length > 0),
+    });
   },
 
   createEmptyProject: async () => {
     set({ isCreating: true, lastError: null, isThinking: false });
     try {
       const created = await coreCreateProject({ title: "Untitled Sequence" });
+      const workspaceName = created.title?.trim() || "Untitled Sequence";
       set({
         activeWorkspaceId: created.project_id,
-        activeWorkspaceName: created.title?.trim() || "Untitled Sequence",
+        activeWorkspaceName: workspaceName,
       });
       await get().fetchRecentProjects();
+      void useWorkspaceStore.getState().bootstrapFromLaunch({
+        projectId: created.project_id,
+        workspaceName,
+        hasMedia: false,
+      });
       return created.project_id;
     } catch (error) {
       const appError =
-        (error as LaunchpadError) ?? toLaunchpadError("NETWORK_ERROR", "create_empty_project_failed", error);
+        (error as LaunchpadError) ??
+        toLaunchpadError("NETWORK_ERROR", "create_empty_project_failed", error);
       set({ lastError: appError });
       throw appError;
     } finally {
@@ -345,62 +203,34 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => ({
     }
   },
 
-  createProjectFromPrompt: async (prompt: string, folderPath?: string) => {
-    const trimmedPrompt = prompt.trim();
-    if (!trimmedPrompt) {
-      const appError = toLaunchpadError("INVALID_INPUT", "prompt_required");
+  createProjectFromPrompt: async (prompt, folderPath) => {
+    const createdId = await get().startWorkspaceFromLaunchpad({
+      prompt,
+      folderPath,
+      shouldPickMedia: false,
+    });
+    if (!createdId) {
+      const appError = toLaunchpadError("INVALID_INPUT", "create_project_from_prompt_failed");
       set({ lastError: appError });
       throw appError;
     }
-
-    set({ isCreating: true, isThinking: true, lastError: null });
-    try {
-      const created = await coreCreateProject({
-        title: trimmedPrompt.slice(0, 32),
-        source_folder_path: folderPath,
-      });
-
-      set({
-        activeWorkspaceId: created.project_id,
-        activeWorkspaceName: created.title?.trim() || trimmedPrompt.slice(0, 32),
-      });
-
-      void serverStartChat(created.project_id, trimmedPrompt)
-        .catch((error) => {
-          set({
-            lastError:
-              (error as LaunchpadError) ??
-              toLaunchpadError("NETWORK_ERROR", "start_chat_failed", error),
-          });
-        })
-        .finally(() => {
-          set({ isThinking: false });
-        });
-
-      await get().fetchRecentProjects();
-      return created.project_id;
-    } catch (error) {
-      const appError =
-        (error as LaunchpadError) ?? toLaunchpadError("NETWORK_ERROR", "create_project_from_prompt_failed", error);
-      set({ lastError: appError, isThinking: false });
-      throw appError;
-    } finally {
-      set({ isCreating: false });
-    }
+    return createdId;
   },
 
-  openWorkspace: (project: ProjectMeta) => {
+  openWorkspace: (project) => {
     set({
       activeWorkspaceId: project.id,
       activeWorkspaceName: project.title,
       lastError: null,
     });
+    void useWorkspaceStore.getState().initializeWorkspace(project.id, project.title);
   },
 
   clearActiveWorkspace: () => {
     set({
       activeWorkspaceId: null,
       activeWorkspaceName: null,
+      isThinking: false,
     });
   },
 

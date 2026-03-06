@@ -13,6 +13,7 @@ function App() {
 
   return (
     <WorkspacePage
+      workspaceId={activeWorkspaceId}
       workspaceName={activeWorkspaceName ?? activeWorkspaceId}
       onBackLaunchpad={clearActiveWorkspace}
     />

@@ -1,0 +1,95 @@
+export interface MediaPickInput {
+  folderPath?: string;
+  files?: File[];
+}
+
+export interface MediaPickResult {
+  folderPath?: string;
+  files?: File[];
+}
+
+function hasValidFiles(files?: File[]): files is File[] {
+  return Array.isArray(files) && files.some((file) => file.size > 0);
+}
+
+export function normalizeMediaInput(input?: MediaPickInput): MediaPickResult | null {
+  if (!input) {
+    return null;
+  }
+  const folderPath = input.folderPath?.trim();
+  const files = input.files?.filter((file) => file.size > 0);
+  if (folderPath) {
+    return { folderPath };
+  }
+  if (hasValidFiles(files)) {
+    return { files };
+  }
+  return null;
+}
+
+export async function pickFolderFromElectron(): Promise<string | null> {
+  const bridge = window.electron;
+  if (!bridge?.showOpenDirectory) {
+    return null;
+  }
+  const pickedPath = await bridge.showOpenDirectory();
+  if (!pickedPath) {
+    return null;
+  }
+  return pickedPath;
+}
+
+export async function pickVideoFilesFromBrowser(): Promise<File[] | null> {
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  return new Promise<File[] | null>((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.accept = "video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi";
+    input.style.display = "none";
+    let settled = false;
+
+    const cleanup = () => {
+      input.value = "";
+      window.removeEventListener("focus", handleWindowFocus, true);
+      input.remove();
+    };
+
+    const handleWindowFocus = () => {
+      window.setTimeout(() => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        resolve(null);
+      }, 0);
+    };
+
+    input.onchange = () => {
+      settled = true;
+      const list = input.files ? Array.from(input.files) : [];
+      cleanup();
+      resolve(list.length > 0 ? list : null);
+    };
+
+    document.body.appendChild(input);
+    window.addEventListener("focus", handleWindowFocus, true);
+    input.click();
+  });
+}
+
+export async function pickMediaFromSystem(): Promise<MediaPickResult | null> {
+  const folderPath = await pickFolderFromElectron();
+  if (folderPath) {
+    return { folderPath };
+  }
+  const files = await pickVideoFilesFromBrowser();
+  if (!files || files.length === 0) {
+    return null;
+  }
+  return { files };
+}

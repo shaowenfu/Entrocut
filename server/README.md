@@ -5,7 +5,8 @@
 ## 当前能力
 
 1. `GET /health` 健康检查。
-2. `POST /api/v1/chat` 最小 `accepted` 响应（用于启动台 Prompt 握手）。
+2. `POST /api/v1/index/upsert-clips` 最小向量化写入确认。
+3. `POST /api/v1/chat` 返回 `AgentDecision`（用于工作台分镜更新与澄清提示）。
 
 ## 说明
 

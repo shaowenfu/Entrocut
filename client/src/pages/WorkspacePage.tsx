@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
 import {
   ArrowLeft,
   ChevronRight,
@@ -15,6 +15,7 @@ import {
   Settings,
   Sparkles,
   Tag,
+  Upload,
   Wand2,
 } from "lucide-react";
 import {
@@ -25,151 +26,20 @@ import {
   type ServiceTarget,
 } from "../services/health";
 import { getOrCreateSessionId } from "../utils/session";
+import {
+  useWorkspaceStore,
+  type AssistantDecisionTurn,
+  type ChatTurn,
+} from "../store/useWorkspaceStore";
 
 type WorkspacePageProps = {
+  workspaceId: string;
   workspaceName: string;
   onBackLaunchpad?: () => void;
 };
 
 type MediaTab = "assets" | "clips";
 type DraggingTarget = "left" | "mid" | null;
-
-interface AssetItem {
-  id: string;
-  name: string;
-  duration: string;
-  type: "video" | "audio";
-}
-
-interface ClipItem {
-  id: string;
-  parent: string;
-  start: string;
-  end: string;
-  score: string;
-  desc: string;
-  thumbClass: string;
-}
-
-interface StoryboardScene {
-  id: string;
-  title: string;
-  duration: string;
-  intent: string;
-  colorClass: string;
-  bgClass: string;
-}
-
-interface UserTurn {
-  id: string;
-  role: "user";
-  content: string;
-}
-
-interface AssistantDecisionTurn {
-  id: string;
-  role: "assistant";
-  type: "decision";
-  decision_type: "UPDATE_PROJECT_CONTRACT" | "APPLY_PATCH_ONLY";
-  reasoning_summary: string;
-  ops: string[];
-}
-
-type ChatTurn = UserTurn | AssistantDecisionTurn;
-
-// TODO(api): 使用真实素材契约替换本地 mock（来自 `/api/v1/project/{id}`）。
-const ASSETS: AssetItem[] = [
-  { id: "a1", name: "A001_C005_10242E.mp4", duration: "00:15", type: "video" },
-  { id: "a2", name: "DJI_0042_ProRes.mov", duration: "01:20", type: "video" },
-  { id: "a3", name: "Ambient_Wind_01.wav", duration: "03:00", type: "audio" },
-  { id: "a4", name: "A002_C011_1025.mp4", duration: "00:08", type: "video" },
-];
-
-// TODO(api): 使用真实语义检索结果替换本地 mock（来自 `POST /api/v1/chat`）。
-const CLIPS: ClipItem[] = [
-  {
-    id: "c1",
-    parent: "a1",
-    start: "00:00",
-    end: "00:05",
-    score: "98%",
-    thumbClass: "thumb-blue",
-    desc: "Clear sky, stable pan",
-  },
-  {
-    id: "c2",
-    parent: "a2",
-    start: "00:12",
-    end: "00:18",
-    score: "85%",
-    thumbClass: "thumb-indigo",
-    desc: "Drone fast approach",
-  },
-  {
-    id: "c3",
-    parent: "a2",
-    start: "00:45",
-    end: "00:52",
-    score: "92%",
-    thumbClass: "thumb-purple",
-    desc: "Subject looking at horizon",
-  },
-  {
-    id: "c4",
-    parent: "a4",
-    start: "00:01",
-    end: "00:06",
-    score: "88%",
-    thumbClass: "thumb-teal",
-    desc: "Snow detail close-up",
-  },
-];
-
-// TODO(api): 使用真实 `EntroVideoProject.timeline` 映射替换本地 mock。
-const INITIAL_STORYBOARD: StoryboardScene[] = [
-  {
-    id: "sb1",
-    title: "Establishing",
-    duration: "5s",
-    intent: "Show environmental scale",
-    colorClass: "scene-blue",
-    bgClass: "scene-bg-blue",
-  },
-  {
-    id: "sb2",
-    title: "Hero Reveal",
-    duration: "12s",
-    intent: "Focus on subject emotion",
-    colorClass: "scene-indigo",
-    bgClass: "scene-bg-indigo",
-  },
-  {
-    id: "sb3",
-    title: "Action Pan",
-    duration: "3s",
-    intent: "Increase pacing to beat",
-    colorClass: "scene-purple",
-    bgClass: "scene-bg-purple",
-  },
-];
-
-// TODO(api): 使用真实会话历史替换本地 mock（来自 `POST /api/v1/chat`）。
-const INITIAL_CHAT: ChatTurn[] = [
-  {
-    id: "msg1",
-    role: "user",
-    content: "帮我根据现有素材，粗剪一个关于雪山徒步的 20 秒开场。",
-  },
-  {
-    id: "msg2",
-    role: "assistant",
-    type: "decision",
-    decision_type: "UPDATE_PROJECT_CONTRACT",
-    reasoning_summary:
-      "我已扫描素材库，提取了 3 段高分风景与人物特写片段，并按逻辑组装了分镜序列。",
-    ops: ["Added 3 retrieved clips", "Matched duration to 20s"],
-  },
-];
 
 const SUGGESTION_CHIPS = [
   "Generate rough cut",
@@ -226,16 +96,21 @@ function buildHealthTitle(target: ServiceTarget, snapshot: ServiceHealthSnapshot
   return `${target} is offline (${snapshot.message ?? "unknown"})`;
 }
 
-function WorkspacePage({ workspaceName, onBackLaunchpad }: WorkspacePageProps) {
-  const [sessionId] = useState(() =>
-    getOrCreateSessionId(`proj_${workspaceName.replace(/[^a-zA-Z0-9]+/g, "_").toLowerCase()}`)
-  );
-  const [isThinking, setIsThinking] = useState(false);
-  const [chatTurns, setChatTurns] = useState<ChatTurn[]>(INITIAL_CHAT);
-  const [storyboard, setStoryboard] = useState<StoryboardScene[]>(INITIAL_STORYBOARD);
+function extractDroppedPath(event: DragEvent<HTMLDivElement>): string | null {
+  const firstFile = event.dataTransfer.files?.item(0);
+  const electronPath = (firstFile as File & { path?: string } | null)?.path;
+  return typeof electronPath === "string" && electronPath.trim().length > 0 ? electronPath : null;
+}
+
+function extractDroppedFiles(event: DragEvent<HTMLDivElement>): File[] {
+  return Array.from(event.dataTransfer.files ?? []).filter((file) => file.size > 0);
+}
+
+function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: WorkspacePageProps) {
+  const [sessionId] = useState(() => getOrCreateSessionId(workspaceId));
   const [promptText, setPromptText] = useState("");
   const [mediaTab, setMediaTab] = useState<MediaTab>("clips");
-  const [highlightItem, setHighlightItem] = useState("sb2");
+  const [highlightItem, setHighlightItem] = useState("");
   const [leftWidth, setLeftWidth] = useState(280);
   const [midWidth, setMidWidth] = useState(400);
   const [dragging, setDragging] = useState<DraggingTarget>(null);
@@ -245,12 +120,28 @@ function WorkspacePage({ workspaceName, onBackLaunchpad }: WorkspacePageProps) {
   const [patchPulseId, setPatchPulseId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTimeSec, setCurrentTimeSec] = useState(12);
+  const [isAssetDropHovering, setIsAssetDropHovering] = useState(false);
   const [serviceHealth, setServiceHealth] = useState<Record<ServiceTarget, ServiceHealthSnapshot>>({
     core: createInitialHealthSnapshot(),
     server: createInitialHealthSnapshot(),
   });
 
+  const assets = useWorkspaceStore((state) => state.assets);
+  const clips = useWorkspaceStore((state) => state.clips);
+  const storyboard = useWorkspaceStore((state) => state.storyboard);
+  const chatTurns = useWorkspaceStore((state) => state.chatTurns);
+  const isLoadingWorkspace = useWorkspaceStore((state) => state.isLoadingWorkspace);
+  const isThinking = useWorkspaceStore((state) => state.isThinking);
+  const isMediaProcessing = useWorkspaceStore((state) => state.isMediaProcessing);
+  const mediaStatusText = useWorkspaceStore((state) => state.mediaStatusText);
+  const lastError = useWorkspaceStore((state) => state.lastError);
+  const initializeWorkspace = useWorkspaceStore((state) => state.initializeWorkspace);
+  const uploadAssets = useWorkspaceStore((state) => state.uploadAssets);
+  const sendChat = useWorkspaceStore((state) => state.sendChat);
+  const clearLastError = useWorkspaceStore((state) => state.clearLastError);
+
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const latestAssistantIdRef = useRef<string | null>(null);
 
   const totalDurationSec = storyboard.reduce(
     (total, scene) => total + parseSceneDurationSeconds(scene.duration),
@@ -261,8 +152,37 @@ function WorkspacePage({ workspaceName, onBackLaunchpad }: WorkspacePageProps) {
   const sessionLabel = `Session #${sessionId.slice(-8).toUpperCase()}`;
 
   useEffect(() => {
+    void initializeWorkspace(workspaceId, workspaceName);
+  }, [initializeWorkspace, workspaceId, workspaceName]);
+
+  useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatTurns, isThinking]);
+  }, [chatTurns, isThinking, isMediaProcessing]);
+
+  useEffect(() => {
+    if (storyboard.length === 0) {
+      setHighlightItem("");
+      return;
+    }
+    setHighlightItem((current) =>
+      current && storyboard.some((scene) => scene.id === current) ? current : storyboard[0].id
+    );
+  }, [storyboard]);
+
+  useEffect(() => {
+    const latest = [...chatTurns].reverse().find((turn) => turn.role === "assistant");
+    if (!latest || latestAssistantIdRef.current === latest.id) {
+      return;
+    }
+    latestAssistantIdRef.current = latest.id;
+    const assistantTurn = latest as AssistantDecisionTurn;
+    setReasoningOverlay(assistantTurn.reasoning_summary);
+    window.setTimeout(() => setReasoningOverlay(null), 2200);
+    if (storyboard[0]) {
+      setPatchPulseId(storyboard[0].id);
+      window.setTimeout(() => setPatchPulseId(null), 1200);
+    }
+  }, [chatTurns, storyboard]);
 
   useEffect(() => {
     let disposed = false;
@@ -335,7 +255,7 @@ function WorkspacePage({ workspaceName, onBackLaunchpad }: WorkspacePageProps) {
   }, [dragging, leftWidth]);
 
   useEffect(() => {
-    if (!isPlaying || isThinking) {
+    if (!isPlaying || isThinking || isMediaProcessing) {
       return;
     }
     const timer = window.setInterval(() => {
@@ -350,7 +270,7 @@ function WorkspacePage({ workspaceName, onBackLaunchpad }: WorkspacePageProps) {
     }, 250);
 
     return () => window.clearInterval(timer);
-  }, [isPlaying, isThinking, safeTotalDurationSec]);
+  }, [isPlaying, isThinking, isMediaProcessing, safeTotalDurationSec]);
 
   useEffect(() => {
     if (currentTimeSec > safeTotalDurationSec) {
@@ -358,23 +278,19 @@ function WorkspacePage({ workspaceName, onBackLaunchpad }: WorkspacePageProps) {
     }
   }, [currentTimeSec, safeTotalDurationSec]);
 
-  function showReasoningOverlay(message: string, durationMs = 2200) {
-    setReasoningOverlay(message);
-    window.setTimeout(() => setReasoningOverlay(null), durationMs);
-  }
-
   function handleExport() {
     if (isExporting) {
       return;
     }
     setIsExporting(true);
     setIsEditLocked(true);
-    showReasoningOverlay("Export started. Editing is locked.", 1200);
+    setReasoningOverlay("Export started. Editing is locked.");
 
     window.setTimeout(() => {
       setIsExporting(false);
       setIsEditLocked(false);
-      showReasoningOverlay("Export finished. Editing unlocked.", 1200);
+      setReasoningOverlay("Export finished. Editing unlocked.");
+      window.setTimeout(() => setReasoningOverlay(null), 1200);
     }, 2600);
   }
 
@@ -385,60 +301,18 @@ function WorkspacePage({ workspaceName, onBackLaunchpad }: WorkspacePageProps) {
     setPromptText(suggestion);
   }
 
-  function handleSendChat() {
+  async function handleSendChat() {
     const trimmed = promptText.trim();
     if (!trimmed || isThinking || isEditLocked) {
       return;
     }
-
-    const userMessage: UserTurn = {
-      id: `${Date.now()}`,
-      role: "user",
-      content: trimmed,
-    };
-    setChatTurns((previous) => [...previous, userMessage]);
     setPromptText("");
-    setIsThinking(true);
     setIsPlaying(false);
-
-    window.setTimeout(() => {
-      setIsThinking(false);
-      const newStoryboardId = `sb${Date.now()}`;
-      const aiMessage: AssistantDecisionTurn = {
-        id: `${Date.now() + 1}`,
-        role: "assistant",
-        type: "decision",
-        decision_type: "APPLY_PATCH_ONLY",
-        reasoning_summary:
-          "根据你的要求，我替换了第二个镜头的氛围，引入了雪地细节特写，节奏更紧凑。",
-        ops: ["Replaced Hero Reveal with Close-up"],
-      };
-      setChatTurns((previous) => [...previous, aiMessage]);
-
-      setStoryboard((previous) => {
-        const next = [...previous];
-        if (next[1]) {
-          next[1] = {
-            id: newStoryboardId,
-            title: "Detail Close-up",
-            duration: "8s",
-            intent: "Enhance tactile feeling of snow",
-            colorClass: "scene-cyan",
-            bgClass: "scene-bg-cyan",
-          };
-        }
-        return next;
-      });
-
-      setHighlightItem(newStoryboardId);
-      setPatchPulseId(newStoryboardId);
-      window.setTimeout(() => setPatchPulseId(null), 1200);
-      showReasoningOverlay(aiMessage.reasoning_summary, 2600);
-    }, 1800);
+    await sendChat(trimmed);
   }
 
   function handleTogglePlay() {
-    if (isThinking) {
+    if (isThinking || isMediaProcessing) {
       return;
     }
     if (currentTimeSec >= safeTotalDurationSec) {
@@ -456,6 +330,24 @@ function WorkspacePage({ workspaceName, onBackLaunchpad }: WorkspacePageProps) {
       .slice(0, index)
       .reduce((total, scene) => total + parseSceneDurationSeconds(scene.duration), 0);
     setCurrentTimeSec(startSec);
+  }
+
+  async function handleAssetBrowse() {
+    await uploadAssets({ shouldPickMedia: true });
+  }
+
+  async function handleAssetDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setIsAssetDropHovering(false);
+    const droppedPath = extractDroppedPath(event);
+    const droppedFiles = extractDroppedFiles(event);
+    if (!droppedPath && droppedFiles.length === 0) {
+      return;
+    }
+    await uploadAssets({
+      folderPath: droppedPath ?? undefined,
+      files: droppedFiles,
+    });
   }
 
   return (
@@ -503,6 +395,7 @@ function WorkspacePage({ workspaceName, onBackLaunchpad }: WorkspacePageProps) {
               <span className={`health-dot health-dot-${serviceHealth.server.state}`} />
               server {healthStateLabel(serviceHealth.server.state)}
             </span>
+            {isMediaProcessing ? <span className="lock-pill">{mediaStatusText ?? "MEDIA PROCESSING"}</span> : null}
             {isEditLocked ? <span className="lock-pill">EDIT LOCKED</span> : null}
           </div>
           <button className="icon-btn topbar-icon-btn" type="button" aria-label="settings">
@@ -512,7 +405,7 @@ function WorkspacePage({ workspaceName, onBackLaunchpad }: WorkspacePageProps) {
             className="export-btn"
             type="button"
             onClick={handleExport}
-            disabled={isExporting}
+            disabled={isExporting || isMediaProcessing}
           >
             <Download size={16} />
             <span>{isExporting ? "Exporting..." : "Export"}</span>
@@ -545,20 +438,47 @@ function WorkspacePage({ workspaceName, onBackLaunchpad }: WorkspacePageProps) {
 
           <div className="media-body">
             {mediaTab === "assets" ? (
-              <div className="asset-grid">
-                {ASSETS.map((asset) => (
-                  <article key={asset.id} className="asset-card">
-                    <div className="asset-thumb">
-                      <Film size={14} />
-                      <span>{asset.duration}</span>
-                    </div>
-                    <p title={asset.name}>{asset.name}</p>
-                  </article>
-                ))}
-              </div>
+              <>
+                <div
+                  className={`asset-upload-entry ${isAssetDropHovering ? "is-hovering" : ""} ${
+                    isEditLocked ? "is-disabled" : ""
+                  }`}
+                  onClick={() => {
+                    if (!isEditLocked) {
+                      void handleAssetBrowse();
+                    }
+                  }}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    setIsAssetDropHovering(true);
+                  }}
+                  onDragLeave={() => setIsAssetDropHovering(false)}
+                  onDrop={handleAssetDrop}
+                >
+                  <Upload size={14} />
+                  <span>Upload videos or drop folder here</span>
+                </div>
+
+                <div className="asset-grid">
+                  {assets.map((asset) => (
+                    <article key={asset.id} className="asset-card">
+                      <div className="asset-thumb">
+                        <Film size={14} />
+                        <span>{asset.duration}</span>
+                      </div>
+                      <p title={asset.name}>{asset.name}</p>
+                    </article>
+                  ))}
+                  {assets.length === 0 ? (
+                    <article className="asset-card asset-card-empty">
+                      <p>No assets yet. Upload videos to start processing.</p>
+                    </article>
+                  ) : null}
+                </div>
+              </>
             ) : (
               <div className="clip-list">
-                {CLIPS.map((clip) => (
+                {clips.map((clip) => (
                   <article key={clip.id} className="clip-card">
                     <div className="clip-head">
                       <span className="clip-parent">
@@ -580,8 +500,18 @@ function WorkspacePage({ workspaceName, onBackLaunchpad }: WorkspacePageProps) {
                     </div>
                   </article>
                 ))}
+                {clips.length === 0 ? (
+                  <article className="clip-card">
+                    <p>No clips yet. Ingest will generate semantic clips here.</p>
+                  </article>
+                ) : null}
               </div>
             )}
+            {lastError ? (
+              <p className="workspace-error-banner" role="alert" onClick={clearLastError}>
+                {lastError.code}: {lastError.message}
+              </p>
+            ) : null}
           </div>
         </section>
 
@@ -604,10 +534,7 @@ function WorkspacePage({ workspaceName, onBackLaunchpad }: WorkspacePageProps) {
 
           <div className="chat-thread">
             {chatTurns.map((turn) => (
-              <div
-                key={turn.id}
-                className={turn.role === "user" ? "chat-row chat-row-user" : "chat-row"}
-              >
+              <div key={turn.id} className={turn.role === "user" ? "chat-row chat-row-user" : "chat-row"}>
                 {turn.role === "user" ? (
                   <div className="chat-bubble">{turn.content}</div>
                 ) : (
@@ -634,10 +561,24 @@ function WorkspacePage({ workspaceName, onBackLaunchpad }: WorkspacePageProps) {
               </div>
             ))}
 
+            {isMediaProcessing ? (
+              <div className="thinking-box">
+                <Loader2 size={16} />
+                <span>{mediaStatusText ?? "Processing media..."}</span>
+              </div>
+            ) : null}
+
             {isThinking ? (
               <div className="thinking-box">
                 <Loader2 size={16} />
                 <span>Analyzing footage and generating edit...</span>
+              </div>
+            ) : null}
+
+            {!isThinking && !isMediaProcessing && !isLoadingWorkspace && chatTurns.length === 0 ? (
+              <div className="thinking-box">
+                <Sparkles size={16} />
+                <span>Send a prompt to start AI editing.</span>
               </div>
             ) : null}
             <div ref={chatEndRef} />
@@ -663,7 +604,7 @@ function WorkspacePage({ workspaceName, onBackLaunchpad }: WorkspacePageProps) {
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
-                  handleSendChat();
+                  void handleSendChat();
                 }
               }}
               disabled={isThinking || isEditLocked}
@@ -671,7 +612,7 @@ function WorkspacePage({ workspaceName, onBackLaunchpad }: WorkspacePageProps) {
             />
             <button
               type="button"
-              onClick={handleSendChat}
+              onClick={() => void handleSendChat()}
               disabled={!promptText.trim() || isThinking || isEditLocked}
               aria-label="send"
             >
@@ -692,7 +633,7 @@ function WorkspacePage({ workspaceName, onBackLaunchpad }: WorkspacePageProps) {
           <div className="preview-panel">
             <div className="preview-frame">
               <div className="preview-layer" />
-              {isThinking ? (
+              {isThinking || isMediaProcessing || isLoadingWorkspace ? (
                 <div className="preview-center">
                   <Loader2 size={32} />
                   <span>RENDERING PIPELINE</span>
@@ -740,9 +681,9 @@ function WorkspacePage({ workspaceName, onBackLaunchpad }: WorkspacePageProps) {
               {storyboard.map((scene, index) => (
                 <article
                   key={scene.id}
-                  className={`story-card ${scene.bgClass} ${
-                    highlightItem === scene.id ? "active" : ""
-                  } ${patchPulseId === scene.id ? "patch-pulse" : ""}`}
+                  className={`story-card ${scene.bgClass} ${highlightItem === scene.id ? "active" : ""} ${
+                    patchPulseId === scene.id ? "patch-pulse" : ""
+                  }`}
                   onClick={() => handleSceneSeek(scene.id, index)}
                 >
                   <div className={`story-thumb ${scene.colorClass}`}>
@@ -760,10 +701,17 @@ function WorkspacePage({ workspaceName, onBackLaunchpad }: WorkspacePageProps) {
                 </article>
               ))}
 
-              <div className="story-end">
-                <ListVideo size={20} />
-                <span>END</span>
-              </div>
+              {storyboard.length === 0 ? (
+                <div className="story-end">
+                  <ListVideo size={20} />
+                  <span>No Storyboard Yet</span>
+                </div>
+              ) : (
+                <div className="story-end">
+                  <ListVideo size={20} />
+                  <span>END</span>
+                </div>
+              )}
             </div>
           </div>
         </section>

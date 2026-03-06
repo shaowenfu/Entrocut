@@ -31,9 +31,8 @@ function LaunchpadPage() {
   const isCreating = useLaunchpadStore((state) => state.isCreating);
   const lastError = useLaunchpadStore((state) => state.lastError);
   const fetchRecentProjects = useLaunchpadStore((state) => state.fetchRecentProjects);
-  const importLocalFolder = useLaunchpadStore((state) => state.importLocalFolder);
+  const startWorkspaceFromLaunchpad = useLaunchpadStore((state) => state.startWorkspaceFromLaunchpad);
   const createEmptyProject = useLaunchpadStore((state) => state.createEmptyProject);
-  const createProjectFromPrompt = useLaunchpadStore((state) => state.createProjectFromPrompt);
   const openWorkspace = useLaunchpadStore((state) => state.openWorkspace);
   const clearLastError = useLaunchpadStore((state) => state.clearLastError);
 
@@ -59,7 +58,9 @@ function LaunchpadPage() {
       return;
     }
     try {
-      await createProjectFromPrompt(prompt.trim());
+      await startWorkspaceFromLaunchpad({
+        prompt: prompt.trim(),
+      });
       setPrompt("");
     } catch {
       // 错误已由 store 收敛到 lastError。
@@ -84,10 +85,24 @@ function LaunchpadPage() {
     if (!droppedPath && droppedFiles.length === 0) {
       return;
     }
-    await importLocalFolder({
+    await startWorkspaceFromLaunchpad({
       folderPath: droppedPath ?? undefined,
       files: droppedFiles,
+      prompt: prompt.trim() || undefined,
     });
+    if (prompt.trim()) {
+      setPrompt("");
+    }
+  }
+
+  async function handleBrowseMedia() {
+    const maybeProjectId = await startWorkspaceFromLaunchpad({
+      prompt: prompt.trim() || undefined,
+      shouldPickMedia: true,
+    });
+    if (maybeProjectId && prompt.trim()) {
+      setPrompt("");
+    }
   }
 
   return (
@@ -128,7 +143,7 @@ function LaunchpadPage() {
                 if (isCreating || isImporting) {
                   return;
                 }
-                void importLocalFolder();
+                void handleBrowseMedia();
               }}
               onDragOver={(event) => {
                 event.preventDefault();
@@ -177,7 +192,7 @@ function LaunchpadPage() {
               <FileVideo size={14} />
               <span>Empty Sequence</span>
             </button>
-            <button type="button" onClick={() => void importLocalFolder()} disabled={isCreating || isImporting}>
+            <button type="button" onClick={() => void handleBrowseMedia()} disabled={isCreating || isImporting}>
               <Cloud size={14} />
               <span>Browse Media</span>
             </button>

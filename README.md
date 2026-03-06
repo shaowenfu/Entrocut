@@ -20,13 +20,15 @@
 1. `core`（本地）：
    1. `GET /health`
    2. `GET /api/v1/projects`
-   3. `POST /api/v1/projects`
-   4. `POST /api/v1/projects/import`
-   5. `POST /api/v1/projects/upload`
-   6. `POST /api/v1/ingest`
-   7. `POST /api/v1/search`
-   8. `POST /api/v1/render`
-   9. `POST /api/v1/export`
+   3. `GET /api/v1/projects/{project_id}`
+   4. `POST /api/v1/projects`
+   5. `POST /api/v1/projects/import`
+   6. `POST /api/v1/projects/upload`
+   7. `POST /api/v1/projects/{project_id}/assets/import`
+   8. `POST /api/v1/projects/{project_id}/assets/upload`
+   9. `POST /api/v1/ingest`
+   10. `POST /api/v1/search`
+   11. `POST /api/v1/render`
 2. `server`（云端）：
    1. `GET /health`
    2. `POST /api/v1/index/upsert-clips`
