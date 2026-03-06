@@ -7,6 +7,8 @@ import os
 import sqlite3
 import threading
 import time
+import urllib.error
+import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -26,6 +28,8 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
 CORE_QUEUE_KEY = os.getenv("CORE_INGEST_QUEUE_KEY", "entrocut:core:ingest")
 CORE_JOB_WAIT_TIMEOUT_SEC = float(os.getenv("CORE_JOB_WAIT_TIMEOUT_SEC", "20"))
 CORE_DB_PATH = Path(os.getenv("CORE_DB_PATH", str(Path(__file__).with_name("core.db"))))
+SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", "http://127.0.0.1:8001").rstrip("/")
+CORE_SERVER_TIMEOUT_SEC = float(os.getenv("CORE_SERVER_TIMEOUT_SEC", "20"))
 AUTH_JWT_ALGORITHM = os.getenv("AUTH_JWT_ALGORITHM", "HS256")
 AUTH_JWT_SECRET = os.getenv("AUTH_JWT_SECRET", "").strip()
 AUTH_JWT_PUBLIC_KEY = os.getenv("AUTH_JWT_PUBLIC_KEY", "").strip()
@@ -86,6 +90,22 @@ class ErrorEnvelope(BaseModel):
 
 class IngestRequest(BaseModel):
     project_id: str = Field(..., description="Project ID（项目标识）")
+
+
+class IndexUpsertRequest(BaseModel):
+    project_id: str = Field(..., description="Project ID（项目标识）")
+    clips: list[dict[str, Any]] = Field(default_factory=list, description="Clip payload（片段负载）")
+
+
+class ChatRequest(BaseModel):
+    project_id: str = Field(..., description="Project ID（项目标识）")
+    session_id: str | None = Field(default=None, description="Session ID（会话标识）")
+    user_id: str | None = Field(default=None, description="User ID（用户标识）")
+    message: str = Field(..., description="User prompt（用户输入）")
+    context: dict[str, Any] | None = Field(default=None, description="Context payload（上下文）")
+    current_project: dict[str, Any] | None = Field(
+        default=None, description="Current project contract（当前项目契约）"
+    )
 
 
 class SearchRequest(BaseModel):
@@ -487,6 +507,97 @@ def _db_fetchone(query: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None
     with _DB_LOCK:
         cursor = db.execute(query, params)
         return cursor.fetchone()
+
+
+def _server_url(path: str) -> str:
+    normalized = path if path.startswith("/") else f"/{path}"
+    return f"{SERVER_BASE_URL}{normalized}"
+
+
+def _decode_json_object(raw: bytes, *, code: str, message: str) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        _raise_app_error(
+            code=code,
+            message=message,
+            status_code=502,
+            details={"cause": str(exc)},
+            retryable=True,
+        )
+    if not isinstance(payload, dict):
+        _raise_app_error(
+            code=code,
+            message=message,
+            status_code=502,
+            details={"response_type": type(payload).__name__},
+            retryable=True,
+        )
+    return payload
+
+
+def _proxy_server_json(*, path: str, payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "X-Request-ID": _get_request_id(request),
+    }
+    authorization = request.headers.get("authorization")
+    if authorization:
+        headers["Authorization"] = authorization
+
+    upstream_request = urllib.request.Request(
+        _server_url(path),
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(upstream_request, timeout=CORE_SERVER_TIMEOUT_SEC) as response:
+            return _decode_json_object(
+                response.read(),
+                code="SERVER_PROXY_INVALID_RESPONSE",
+                message="Server returned invalid response payload.",
+            )
+    except urllib.error.HTTPError as exc:
+        upstream_headers = getattr(exc, "headers", None)
+        upstream_request_id = upstream_headers.get("X-Request-ID") if upstream_headers else None
+        upstream_payload = _decode_json_object(
+            exc.read(),
+            code="SERVER_PROXY_INVALID_ERROR_RESPONSE",
+            message="Server returned invalid error payload.",
+        )
+        upstream_error = upstream_payload.get("error")
+        if isinstance(upstream_error, dict):
+            details = upstream_error.get("details")
+            parsed_details = dict(details) if isinstance(details, dict) else {}
+            if upstream_request_id and "request_id" not in parsed_details:
+                parsed_details["request_id"] = upstream_request_id
+            _raise_app_error(
+                code=str(upstream_error.get("code") or "SERVER_PROXY_HTTP_ERROR"),
+                message=str(upstream_error.get("message") or f"Upstream server request failed ({exc.code})."),
+                status_code=exc.code,
+                details=parsed_details,
+                retryable=bool(parsed_details.get("retryable")),
+            )
+        _raise_app_error(
+            code="SERVER_PROXY_HTTP_ERROR",
+            message=f"Upstream server request failed (http_{exc.code}).",
+            status_code=502,
+            details={"upstream_status": exc.code, "request_id": upstream_request_id},
+            retryable=exc.code >= 500,
+        )
+    except urllib.error.URLError as exc:
+        _raise_app_error(
+            code="SERVER_UNAVAILABLE",
+            message="Server is unreachable from core.",
+            status_code=502,
+            details={"cause": str(exc.reason)},
+            retryable=True,
+        )
 
 
 def _init_db() -> None:
@@ -1506,6 +1617,32 @@ def retry_job(job_id: str, auth: AuthContext = Depends(get_auth_context)) -> Ret
         status="queued",
         project_id=row["project_id"],
         job_type=row["job_type"],
+    )
+
+
+@app.post("/api/v1/index/upsert-clips")
+def proxy_index_upsert(
+    request: IndexUpsertRequest,
+    req: Request,
+    _: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    return _proxy_server_json(
+        path="/api/v1/index/upsert-clips",
+        payload=request.model_dump(),
+        request=req,
+    )
+
+
+@app.post("/api/v1/chat")
+def proxy_chat(
+    request: ChatRequest,
+    req: Request,
+    _: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    return _proxy_server_json(
+        path="/api/v1/chat",
+        payload=request.model_dump(exclude_none=True),
+        request=req,
     )
 
 

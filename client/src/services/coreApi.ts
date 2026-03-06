@@ -1,4 +1,10 @@
 import { requestJson, type AppHttpError } from "./httpClient";
+import type {
+  AgentOperation,
+  DecisionType,
+  EntroVideoProject,
+  PatchPayload,
+} from "../contracts/contract";
 
 export type { AppHttpError };
 
@@ -90,6 +96,48 @@ export interface CoreJobStatusResponse {
   error_message?: string | null;
   result?: Record<string, unknown> | null;
   updated_at: string;
+}
+
+export interface CoreIndexUpsertPayload {
+  project_id: string;
+  clips: CoreClipDTO[];
+}
+
+export interface CoreIndexUpsertResponse {
+  ok: boolean;
+  request_id: string;
+  indexed: number;
+  failed: number;
+}
+
+export interface CoreChatRequestPayload {
+  project_id: string;
+  message: string;
+  session_id?: string;
+  user_id?: string;
+  context?: Record<string, unknown>;
+  current_project?: Record<string, unknown>;
+}
+
+export interface CoreChatDecisionResponse {
+  decision_type: DecisionType;
+  project: EntroVideoProject | null;
+  patch: PatchPayload | null;
+  project_id: string;
+  reasoning_summary: string;
+  ops: AgentOperation[];
+  storyboard_scenes?: Array<{
+    id: string;
+    title: string;
+    duration: string;
+    intent: string;
+  }>;
+  meta?: {
+    request_id?: string;
+    latency_ms?: number;
+    session_id?: string;
+    used_clip_count?: number;
+  };
 }
 
 const DEFAULT_CORE_BASE_URL = "http://127.0.0.1:8000";
@@ -200,5 +248,21 @@ export async function coreIngestProject(projectId: string): Promise<CoreIngestRe
   return requestJson<CoreIngestResponse>(`${getCoreBaseUrl()}/api/v1/ingest`, {
     method: "POST",
     body: { project_id: projectId },
+  });
+}
+
+export async function coreUpsertClips(
+  payload: CoreIndexUpsertPayload
+): Promise<CoreIndexUpsertResponse> {
+  return requestJson<CoreIndexUpsertResponse>(`${getCoreBaseUrl()}/api/v1/index/upsert-clips`, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export async function coreChat(payload: CoreChatRequestPayload): Promise<CoreChatDecisionResponse> {
+  return requestJson<CoreChatDecisionResponse>(`${getCoreBaseUrl()}/api/v1/chat`, {
+    method: "POST",
+    body: payload,
   });
 }

@@ -1,8 +1,10 @@
 import { create } from "zustand";
 import {
+  coreChat,
   coreGetProject,
   coreImportAssets,
   coreIngestProject,
+  coreUpsertClips,
   coreUploadAssets,
   type CoreAssetDTO,
   type CoreClipDTO,
@@ -12,9 +14,8 @@ import {
   pickMediaFromSystem,
   type MediaPickInput,
 } from "../services/electronBridge";
-import { serverChat, serverUpsertClips, type DecisionType } from "../services/serverApi";
 import { getOrCreateSessionId } from "../utils/session";
-import type { AgentOperation, EntroVideoProject } from "../contracts/contract";
+import type { AgentOperation, DecisionType, EntroVideoProject } from "../contracts/contract";
 
 export interface WorkspaceAssetItem {
   id: string;
@@ -235,7 +236,7 @@ async function runMediaPipeline(projectId: string, pendingPrompt?: string): Prom
       processingPhase: "indexing",
     });
 
-    const indexed = await serverUpsertClips({
+    const indexed = await coreUpsertClips({
       project_id: projectId,
       clips: ingest.clips,
     });
@@ -442,7 +443,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }));
 
     try {
-      const response = await serverChat({
+      const response = await coreChat({
         project_id: workspaceId,
         session_id: getOrCreateSessionId(workspaceId),
         message: composedPrompt,
