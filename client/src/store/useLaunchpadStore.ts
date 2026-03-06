@@ -262,6 +262,7 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => ({
   },
 
   clearActiveWorkspace: () => {
+    useWorkspaceStore.getState().disconnectProjectEvents();
     set({
       activeWorkspaceId: null,
       activeWorkspaceName: null,

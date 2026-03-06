@@ -40,6 +40,7 @@ type WorkspacePageProps = {
 
 type MediaTab = "assets" | "clips";
 type DraggingTarget = "left" | "mid" | null;
+type EventStreamVisualState = "online" | "checking" | "offline";
 
 const SUGGESTION_CHIPS = [
   "Generate rough cut",
@@ -96,6 +97,18 @@ function buildHealthTitle(target: ServiceTarget, snapshot: ServiceHealthSnapshot
   return `${target} is offline (${snapshot.message ?? "unknown"})`;
 }
 
+function toEventStreamVisualState(
+  state: "disconnected" | "connecting" | "connected"
+): EventStreamVisualState {
+  if (state === "connected") {
+    return "online";
+  }
+  if (state === "connecting") {
+    return "checking";
+  }
+  return "offline";
+}
+
 function formatOperation(op: AssistantDecisionTurn["ops"][number]): string {
   const parts = [op.op];
   if (op.target_item_id) {
@@ -148,6 +161,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const isThinking = useWorkspaceStore((state) => state.isThinking);
   const isMediaProcessing = useWorkspaceStore((state) => state.isMediaProcessing);
   const mediaStatusText = useWorkspaceStore((state) => state.mediaStatusText);
+  const eventStreamState = useWorkspaceStore((state) => state.eventStreamState);
   const lastError = useWorkspaceStore((state) => state.lastError);
   const initializeWorkspace = useWorkspaceStore((state) => state.initializeWorkspace);
   const uploadAssets = useWorkspaceStore((state) => state.uploadAssets);
@@ -164,6 +178,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const safeTotalDurationSec = Math.max(1, totalDurationSec);
   const playbackProgress = Math.min(1, currentTimeSec / safeTotalDurationSec);
   const sessionLabel = `Session #${sessionId.slice(-8).toUpperCase()}`;
+  const eventStreamVisualState = toEventStreamVisualState(eventStreamState);
 
   useEffect(() => {
     void initializeWorkspace(workspaceId, workspaceName);
@@ -401,6 +416,13 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
             >
               <span className={`health-dot health-dot-${serviceHealth.core.state}`} />
               core {healthStateLabel(serviceHealth.core.state)}
+            </span>
+            <span
+              className={`health-pill health-pill-${eventStreamVisualState}`}
+              title={`core event stream ${eventStreamState}`}
+            >
+              <span className={`health-dot health-dot-${eventStreamVisualState}`} />
+              ws {eventStreamState}
             </span>
             <span
               className={`health-pill health-pill-${serviceHealth.server.state}`}

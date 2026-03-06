@@ -1,5 +1,9 @@
 import { create } from "zustand";
 import {
+  createCoreProjectEventSocket,
+  type CoreEventEnvelope,
+} from "../services/coreEvents";
+import {
   coreChat,
   coreGetProject,
   coreImportAssets,
@@ -93,8 +97,11 @@ interface WorkspaceState {
   mediaStatusText: string | null;
   isThinking: boolean;
   processingPhase: ProcessingPhase;
+  eventStreamState: "disconnected" | "connecting" | "connected";
   pendingPrompt: string | null;
   lastError: WorkspaceError | null;
+  connectProjectEvents: (workspaceId: string) => void;
+  disconnectProjectEvents: () => void;
   initializeWorkspace: (workspaceId: string, workspaceName?: string) => Promise<void>;
   bootstrapFromLaunch: (input: BootstrapInput) => Promise<void>;
   uploadAssets: (input?: UploadAssetsInput) => Promise<void>;
@@ -110,6 +117,39 @@ const SCENE_STYLES = [
   { colorClass: "scene-cyan", bgClass: "scene-bg-cyan" },
 ] as const;
 const NO_MEDIA_PROMPT_HINT = "当前没有可用素材，请先引导用户上传视频并给出具体下一步。";
+
+let activeProjectSocket: WebSocket | null = null;
+let activeProjectSocketId: string | null = null;
+
+function mapMediaStageToPhase(stage: string): ProcessingPhase {
+  if (stage === "index") {
+    return "indexing";
+  }
+  return "media_processing";
+}
+
+function formatMediaEventMessage(stage: string, payload: Record<string, unknown>): string {
+  const message = typeof payload.message === "string" ? payload.message : "";
+  if (message && !message.includes("_")) {
+    return message;
+  }
+  switch (stage) {
+    case "scan":
+      return "视频处理中：正在扫描素材...";
+    case "segment":
+      return "视频处理中：正在切分镜头...";
+    case "extract_frames":
+      return "视频处理中：正在提取关键帧...";
+    case "embed":
+      return "视频处理中：正在生成向量...";
+    case "index":
+      return "视频处理中：正在向量化片段...";
+    case "render":
+      return "视频处理中：正在生成预览...";
+    default:
+      return message || "视频处理中...";
+  }
+}
 
 function toWorkspaceError(message: string, error: unknown): WorkspaceError {
   const maybe = error as {
@@ -216,6 +256,71 @@ function mapStoryboardFromServer(
   });
 }
 
+function applyCoreEvent(event: CoreEventEnvelope): void {
+  const setState = useWorkspaceStore.setState;
+  switch (event.event) {
+    case "session.ready":
+      setState({ eventStreamState: "connected" });
+      return;
+    case "media.processing.progress": {
+      const stage = typeof event.payload.stage === "string" ? event.payload.stage : "scan";
+      setState({
+        isMediaProcessing: true,
+        mediaStatusText: formatMediaEventMessage(stage, event.payload),
+        processingPhase: mapMediaStageToPhase(stage),
+      });
+      return;
+    }
+    case "media.processing.completed":
+      setState((state) => ({
+        isMediaProcessing: false,
+        mediaStatusText:
+          typeof event.payload.message === "string" ? event.payload.message : state.mediaStatusText,
+        processingPhase: state.isThinking ? "chat_thinking" : "ready",
+      }));
+      return;
+    case "workspace.chat.received":
+      setState({
+        isThinking: true,
+        processingPhase: "chat_thinking",
+      });
+      return;
+    case "workspace.chat.ready":
+      setState((state) => ({
+        isThinking: false,
+        processingPhase: "ready",
+        mediaStatusText:
+          typeof event.payload.message === "string" ? event.payload.message : state.mediaStatusText,
+      }));
+      return;
+    case "workspace.patch.ready": {
+      const reasoningSummary =
+        typeof event.payload.reasoning_summary === "string"
+          ? event.payload.reasoning_summary
+          : "AI returned a patch.";
+      const rawOps = Array.isArray(event.payload.ops) ? event.payload.ops : [];
+      const assistantTurn: AssistantDecisionTurn = {
+        id: `assistant_event_${Date.now()}`,
+        role: "assistant",
+        type: "decision",
+        decision_type: "UPDATE_PROJECT_CONTRACT",
+        reasoning_summary: reasoningSummary,
+        ops: rawOps.filter((item): item is AgentOperation => typeof item === "object" && item !== null),
+      };
+      setState((state) => ({
+        chatTurns: [...state.chatTurns, assistantTurn],
+        isThinking: false,
+        processingPhase: "ready",
+      }));
+      return;
+    }
+    case "notification":
+    case "launchpad.project.initialized":
+    default:
+      return;
+  }
+}
+
 async function runMediaPipeline(projectId: string, pendingPrompt?: string): Promise<void> {
   const setState = useWorkspaceStore.setState;
   const getState = useWorkspaceStore.getState;
@@ -288,11 +393,51 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   mediaStatusText: null,
   isThinking: false,
   processingPhase: "idle",
+  eventStreamState: "disconnected",
   pendingPrompt: null,
   lastError: null,
 
+  connectProjectEvents: (workspaceId) => {
+    if (activeProjectSocket && activeProjectSocketId === workspaceId) {
+      return;
+    }
+
+    if (activeProjectSocket) {
+      activeProjectSocket.close();
+      activeProjectSocket = null;
+      activeProjectSocketId = null;
+    }
+
+    set({ eventStreamState: "connecting" });
+    activeProjectSocket = createCoreProjectEventSocket(workspaceId, {
+      onEvent: applyCoreEvent,
+      onOpen: () => {
+        set({ eventStreamState: "connected" });
+      },
+      onClose: () => {
+        set({ eventStreamState: "disconnected" });
+        activeProjectSocket = null;
+        activeProjectSocketId = null;
+      },
+      onError: () => {
+        set({ eventStreamState: "disconnected" });
+      },
+    });
+    activeProjectSocketId = workspaceId;
+  },
+
+  disconnectProjectEvents: () => {
+    if (activeProjectSocket) {
+      activeProjectSocket.close();
+    }
+    activeProjectSocket = null;
+    activeProjectSocketId = null;
+    set({ eventStreamState: "disconnected" });
+  },
+
   initializeWorkspace: async (workspaceId, workspaceName) => {
     const shouldResetProject = get().workspaceId !== workspaceId;
+    get().connectProjectEvents(workspaceId);
     set({
       workspaceId,
       workspaceName: workspaceName ?? get().workspaceName ?? workspaceId,
@@ -331,6 +476,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   bootstrapFromLaunch: async (input) => {
     const trimmedPrompt = input.prompt?.trim();
+    get().connectProjectEvents(input.projectId);
     set({
       workspaceId: input.projectId,
       workspaceName: input.workspaceName,
@@ -354,9 +500,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       return;
     }
 
-    if (trimmedPrompt) {
-      await get().sendChat(trimmedPrompt);
-      return;
+      if (trimmedPrompt) {
+        await get().sendChat(trimmedPrompt);
+        return;
     }
 
     set({ processingPhase: "ready" });
@@ -467,7 +613,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       };
 
       set((state) => ({
-        chatTurns: [...state.chatTurns, assistantTurn],
+        chatTurns:
+          state.eventStreamState === "connected"
+            ? state.chatTurns
+            : [...state.chatTurns, assistantTurn],
         currentProject: response.project ?? state.currentProject,
         storyboard: mapStoryboardFromServer(response.storyboard_scenes, state.storyboard),
         isThinking: false,
