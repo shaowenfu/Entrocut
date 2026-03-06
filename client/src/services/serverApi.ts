@@ -1,15 +1,21 @@
 import type { CoreClipDTO } from "./coreApi";
+import { requestJson, type AppHttpError } from "./httpClient";
+import type {
+  AgentOperation,
+  DecisionType,
+  EntroVideoProject,
+  PatchPayload,
+} from "../contracts/contract";
 
-export type DecisionType =
-  | "UPDATE_PROJECT_CONTRACT"
-  | "APPLY_PATCH_ONLY"
-  | "ASK_USER_CLARIFICATION";
+export type { AppHttpError, DecisionType, AgentOperation };
 
 export interface ChatDecisionResponse {
   decision_type: DecisionType;
+  project: EntroVideoProject | null;
+  patch: PatchPayload | null;
   project_id: string;
   reasoning_summary: string;
-  ops: string[];
+  ops: AgentOperation[];
   storyboard_scenes?: Array<{
     id: string;
     title: string;
@@ -19,6 +25,8 @@ export interface ChatDecisionResponse {
   meta?: {
     request_id?: string;
     latency_ms?: number;
+    session_id?: string;
+    used_clip_count?: number;
   };
 }
 
@@ -28,6 +36,7 @@ export interface ChatRequestPayload {
   session_id?: string;
   user_id?: string;
   context?: Record<string, unknown>;
+  current_project?: Record<string, unknown>;
 }
 
 export interface IndexUpsertPayload {
@@ -42,13 +51,27 @@ export interface IndexUpsertResponse {
   failed: number;
 }
 
-export interface AppHttpError {
-  code: "HTTP_ERROR" | "NETWORK_ERROR";
-  message: string;
-  cause?: string;
+export interface ServerJobAcceptedResponse {
+  job_id: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  project_id: string;
+  job_type: string;
+  retryable: boolean;
 }
 
-const REQUEST_TIMEOUT_MS = 8000;
+export interface ServerJobStatusResponse {
+  job_id: string;
+  project_id: string;
+  job_type: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  progress: number;
+  retryable: boolean;
+  error_code?: string | null;
+  error_message?: string | null;
+  result?: Record<string, unknown> | null;
+  updated_at: string;
+}
+
 const DEFAULT_SERVER_BASE_URL = "http://127.0.0.1:8001";
 
 function trimTrailingSlash(url: string): string {
@@ -65,50 +88,42 @@ export function getServerBaseUrl(): string {
   return envBaseUrl("VITE_SERVER_BASE_URL", DEFAULT_SERVER_BASE_URL);
 }
 
-function toHttpError(code: AppHttpError["code"], message: string, cause?: unknown): AppHttpError {
-  return {
-    code,
-    message,
-    cause: cause instanceof Error ? cause.message : typeof cause === "string" ? cause : undefined,
-  };
+export async function serverCreateIndexJob(payload: IndexUpsertPayload): Promise<ServerJobAcceptedResponse> {
+  return requestJson<ServerJobAcceptedResponse>(`${getServerBaseUrl()}/api/v1/index/jobs`, {
+    method: "POST",
+    body: payload,
+  });
 }
 
-async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, {
-      ...init,
-      headers: {
-        "Content-Type": "application/json",
-        ...(init?.headers ?? {}),
-      },
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw toHttpError("HTTP_ERROR", `request_failed_${response.status}`);
-    }
-    return (await response.json()) as T;
-  } catch (error) {
-    if ((error as AppHttpError)?.code) {
-      throw error;
-    }
-    throw toHttpError("NETWORK_ERROR", "network_unreachable", error);
-  } finally {
-    window.clearTimeout(timer);
-  }
+export async function serverCreateChatJob(payload: ChatRequestPayload): Promise<ServerJobAcceptedResponse> {
+  return requestJson<ServerJobAcceptedResponse>(`${getServerBaseUrl()}/api/v1/chat/jobs`, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export async function serverGetJob(jobId: string): Promise<ServerJobStatusResponse> {
+  return requestJson<ServerJobStatusResponse>(`${getServerBaseUrl()}/api/v1/jobs/${jobId}`, {
+    method: "GET",
+  });
+}
+
+export async function serverRetryJob(jobId: string): Promise<ServerJobAcceptedResponse> {
+  return requestJson<ServerJobAcceptedResponse>(`${getServerBaseUrl()}/api/v1/jobs/${jobId}/retry`, {
+    method: "POST",
+  });
 }
 
 export async function serverUpsertClips(payload: IndexUpsertPayload): Promise<IndexUpsertResponse> {
-  return fetchJson<IndexUpsertResponse>(`${getServerBaseUrl()}/api/v1/index/upsert-clips`, {
+  return requestJson<IndexUpsertResponse>(`${getServerBaseUrl()}/api/v1/index/upsert-clips`, {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: payload,
   });
 }
 
 export async function serverChat(payload: ChatRequestPayload): Promise<ChatDecisionResponse> {
-  return fetchJson<ChatDecisionResponse>(`${getServerBaseUrl()}/api/v1/chat`, {
+  return requestJson<ChatDecisionResponse>(`${getServerBaseUrl()}/api/v1/chat`, {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: payload,
   });
 }

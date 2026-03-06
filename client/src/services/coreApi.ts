@@ -1,3 +1,7 @@
+import { requestJson, type AppHttpError } from "./httpClient";
+
+export type { AppHttpError };
+
 export interface CoreProjectMetaDTO {
   id: string;
   title: string;
@@ -25,6 +29,7 @@ export interface CoreClipDTO {
 }
 
 export interface CoreProjectDetailDTO {
+  contract_version: string;
   project_id: string;
   title: string;
   ai_status: string;
@@ -34,6 +39,7 @@ export interface CoreProjectDetailDTO {
 }
 
 export interface CoreIngestResponse {
+  contract_version: string;
   project_id: string;
   assets: CoreAssetDTO[];
   clips: CoreClipDTO[];
@@ -49,6 +55,7 @@ export interface CoreCreateProjectPayload {
 }
 
 export interface CoreCreateProjectResponse {
+  contract_version: string;
   project_id: string;
   title: string;
 }
@@ -58,18 +65,33 @@ export interface CoreListProjectsResponse {
 }
 
 interface CoreAddAssetsResponse {
+  contract_version: string;
   project_id: string;
   added_count: number;
   total_assets: number;
 }
 
-export interface AppHttpError {
-  code: "INVALID_INPUT" | "HTTP_ERROR" | "NETWORK_ERROR" | "SCHEMA_ERROR";
-  message: string;
-  cause?: string;
+export interface CoreJobAcceptedResponse {
+  job_id: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  project_id: string;
+  job_type: string;
+  retryable: boolean;
 }
 
-const REQUEST_TIMEOUT_MS = 5000;
+export interface CoreJobStatusResponse {
+  job_id: string;
+  project_id: string;
+  job_type: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  progress: number;
+  retryable: boolean;
+  error_code?: string | null;
+  error_message?: string | null;
+  result?: Record<string, unknown> | null;
+  updated_at: string;
+}
+
 const DEFAULT_CORE_BASE_URL = "http://127.0.0.1:8000";
 
 function trimTrailingSlash(url: string): string {
@@ -86,76 +108,14 @@ export function getCoreBaseUrl(): string {
   return envBaseUrl("VITE_CORE_BASE_URL", DEFAULT_CORE_BASE_URL);
 }
 
-function toHttpError(
-  code: AppHttpError["code"],
-  message: string,
-  cause?: unknown
-): AppHttpError {
-  return {
-    code,
-    message,
-    cause: cause instanceof Error ? cause.message : typeof cause === "string" ? cause : undefined,
-  };
-}
-
-async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, {
-      ...init,
-      headers: {
-        "Content-Type": "application/json",
-        ...(init?.headers ?? {}),
-      },
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      throw toHttpError("HTTP_ERROR", `request_failed_${response.status}`);
-    }
-    return (await response.json()) as T;
-  } catch (error) {
-    if ((error as AppHttpError)?.code) {
-      throw error;
-    }
-    throw toHttpError("NETWORK_ERROR", "network_unreachable", error);
-  } finally {
-    window.clearTimeout(timer);
-  }
-}
-
-async function fetchFormData<T>(url: string, formData: FormData): Promise<T> {
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      body: formData,
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw toHttpError("HTTP_ERROR", `request_failed_${response.status}`);
-    }
-    return (await response.json()) as T;
-  } catch (error) {
-    if ((error as AppHttpError)?.code) {
-      throw error;
-    }
-    throw toHttpError("NETWORK_ERROR", "network_unreachable", error);
-  } finally {
-    window.clearTimeout(timer);
-  }
-}
-
 export async function coreListProjects(): Promise<CoreListProjectsResponse> {
-  return fetchJson<CoreListProjectsResponse>(`${getCoreBaseUrl()}/api/v1/projects`, {
+  return requestJson<CoreListProjectsResponse>(`${getCoreBaseUrl()}/api/v1/projects`, {
     method: "GET",
   });
 }
 
 export async function coreGetProject(projectId: string): Promise<CoreProjectDetailDTO> {
-  return fetchJson<CoreProjectDetailDTO>(`${getCoreBaseUrl()}/api/v1/projects/${projectId}`, {
+  return requestJson<CoreProjectDetailDTO>(`${getCoreBaseUrl()}/api/v1/projects/${projectId}`, {
     method: "GET",
   });
 }
@@ -163,16 +123,16 @@ export async function coreGetProject(projectId: string): Promise<CoreProjectDeta
 export async function coreCreateProject(
   payload: CoreCreateProjectPayload
 ): Promise<CoreCreateProjectResponse> {
-  return fetchJson<CoreCreateProjectResponse>(`${getCoreBaseUrl()}/api/v1/projects`, {
+  return requestJson<CoreCreateProjectResponse>(`${getCoreBaseUrl()}/api/v1/projects`, {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: payload,
   });
 }
 
 export async function coreImportProject(folderPath: string): Promise<CoreCreateProjectResponse> {
-  return fetchJson<CoreCreateProjectResponse>(`${getCoreBaseUrl()}/api/v1/projects/import`, {
+  return requestJson<CoreCreateProjectResponse>(`${getCoreBaseUrl()}/api/v1/projects/import`, {
     method: "POST",
-    body: JSON.stringify({ folder_path: folderPath }),
+    body: { folder_path: folderPath },
   });
 }
 
@@ -181,30 +141,64 @@ export async function coreUploadProject(files: File[]): Promise<CoreCreateProjec
   files.forEach((file) => {
     formData.append("files", file, file.name);
   });
-  return fetchFormData<CoreCreateProjectResponse>(`${getCoreBaseUrl()}/api/v1/projects/upload`, formData);
-}
-
-export async function coreImportAssets(projectId: string, folderPath: string): Promise<CoreAddAssetsResponse> {
-  return fetchJson<CoreAddAssetsResponse>(`${getCoreBaseUrl()}/api/v1/projects/${projectId}/assets/import`, {
+  return requestJson<CoreCreateProjectResponse>(`${getCoreBaseUrl()}/api/v1/projects/upload`, {
     method: "POST",
-    body: JSON.stringify({ folder_path: folderPath }),
+    body: formData,
   });
 }
 
-export async function coreUploadAssets(projectId: string, files: File[]): Promise<CoreAddAssetsResponse> {
+export async function coreImportAssets(
+  projectId: string,
+  folderPath: string
+): Promise<CoreAddAssetsResponse> {
+  return requestJson<CoreAddAssetsResponse>(
+    `${getCoreBaseUrl()}/api/v1/projects/${projectId}/assets/import`,
+    {
+      method: "POST",
+      body: { folder_path: folderPath },
+    }
+  );
+}
+
+export async function coreUploadAssets(
+  projectId: string,
+  files: File[]
+): Promise<CoreAddAssetsResponse> {
   const formData = new FormData();
   files.forEach((file) => {
     formData.append("files", file, file.name);
   });
-  return fetchFormData<CoreAddAssetsResponse>(
+  return requestJson<CoreAddAssetsResponse>(
     `${getCoreBaseUrl()}/api/v1/projects/${projectId}/assets/upload`,
-    formData
+    {
+      method: "POST",
+      body: formData,
+    }
   );
 }
 
-export async function coreIngestProject(projectId: string): Promise<CoreIngestResponse> {
-  return fetchJson<CoreIngestResponse>(`${getCoreBaseUrl()}/api/v1/ingest`, {
+export async function coreCreateIngestJob(projectId: string): Promise<CoreJobAcceptedResponse> {
+  return requestJson<CoreJobAcceptedResponse>(`${getCoreBaseUrl()}/api/v1/ingest/jobs`, {
     method: "POST",
-    body: JSON.stringify({ project_id: projectId }),
+    body: { project_id: projectId },
+  });
+}
+
+export async function coreGetJob(jobId: string): Promise<CoreJobStatusResponse> {
+  return requestJson<CoreJobStatusResponse>(`${getCoreBaseUrl()}/api/v1/jobs/${jobId}`, {
+    method: "GET",
+  });
+}
+
+export async function coreRetryJob(jobId: string): Promise<CoreJobAcceptedResponse> {
+  return requestJson<CoreJobAcceptedResponse>(`${getCoreBaseUrl()}/api/v1/jobs/${jobId}/retry`, {
+    method: "POST",
+  });
+}
+
+export async function coreIngestProject(projectId: string): Promise<CoreIngestResponse> {
+  return requestJson<CoreIngestResponse>(`${getCoreBaseUrl()}/api/v1/ingest`, {
+    method: "POST",
+    body: { project_id: projectId },
   });
 }

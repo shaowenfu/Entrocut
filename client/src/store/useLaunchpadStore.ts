@@ -29,12 +29,15 @@ type ErrorCode =
   | "INVALID_INPUT"
   | "HTTP_ERROR"
   | "NETWORK_ERROR"
-  | "SCHEMA_ERROR";
+  | "SCHEMA_ERROR"
+  | "AUTH_TOKEN_MISSING"
+  | string;
 
 export interface LaunchpadError {
   code: ErrorCode;
   message: string;
   cause?: string;
+  requestId?: string;
 }
 
 interface StartLaunchInput extends MediaPickInput {
@@ -71,6 +74,36 @@ function toLaunchpadError(code: ErrorCode, message: string, cause?: unknown): La
   };
 }
 
+function toLaunchpadErrorFromUnknown(
+  error: unknown,
+  fallbackCode: ErrorCode,
+  fallbackMessage: string
+): LaunchpadError {
+  if (error && typeof error === "object") {
+    const maybe = error as {
+      code?: string;
+      message?: string;
+      cause?: string;
+      requestId?: string;
+      request_id?: string;
+    };
+    if (typeof maybe.code === "string" && typeof maybe.message === "string") {
+      return {
+        code: maybe.code,
+        message: maybe.message,
+        cause: maybe.cause,
+        requestId:
+          typeof maybe.requestId === "string"
+            ? maybe.requestId
+            : typeof maybe.request_id === "string"
+            ? maybe.request_id
+            : undefined,
+      };
+    }
+  }
+  return toLaunchpadError(fallbackCode, fallbackMessage, error);
+}
+
 function mapProject(item: CoreProjectMetaDTO): ProjectMeta {
   return {
     id: item.id,
@@ -104,9 +137,7 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => ({
     } catch (error) {
       set({
         recentProjects: [],
-        lastError:
-          (error as LaunchpadError) ??
-          toLaunchpadError("NETWORK_ERROR", "fetch_projects_failed", error),
+        lastError: toLaunchpadErrorFromUnknown(error, "NETWORK_ERROR", "fetch_projects_failed"),
       });
     } finally {
       set({ isLoadingProjects: false });
@@ -159,9 +190,11 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => ({
       return created.project_id;
     } catch (error) {
       set({
-        lastError:
-          (error as LaunchpadError) ??
-          toLaunchpadError("NETWORK_ERROR", "start_workspace_from_launchpad_failed", error),
+        lastError: toLaunchpadErrorFromUnknown(
+          error,
+          "NETWORK_ERROR",
+          "start_workspace_from_launchpad_failed"
+        ),
       });
       return null;
     } finally {
@@ -193,9 +226,11 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => ({
       });
       return created.project_id;
     } catch (error) {
-      const appError =
-        (error as LaunchpadError) ??
-        toLaunchpadError("NETWORK_ERROR", "create_empty_project_failed", error);
+      const appError = toLaunchpadErrorFromUnknown(
+        error,
+        "NETWORK_ERROR",
+        "create_empty_project_failed"
+      );
       set({ lastError: appError });
       throw appError;
     } finally {

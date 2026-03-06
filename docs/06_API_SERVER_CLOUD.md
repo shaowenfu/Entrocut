@@ -2,9 +2,29 @@
 
 Base URL: `https://api.entrocut.com`
 
+鉴权：除 `GET /health` 外，所有接口需要 `Authorization: Bearer <JWT>`
+
+错误：统一 `ErrorEnvelope`
+
 ## 1. `GET /health`
 
 用途：基础探活。
+
+## 1.1 `POST /api/v1/index/jobs`
+
+用途：创建向量写入异步任务，返回 `job_id`。
+
+## 1.2 `POST /api/v1/chat/jobs`
+
+用途：创建 `chat` 异步任务，返回 `job_id`。
+
+## 1.3 `GET /api/v1/jobs/{job_id}`
+
+用途：查询任务状态与结果。
+
+## 1.4 `POST /api/v1/jobs/{job_id}/retry`
+
+用途：手动重试失败任务（不自动重试）。
 
 ## 2. `POST /api/v1/index/upsert-clips`
 

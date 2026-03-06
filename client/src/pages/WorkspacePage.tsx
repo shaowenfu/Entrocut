@@ -96,6 +96,20 @@ function buildHealthTitle(target: ServiceTarget, snapshot: ServiceHealthSnapshot
   return `${target} is offline (${snapshot.message ?? "unknown"})`;
 }
 
+function formatOperation(op: AssistantDecisionTurn["ops"][number]): string {
+  const parts = [op.op];
+  if (op.target_item_id) {
+    parts.push(`target=${op.target_item_id}`);
+  }
+  if (op.new_clip_id) {
+    parts.push(`clip=${op.new_clip_id}`);
+  }
+  if (op.note) {
+    parts.push(`note=${op.note}`);
+  }
+  return parts.join(" | ");
+}
+
 function extractDroppedPath(event: DragEvent<HTMLDivElement>): string | null {
   const firstFile = event.dataTransfer.files?.item(0);
   const electronPath = (firstFile as File & { path?: string } | null)?.path;
@@ -510,6 +524,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
             {lastError ? (
               <p className="workspace-error-banner" role="alert" onClick={clearLastError}>
                 {lastError.code}: {lastError.message}
+                {lastError.requestId ? ` (request_id=${lastError.requestId})` : ""}
               </p>
             ) : null}
           </div>
@@ -548,9 +563,12 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                         <p>{turn.reasoning_summary}</p>
                         <div className="decision-ops">
                           {turn.ops.map((op) => (
-                            <div key={op} className="decision-op">
+                            <div
+                              key={`${op.op}_${op.target_item_id ?? ""}_${op.new_clip_id ?? ""}_${op.note ?? ""}`}
+                              className="decision-op"
+                            >
                               <span />
-                              <code>{op}</code>
+                              <code>{formatOperation(op)}</code>
                             </div>
                           ))}
                         </div>

@@ -14,6 +14,7 @@ import {
 } from "../services/electronBridge";
 import { serverChat, serverUpsertClips, type DecisionType } from "../services/serverApi";
 import { getOrCreateSessionId } from "../utils/session";
+import type { AgentOperation, EntroVideoProject } from "../contracts/contract";
 
 export interface WorkspaceAssetItem {
   id: string;
@@ -53,7 +54,7 @@ export interface AssistantDecisionTurn {
   type: "decision";
   decision_type: DecisionType;
   reasoning_summary: string;
-  ops: string[];
+  ops: AgentOperation[];
 }
 
 export type ChatTurn = UserTurn | AssistantDecisionTurn;
@@ -64,6 +65,7 @@ interface WorkspaceError {
   code: string;
   message: string;
   cause?: string;
+  requestId?: string;
 }
 
 interface BootstrapInput {
@@ -83,6 +85,7 @@ interface WorkspaceState {
   assets: WorkspaceAssetItem[];
   clips: WorkspaceClipItem[];
   storyboard: StoryboardScene[];
+  currentProject: EntroVideoProject | null;
   chatTurns: ChatTurn[];
   isLoadingWorkspace: boolean;
   isMediaProcessing: boolean;
@@ -108,11 +111,23 @@ const SCENE_STYLES = [
 const NO_MEDIA_PROMPT_HINT = "当前没有可用素材，请先引导用户上传视频并给出具体下一步。";
 
 function toWorkspaceError(message: string, error: unknown): WorkspaceError {
-  const maybe = error as { code?: string; message?: string; cause?: string };
+  const maybe = error as {
+    code?: string;
+    message?: string;
+    cause?: string;
+    requestId?: string;
+    request_id?: string;
+  };
   return {
     code: maybe.code ?? "WORKSPACE_ERROR",
     message: maybe.message ?? message,
     cause: maybe.cause,
+    requestId:
+      typeof maybe.requestId === "string"
+        ? maybe.requestId
+        : typeof maybe.request_id === "string"
+        ? maybe.request_id
+        : undefined,
   };
 }
 
@@ -231,7 +246,10 @@ async function runMediaPipeline(projectId: string, pendingPrompt?: string): Prom
       type: "decision",
       decision_type: "UPDATE_PROJECT_CONTRACT",
       reasoning_summary: `素材处理完成，已切分 ${ingest.stats.clip_count} 个片段，向量化成功 ${indexed.indexed} 个。`,
-      ops: ["Ingest completed", `Indexed ${indexed.indexed} clips`],
+      ops: [
+        { op: "ingest_completed", note: "Ingest completed" },
+        { op: "indexed_clips", note: `Indexed ${indexed.indexed} clips` },
+      ],
     };
 
     setState((state) => ({
@@ -262,6 +280,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   assets: [],
   clips: [],
   storyboard: [],
+  currentProject: null,
   chatTurns: [],
   isLoadingWorkspace: false,
   isMediaProcessing: false,
@@ -272,10 +291,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   lastError: null,
 
   initializeWorkspace: async (workspaceId, workspaceName) => {
+    const shouldResetProject = get().workspaceId !== workspaceId;
     set({
       workspaceId,
       workspaceName: workspaceName ?? get().workspaceName ?? workspaceId,
       isLoadingWorkspace: true,
+      currentProject: shouldResetProject ? null : get().currentProject,
       lastError: null,
     });
 
@@ -288,6 +309,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         workspaceName: detail.title,
         assets: mappedAssets,
         clips: mappedClips,
+        currentProject: get().currentProject,
         storyboard:
           get().storyboard.length > 0
             ? get().storyboard
@@ -298,6 +320,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         assets: [],
         clips: [],
         storyboard: [],
+        currentProject: null,
         lastError: toWorkspaceError("load_workspace_failed", error),
       });
     } finally {
@@ -313,6 +336,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       assets: [],
       clips: [],
       storyboard: [],
+      currentProject: null,
       chatTurns: [],
       isThinking: false,
       isMediaProcessing: false,
@@ -388,7 +412,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         type: "decision",
         decision_type: "ASK_USER_CLARIFICATION",
         reasoning_summary: "素材还在处理中，完成后会自动执行你的指令。",
-        ops: ["Prompt queued"],
+        ops: [{ op: "prompt_queued", note: "Prompt queued" }],
       };
       set((state) => ({
         chatTurns: [
@@ -422,6 +446,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         project_id: workspaceId,
         session_id: getOrCreateSessionId(workspaceId),
         message: composedPrompt,
+        current_project: get().currentProject
+          ? (JSON.parse(JSON.stringify(get().currentProject)) as Record<string, unknown>)
+          : undefined,
         context: {
           has_media: hasMedia,
           clip_count: get().clips.length,
@@ -440,6 +467,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
       set((state) => ({
         chatTurns: [...state.chatTurns, assistantTurn],
+        currentProject: response.project ?? state.currentProject,
         storyboard: mapStoryboardFromServer(response.storyboard_scenes, state.storyboard),
         isThinking: false,
         processingPhase: "ready",

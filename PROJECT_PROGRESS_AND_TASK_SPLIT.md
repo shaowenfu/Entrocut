@@ -1,5 +1,16 @@
 # EntroCut 当前进度与任务拆分总览（2026-03-06）
 
+## 0. 最新落地进展（2026-03-06 更新）
+
+已完成第一类全局基线的首版落地：
+
+1. `G1 Contract Baseline`：`server /chat` 已升级为结构化 `project/patch/ops` 返回；`client` 接入结构化 `ops` 渲染。
+2. `G2 Workflow + Job Model`：`core/server` 新增 `job` 模型与 `GET /api/v1/jobs/{job_id}`、`POST /api/v1/jobs/{job_id}/retry`；默认仅手动重试。
+3. `G3 Persistence`：`core/server` 从内存态升级到 `SQLite` 持久化。
+4. `G4 Observability`：三端统一 `ErrorEnvelope`，客户端自动透传 `X-Request-ID`，后端回传并日志化。
+5. `G5 Runtime Matrix`：`client` 的 `electron:dev` 已接通（`Vite + Electron + main/preload watch build`）。
+6. `G6 CI Gate`：新增 `ci-soft` 流水线（软门禁，不阻塞合并），并提供 `smoke_test.sh`。
+
 ## 1. 当前开发进度（Reality Check）
 
 ### 1.1 端到端主链路状态
@@ -171,4 +182,3 @@
 1. 召开一次 `Contract Freeze Review（契约冻结评审）`，把 G1 的阻塞问题当天定稿。
 2. 由主工程师发布 `Architecture Decision Record（架构决策记录）`：G2/G3/G4 一次性定版。
 3. 以本文 `T1-T20` 建立任务看板，按批次A先派工。
-

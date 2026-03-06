@@ -2,6 +2,14 @@
 
 `EntroCut` 当前进入 `MVP` 重构阶段，目标是交付 `Chat-to-Cut（对话生成剪辑）` 闭环。
 
+当前已接入以下全局基线：
+
+1. `JWT Auth（鉴权）`：`core/server` 强制校验 `Authorization: Bearer <token>`。
+2. `ErrorEnvelope（统一错误包）`：三端按 `error.code/error.message/error.details` 对齐。
+3. `Redis Queue（外部队列）`：`ingest/index/chat` 统一基于 `job` 模型执行。
+4. `SQLite Persistence（持久化）`：`core/server` 重启后数据可恢复。
+5. `request_id` 贯通：前端请求自动注入 `X-Request-ID`，后端回传并记录。
+
 ## 目录结构
 
 1. `client/`：`Electron + React` 客户端壳层，承载 `AI Copilot` 界面与状态同步。
@@ -48,7 +56,25 @@
 ./scripts/dev_up.sh
 ```
 
-2. 手动启动 `client`
+2. 生成开发 Token（本地）
+
+```bash
+AUTH_JWT_SECRET=entrocut-dev-secret-change-me ./scripts/issue_dev_token.sh
+```
+
+将输出的 token 写入 `client/.env`：
+
+```bash
+VITE_AUTH_TOKEN=<your_token>
+```
+
+3. 运行冒烟测试（Auth + Queue + Contract）
+
+```bash
+bash scripts/smoke_test.sh
+```
+
+4. 手动启动 `client`
 
 ```bash
 cd client
@@ -56,7 +82,7 @@ npm install
 npm run dev -- --host 127.0.0.1 --port 5173
 ```
 
-3. 手动启动 `core`
+5. 手动启动 `core`
 
 ```bash
 cd core
@@ -66,7 +92,7 @@ pip install -r requirements.txt
 uvicorn server:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-4. 手动启动 `server`
+6. 手动启动 `server`
 
 ```bash
 cd server

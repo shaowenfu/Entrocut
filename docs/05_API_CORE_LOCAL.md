@@ -2,6 +2,10 @@
 
 Base URL: `http://127.0.0.1:${CORE_PORT}`
 
+鉴权：除 `GET /health` 外，所有接口需要 `Authorization: Bearer <JWT>`
+
+错误：统一 `ErrorEnvelope`
+
 ## 1. `GET /health`
 
 用途：`client` 启动后探活 `core Sidecar`。
@@ -58,6 +62,25 @@ Base URL: `http://127.0.0.1:${CORE_PORT}`
 
 1. `frame_pack_base64` 仅用于上传到云端向量化，不持久化到云端对象存储。
 2. 若素材过大，允许分批返回（`batch`）。
+
+## 2.1 `POST /api/v1/ingest/jobs`
+
+用途：创建异步切分任务，返回 `job_id`。
+
+## 2.2 `GET /api/v1/jobs/{job_id}`
+
+用途：查询任务状态与结果。
+
+状态：
+
+1. `queued`
+2. `running`
+3. `succeeded`
+4. `failed`
+
+## 2.3 `POST /api/v1/jobs/{job_id}/retry`
+
+用途：手动重试失败任务（不自动重试）。
 
 ## 3. `POST /api/v1/search`
 

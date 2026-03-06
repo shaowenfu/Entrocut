@@ -29,6 +29,7 @@ htmlcov/
 # Node
 **/node_modules/
 **/dist/
+**/dist-electron/
 **/dist-main/
 **/.vite/
 coverage/
@@ -46,4 +47,6 @@ tmp/
 tmp_*/
 *.tmp
 *.temp
+core/*.db
+server/*.db
 entrocut_jobs/

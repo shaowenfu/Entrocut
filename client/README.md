@@ -6,6 +6,8 @@
 
 1. React + Vite 页面壳层可启动。
 2. Electron 主进程文件仅占位，不包含旧 `IPC` 与 `Sidecar` 逻辑。
+3. `electron:dev` 已接通，支持 `Vite + Electron` 联动本地调试。
+4. 请求默认透传 `Authorization` 与 `X-Request-ID`。
 
 ## 非目标
 

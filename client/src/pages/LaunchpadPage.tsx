@@ -200,6 +200,7 @@ function LaunchpadPage() {
           {lastError ? (
             <p className="launchpad-error-banner" role="alert" onClick={clearLastError}>
               {lastError.code}: {lastError.message}
+              {lastError.requestId ? ` (request_id=${lastError.requestId})` : ""}
             </p>
           ) : null}
         </section>
