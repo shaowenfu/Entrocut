@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -16,11 +17,14 @@ from uuid import uuid4
 
 import jwt
 import redis
-from fastapi import Depends, FastAPI, File, Form, Header, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+
+from app.schemas.events import CoreEventEnvelope, CoreSessionReadyPayload, NotificationPayload
+from app.services.runtime import build_core_runtime
 
 APP_VERSION = "0.3.0"
 CONTRACT_VERSION = "1.0.0"
@@ -225,6 +229,14 @@ class RetryJobResponse(BaseModel):
     job_type: str
 
 
+class RuntimeCapabilitiesResponse(BaseModel):
+    service: Literal["core"] = "core"
+    websocket_path: str
+    workflows: list[str]
+    tools: list[str]
+    gateways: list[str]
+
+
 class _AssetRecord(BaseModel):
     asset_id: str
     project_id: str
@@ -260,6 +272,7 @@ _WORKER_READY = threading.Event()
 _DB_CONN: sqlite3.Connection | None = None
 _REDIS_CLIENT: redis.Redis | None = None
 _WORKER_THREAD: threading.Thread | None = None
+_CORE_RUNTIME = build_core_runtime()
 
 
 def _now() -> datetime:
@@ -277,6 +290,10 @@ def _get_request_id(request: Request) -> str:
 def _json_log(event: str, **kwargs: Any) -> None:
     payload = {"event": event, "ts": _now_iso(), **kwargs}
     logger.info(json.dumps(payload, ensure_ascii=False))
+
+
+def _run_sync_coro(coro: Any) -> None:
+    asyncio.run(coro)
 
 
 def _error_response(
@@ -1331,7 +1348,103 @@ def health() -> dict[str, Any]:
             "backend": "sqlite",
             "db_path": str(CORE_DB_PATH),
         },
+        "runtime": {
+            "websocket": "/ws/projects/{project_id}",
+            "workflows": ["launchpad", "ingest", "chat", "render"],
+            "tools": _CORE_RUNTIME.tool_registry.list_names(),
+            "gateways": ["server_proxy", "mock_server_gateway"],
+        },
     }
+
+
+@app.get("/api/v1/runtime/capabilities", response_model=RuntimeCapabilitiesResponse)
+def runtime_capabilities() -> RuntimeCapabilitiesResponse:
+    return RuntimeCapabilitiesResponse(
+        websocket_path="/ws/projects/{project_id}",
+        workflows=["launchpad", "ingest", "chat", "render"],
+        tools=_CORE_RUNTIME.tool_registry.list_names(),
+        gateways=["server_proxy", "mock_server_gateway"],
+    )
+
+
+@app.websocket("/ws/projects/{project_id}")
+async def project_event_stream(websocket: WebSocket, project_id: str) -> None:
+    await _CORE_RUNTIME.websocket_hub.connect(project_id, websocket)
+    try:
+        await websocket.send_json(
+            CoreEventEnvelope(
+                event="session.ready",
+                project_id=project_id,
+                payload=CoreSessionReadyPayload(project_id=project_id).model_dump(),
+            ).model_dump()
+        )
+        while True:
+            message = await websocket.receive_json()
+            action = str(message.get("action", "")).strip()
+            session_id = str(message.get("session_id", "")).strip() or None
+
+            if action == "ping":
+                await websocket.send_json(
+                    CoreEventEnvelope(
+                        event="notification",
+                        project_id=project_id,
+                        session_id=session_id,
+                        payload=NotificationPayload(level="info", message="pong").model_dump(),
+                    ).model_dump()
+                )
+                continue
+
+            if action == "chat.send":
+                prompt = str(message.get("message", "")).strip()
+                await _CORE_RUNTIME.workspace_workflow.notify_chat_received(
+                    project_id=project_id,
+                    message=prompt,
+                )
+                mock_plan = _CORE_RUNTIME.server_gateway.plan_chat(
+                    prompt,
+                    project_id=project_id,
+                    context={"source": "websocket_shell"},
+                )
+                summary = str(mock_plan.payload.get("reasoning_summary", "mock_plan_ready"))
+                ops = mock_plan.payload.get("ops")
+                parsed_ops = ops if isinstance(ops, list) else []
+                await _CORE_RUNTIME.workspace_workflow.notify_chat_ready(
+                    project_id=project_id,
+                    summary=summary,
+                )
+                await _CORE_RUNTIME.workspace_workflow.notify_patch_ready(
+                    project_id=project_id,
+                    reasoning_summary=summary,
+                    ops=[item for item in parsed_ops if isinstance(item, dict)],
+                )
+                continue
+
+            if action == "launchpad.warmup":
+                prompt = str(message.get("prompt", "")).strip()
+                warmup = _CORE_RUNTIME.server_gateway.warmup_launchpad(prompt, project_id=project_id)
+                summary = str(warmup.payload.get("intent_summary", "launchpad_warmup_ready"))
+                await websocket.send_json(
+                    CoreEventEnvelope(
+                        event="notification",
+                        project_id=project_id,
+                        session_id=session_id,
+                        payload=NotificationPayload(level="info", message=summary).model_dump(),
+                    ).model_dump()
+                )
+                continue
+
+            await websocket.send_json(
+                CoreEventEnvelope(
+                    event="notification",
+                    project_id=project_id,
+                    session_id=session_id,
+                    payload=NotificationPayload(level="warning", message=f"unsupported_action:{action or 'unknown'}").model_dump(),
+                ).model_dump()
+            )
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await _CORE_RUNTIME.websocket_hub.disconnect(project_id, websocket)
 
 
 @app.get("/api/v1/projects", response_model=ListProjectsResponse)
@@ -1376,7 +1489,11 @@ def get_project(project_id: str, auth: AuthContext = Depends(get_auth_context)) 
 
 
 @app.post("/api/v1/projects", response_model=CreateProjectResponse)
-def create_project(request: CreateProjectRequest, auth: AuthContext = Depends(get_auth_context)) -> CreateProjectResponse:
+def create_project(
+    request: CreateProjectRequest,
+    req: Request,
+    auth: AuthContext = Depends(get_auth_context),
+) -> CreateProjectResponse:
     source_folder = request.source_folder_path
     normalized_folder: str | None = None
     imported_assets: list[_AssetRecord] = []
@@ -1406,11 +1523,22 @@ def create_project(request: CreateProjectRequest, auth: AuthContext = Depends(ge
     )
     if imported_assets:
         _insert_assets(imported_assets)
+    _run_sync_coro(
+        _CORE_RUNTIME.launchpad_workflow.notify_project_initialized(
+            project_id=project_id,
+            title=title,
+            request_id=_get_request_id(req),
+        )
+    )
     return CreateProjectResponse(project_id=project_id, title=title)
 
 
 @app.post("/api/v1/projects/import", response_model=CreateProjectResponse)
-def import_project(request: ImportProjectRequest, auth: AuthContext = Depends(get_auth_context)) -> CreateProjectResponse:
+def import_project(
+    request: ImportProjectRequest,
+    req: Request,
+    auth: AuthContext = Depends(get_auth_context),
+) -> CreateProjectResponse:
     folder_path = _validate_folder(request.folder_path, field_name="folder_path")
     project_id = _new_project_id()
     assets = [
@@ -1428,11 +1556,19 @@ def import_project(request: ImportProjectRequest, auth: AuthContext = Depends(ge
     )
     if assets:
         _insert_assets(assets)
+    _run_sync_coro(
+        _CORE_RUNTIME.launchpad_workflow.notify_project_initialized(
+            project_id=project_id,
+            title=title,
+            request_id=_get_request_id(req),
+        )
+    )
     return CreateProjectResponse(project_id=project_id, title=title)
 
 
 @app.post("/api/v1/projects/upload", response_model=CreateProjectResponse)
 async def upload_project(
+    req: Request,
     auth: AuthContext = Depends(get_auth_context),
     files: list[UploadFile] = File(..., description="Video files（视频文件）"),
     title: str | None = Form(default=None),
@@ -1471,6 +1607,11 @@ async def upload_project(
     for file in files:
         await file.close()
 
+    await _CORE_RUNTIME.launchpad_workflow.notify_project_initialized(
+        project_id=project_id,
+        title=normalized_title,
+        request_id=_get_request_id(req),
+    )
     return CreateProjectResponse(project_id=project_id, title=normalized_title)
 
 
@@ -1478,6 +1619,7 @@ async def upload_project(
 def add_assets_from_folder(
     project_id: str,
     request: AddAssetsRequest,
+    req: Request,
     auth: AuthContext = Depends(get_auth_context),
 ) -> AddAssetsResponse:
     _require_project(project_id, auth.user_id)
@@ -1501,12 +1643,22 @@ def add_assets_from_folder(
         ai_status=f"Media linked ({total_assets} assets)",
         last_ai_edit="Added assets from local folder",
     )
+    _run_sync_coro(
+        _CORE_RUNTIME.launchpad_workflow.notify_media_progress(
+            project_id=project_id,
+            stage="scan",
+            progress=0.2,
+            message="folder_assets_linked",
+            request_id=_get_request_id(req),
+        )
+    )
     return AddAssetsResponse(project_id=project_id, added_count=inserted, total_assets=total_assets)
 
 
 @app.post("/api/v1/projects/{project_id}/assets/upload", response_model=AddAssetsResponse)
 async def add_assets_from_upload(
     project_id: str,
+    req: Request,
     auth: AuthContext = Depends(get_auth_context),
     files: list[UploadFile] = File(..., description="Video files（视频文件）"),
 ) -> AddAssetsResponse:
@@ -1533,6 +1685,13 @@ async def add_assets_from_upload(
     )
     for file in files:
         await file.close()
+    await _CORE_RUNTIME.launchpad_workflow.notify_media_progress(
+        project_id=project_id,
+        stage="scan",
+        progress=0.2,
+        message="uploaded_assets_linked",
+        request_id=_get_request_id(req),
+    )
     return AddAssetsResponse(project_id=project_id, added_count=inserted, total_assets=total_assets)
 
 
@@ -1577,7 +1736,15 @@ def ingest(
             details={"job_id": job_id},
             retryable=True,
         )
-    return IngestResponse.model_validate(json.loads(result_json))
+    response = IngestResponse.model_validate(json.loads(result_json))
+    _run_sync_coro(
+        _CORE_RUNTIME.launchpad_workflow.notify_media_completed(
+            project_id=request.project_id,
+            message="ingest_completed",
+            request_id=_get_request_id(req),
+        )
+    )
+    return response
 
 
 @app.get("/api/v1/jobs/{job_id}", response_model=JobStatusResponse)
@@ -1626,11 +1793,22 @@ def proxy_index_upsert(
     req: Request,
     _: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
-    return _proxy_server_json(
+    response = _proxy_server_json(
         path="/api/v1/index/upsert-clips",
         payload=request.model_dump(),
         request=req,
     )
+    indexed = response.get("indexed")
+    _run_sync_coro(
+        _CORE_RUNTIME.launchpad_workflow.notify_media_progress(
+            project_id=request.project_id,
+            stage="index",
+            progress=1.0,
+            message=f"index_upsert_completed:{indexed}",
+            request_id=_get_request_id(req),
+        )
+    )
+    return response
 
 
 @app.post("/api/v1/chat")
@@ -1639,11 +1817,37 @@ def proxy_chat(
     req: Request,
     _: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
-    return _proxy_server_json(
+    _run_sync_coro(
+        _CORE_RUNTIME.workspace_workflow.notify_chat_received(
+            project_id=request.project_id,
+            message=request.message,
+            request_id=_get_request_id(req),
+        )
+    )
+    response = _proxy_server_json(
         path="/api/v1/chat",
         payload=request.model_dump(exclude_none=True),
         request=req,
     )
+    reasoning_summary = str(response.get("reasoning_summary", "chat_ready"))
+    ops = response.get("ops")
+    parsed_ops = ops if isinstance(ops, list) else []
+    _run_sync_coro(
+        _CORE_RUNTIME.workspace_workflow.notify_chat_ready(
+            project_id=request.project_id,
+            summary=reasoning_summary,
+            request_id=_get_request_id(req),
+        )
+    )
+    _run_sync_coro(
+        _CORE_RUNTIME.workspace_workflow.notify_patch_ready(
+            project_id=request.project_id,
+            reasoning_summary=reasoning_summary,
+            ops=[item for item in parsed_ops if isinstance(item, dict)],
+            request_id=_get_request_id(req),
+        )
+    )
+    return response
 
 
 @app.post("/api/v1/search")

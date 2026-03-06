@@ -18,6 +18,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from app.services.runtime import build_server_runtime
+
 APP_VERSION = "0.3.0"
 CONTRACT_VERSION = "1.0.0"
 REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
@@ -226,12 +228,20 @@ class RetryJobResponse(BaseModel):
     job_type: str
 
 
+class RuntimeCapabilitiesResponse(BaseModel):
+    service: Literal["server"] = "server"
+    proxies: list[str]
+    adapters: list[str]
+    quota: dict[str, Any]
+
+
 _DB_LOCK = threading.Lock()
 _WORKER_STOP = threading.Event()
 _WORKER_READY = threading.Event()
 _DB_CONN: sqlite3.Connection | None = None
 _REDIS_CLIENT: redis.Redis | None = None
 _WORKER_THREAD: threading.Thread | None = None
+_SERVER_RUNTIME = build_server_runtime()
 
 
 def _now() -> datetime:
@@ -1033,7 +1043,21 @@ def health() -> dict[str, Any]:
             "backend": "sqlite",
             "db_path": os.path.abspath(SERVER_DB_PATH),
         },
+        "runtime": {
+            "proxies": ["llm_proxy", "embedding_proxy", "vector_search"],
+            "adapters": ["mock_llm", "mock_embedding", "mock_vector_search"],
+            "quota": _SERVER_RUNTIME.usage_quota.get_workspace_capabilities(),
+        },
     }
+
+
+@app.get("/api/v1/runtime/capabilities", response_model=RuntimeCapabilitiesResponse)
+def runtime_capabilities() -> RuntimeCapabilitiesResponse:
+    return RuntimeCapabilitiesResponse(
+        proxies=["llm_proxy", "embedding_proxy", "vector_search"],
+        adapters=["mock_llm", "mock_embedding", "mock_vector_search"],
+        quota=_SERVER_RUNTIME.usage_quota.get_workspace_capabilities(),
+    )
 
 
 @app.post("/api/v1/index/jobs", response_model=JobAcceptedResponse)

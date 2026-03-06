@@ -1,0 +1,2 @@
+"""Core outbound gateway interfaces."""
+
