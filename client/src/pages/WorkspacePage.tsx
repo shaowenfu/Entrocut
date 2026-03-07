@@ -160,7 +160,6 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const [leftWidth, setLeftWidth] = useState(280);
   const [midWidth, setMidWidth] = useState(400);
   const [dragging, setDragging] = useState<DraggingTarget>(null);
-  const [isExporting, setIsExporting] = useState(false);
   const [isEditLocked, setIsEditLocked] = useState(false);
   const [reasoningOverlay, setReasoningOverlay] = useState<string | null>(null);
   const [patchPulseId, setPatchPulseId] = useState<string | null>(null);
@@ -180,12 +179,15 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const isThinking = useWorkspaceStore((state) => state.isThinking);
   const isMediaProcessing = useWorkspaceStore((state) => state.isMediaProcessing);
   const mediaStatusText = useWorkspaceStore((state) => state.mediaStatusText);
+  const isExporting = useWorkspaceStore((state) => state.isExporting);
+  const exportResult = useWorkspaceStore((state) => state.exportResult);
   const eventStreamState = useWorkspaceStore((state) => state.eventStreamState);
   const reconnectState = useWorkspaceStore((state) => state.reconnectState);
   const lastError = useWorkspaceStore((state) => state.lastError);
   const initializeWorkspace = useWorkspaceStore((state) => state.initializeWorkspace);
   const uploadAssets = useWorkspaceStore((state) => state.uploadAssets);
   const sendChat = useWorkspaceStore((state) => state.sendChat);
+  const exportProject = useWorkspaceStore((state) => state.exportProject);
   const clearLastError = useWorkspaceStore((state) => state.clearLastError);
 
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -334,20 +336,26 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     }
   }, [currentTimeSec, safeTotalDurationSec]);
 
-  function handleExport() {
-    if (isExporting) {
+  async function handleExport() {
+    if (isExporting || isMediaProcessing) {
       return;
     }
-    setIsExporting(true);
     setIsEditLocked(true);
     setReasoningOverlay("Export started. Editing is locked.");
 
-    window.setTimeout(() => {
-      setIsExporting(false);
+    try {
+      const result = await exportProject();
+      if (result) {
+        setReasoningOverlay(`Export finished: ${result.output_url}`);
+        window.setTimeout(() => setReasoningOverlay(null), 3000);
+      } else {
+        setReasoningOverlay(null);
+      }
+    } catch {
+      setReasoningOverlay(null);
+    } finally {
       setIsEditLocked(false);
-      setReasoningOverlay("Export finished. Editing unlocked.");
-      window.setTimeout(() => setReasoningOverlay(null), 1200);
-    }, 2600);
+    }
   }
 
   function handleSuggestionPick(suggestion: string) {
@@ -459,7 +467,8 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
               server {healthStateLabel(serviceHealth.server.state)}
             </span>
             {isMediaProcessing ? <span className="lock-pill">{mediaStatusText ?? "MEDIA PROCESSING"}</span> : null}
-            {isEditLocked ? <span className="lock-pill">EDIT LOCKED</span> : null}
+            {isExporting ? <span className="lock-pill">EXPORTING</span> : null}
+            {isEditLocked && !isExporting ? <span className="lock-pill">EDIT LOCKED</span> : null}
           </div>
           <button className="icon-btn topbar-icon-btn" type="button" aria-label="settings">
             <Settings size={18} />

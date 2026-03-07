@@ -273,3 +273,37 @@ export async function coreChat(payload: CoreChatRequestPayload): Promise<CoreCha
     body: payload,
   });
 }
+
+export type RenderType = "preview" | "export";
+
+export interface CoreRenderRequestPayload {
+  project_id: string;
+  render_type: RenderType;
+  // Export 配置
+  format?: string;
+  resolution?: string;
+  codec?: string;
+  output_path?: string;
+  // Preview 配置
+  preview_quality?: string;
+  preview_format?: string;
+}
+
+export interface CoreRenderResponse {
+  job_id: string;
+  render_type: RenderType;
+  output_url: string;
+  duration_ms: number;
+  file_size_bytes: number | null;
+  thumbnail_url: string | null;
+  format: string;
+  quality: string | null;
+  resolution: string | null;
+}
+
+export async function coreRender(payload: CoreRenderRequestPayload): Promise<CoreRenderResponse> {
+  return requestJson<CoreRenderResponse>(`${getCoreBaseUrl()}/api/v1/render`, {
+    method: "POST",
+    body: { project: payload },
+  });
+}

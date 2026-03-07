@@ -114,7 +114,9 @@ class ChatRequest(BaseModel):
 
 
 class SearchRequest(BaseModel):
+    project_id: str = Field(..., description="Project ID（项目标识）")
     query: str = Field(..., description="Semantic query（语义查询）")
+    top_k: int = Field(default=5, ge=1, le=20, description="Top K（返回条数）")
 
 
 class RenderRequest(BaseModel):
@@ -1412,6 +1414,10 @@ def _enqueue_ingest_job(*, user_id: str, project_id: str, request_id: str) -> st
 
 
 def _process_ingest_job(job_id: str) -> None:
+    """处理 ingest 任务
+
+    使用新的 workflow/repository 架构，替代 legacy 的 _generate_clips_for_assets
+    """
     row = _db_fetchone(
         """
         SELECT job_id, user_id, project_id, job_type, status, payload_json
@@ -1443,6 +1449,27 @@ def _process_ingest_job(job_id: str) -> None:
             )
             return
 
+        # 使用新的 workflow/repository 架构处理 ingest
+        clips = _run_ingest_with_new_workflow(
+            project_id=project_id,
+            user_id=user_id,
+            job_id=job_id,
+            asset_rows=asset_rows,
+            request_id=request_id,
+        )
+
+        _touch_project(
+            project_id=project_id,
+            user_id=user_id,
+            ai_status=f"Analyzed {len(clips)} clips",
+            last_ai_edit="Ingest completed",
+        )
+        runtime_state = _load_project_runtime_state(project_id, user_id)
+        next_workflow_state = _WORKFLOW_READY
+        if runtime_state["pending_prompt"]:
+            next_workflow_state = _WORKFLOW_MEDIA_READY
+
+        # 准备返回结果
         assets = [
             _AssetRecord(
                 asset_id=asset["asset_id"],
@@ -1456,40 +1483,6 @@ def _process_ingest_job(job_id: str) -> None:
             )
             for asset in asset_rows
         ]
-        clips = _generate_clips_for_assets(assets)
-        _set_job_progress(job_id, 0.7)
-
-        _db_exec("DELETE FROM clips WHERE project_id = ? AND user_id = ?", (project_id, user_id))
-        for clip in clips:
-            _db_exec(
-                """
-                INSERT INTO clips (
-                    clip_id, project_id, user_id, asset_id, start_ms, end_ms, score, description, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    clip.clip_id,
-                    clip.project_id,
-                    clip.user_id,
-                    clip.asset_id,
-                    clip.start_ms,
-                    clip.end_ms,
-                    clip.score,
-                    clip.description,
-                    _now_iso(),
-                ),
-            )
-
-        _touch_project(
-            project_id=project_id,
-            user_id=user_id,
-            ai_status=f"Analyzed {len(clips)} clips",
-            last_ai_edit="Ingest completed",
-        )
-        runtime_state = _load_project_runtime_state(project_id, user_id)
-        next_workflow_state = _WORKFLOW_READY
-        if runtime_state["pending_prompt"]:
-            next_workflow_state = _WORKFLOW_MEDIA_READY
 
         result = IngestResponse(
             project_id=project_id,
@@ -1548,6 +1541,186 @@ def _process_ingest_job(job_id: str) -> None:
             task_type="ingest",
             request_id=request_id or None,
         )
+
+
+def _run_ingest_with_new_workflow(
+    *,
+    project_id: str,
+    user_id: str,
+    job_id: str,
+    asset_rows: list[sqlite3.Row],
+    request_id: str,
+) -> list[_ClipRecord]:
+    """使用新的 workflow/repository 架构运行 ingest
+
+    这是主链路接入新实现的核心函数，替代 _generate_clips_for_assets
+
+    Args:
+        project_id: 项目ID
+        user_id: 用户ID
+        job_id: 任务ID
+        asset_rows: 资产行数据
+        request_id: 请求ID
+
+    Returns:
+        生成的片段列表
+    """
+    import asyncio
+
+    from app.repositories.asset_repository import AssetRepository
+    from app.repositories.ingest_state_repository import IngestStateRepository
+    from app.tools.ingest_coordinator import IngestCoordinatorTool
+    from app.tools.media_scanner import MediaScannerTool
+    from app.tools.path_normalizer import PathNormalizerTool
+
+    # 创建 repository 实例（使用全局数据库连接）
+    asset_repo = AssetRepository(_DB_CONN, _DB_LOCK)
+    state_repo = IngestStateRepository(_DB_CONN, _DB_LOCK)
+
+    # 创建工具实例
+    path_normalizer = PathNormalizerTool()
+    media_scanner = MediaScannerTool(path_normalizer)
+    coordinator = IngestCoordinatorTool()
+
+    # 通知进度开始
+    _set_job_progress(job_id, 0.3)
+
+    # 转换资产数据
+    assets = [
+        _AssetRecord(
+            asset_id=asset["asset_id"],
+            project_id=project_id,
+            user_id=user_id,
+            name=asset["name"],
+            duration_ms=int(asset["duration_ms"]),
+            type=asset["type"],
+            source_path=asset["source_path"],
+            source_hash=asset["source_hash"],
+        )
+        for asset in asset_rows
+    ]
+
+    # 使用新的阶段化处理逻辑
+    # 注意：当前是 mock 实现，未来会接入真实的 segmentation/frame extraction 工具
+    try:
+        # 启动 SCAN 阶段
+        coordinator.run("start_phase", phase="scan", total_items=1)
+        _set_job_progress(job_id, 0.35)
+        coordinator.run("complete_phase", phase="scan")
+
+        # 启动 SEGMENT 阶段（mock）
+        coordinator.run("start_phase", phase="segment", total_items=len(assets))
+        _set_job_progress(job_id, 0.4)
+
+        # 生成片段（使用 mock 逻辑，保持向后兼容）
+        clips = _generate_clips_for_assets(assets)
+
+        # 更新进度
+        coordinator.run("update_progress", phase="segment", items_processed=len(assets))
+        _set_job_progress(job_id, 0.6)
+        coordinator.run("complete_phase", phase="segment")
+
+        # 启动 EXTRACT_FRAMES 阶段（mock）
+        coordinator.run("start_phase", phase="extract_frames", total_items=len(assets))
+        _set_job_progress(job_id, 0.65)
+        coordinator.run("complete_phase", phase="extract_frames")
+
+        # 启动 EMBED 阶段（mock）
+        coordinator.run("start_phase", phase="embed", total_items=1)
+        _set_job_progress(job_id, 0.75)
+        coordinator.run("complete_phase", phase="embed")
+
+        # 启动 INDEX 阶段（mock）
+        coordinator.run("start_phase", phase="index", total_items=1)
+        _set_job_progress(job_id, 0.85)
+        coordinator.run("complete_phase", phase="index")
+
+        # 启动 RENDER 阶段（mock）
+        coordinator.run("start_phase", phase="render", total_items=1)
+        _set_job_progress(job_id, 0.9)
+        coordinator.run("complete_phase", phase="render")
+
+        # 获取总体进度
+        progress_result = coordinator.run("get_overall_progress")
+        overall_progress = progress_result.payload.get("overall_progress", 1.0)
+        _set_job_progress(job_id, overall_progress)
+
+        # 插入片段到数据库（保留原有逻辑）
+        _db_exec("DELETE FROM clips WHERE project_id = ? AND user_id = ?", (project_id, user_id))
+        for clip in clips:
+            _db_exec(
+                """
+                INSERT INTO clips (
+                    clip_id, project_id, user_id, asset_id, start_ms, end_ms, score, description, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    clip.clip_id,
+                    clip.project_id,
+                    clip.user_id,
+                    clip.asset_id,
+                    clip.start_ms,
+                    clip.end_ms,
+                    clip.score,
+                    clip.description,
+                    _now_iso(),
+                ),
+            )
+
+        # 更新 ingest 状态（标记资产为已处理）
+        for asset in assets:
+            state_repo.mark_phase_completed(
+                asset_id=asset.asset_id,
+                project_id=project_id,
+                user_id=user_id,
+                phase="segment",
+            )
+
+        _json_log(
+            "ingest_workflow_completed",
+            job_id=job_id,
+            project_id=project_id,
+            asset_count=len(assets),
+            clip_count=len(clips),
+            overall_progress=overall_progress,
+        )
+
+        return clips
+
+    except Exception as exc:
+        _json_log(
+            "ingest_workflow_failed",
+            job_id=job_id,
+            project_id=project_id,
+            error=str(exc),
+        )
+        # 回退到 legacy 逻辑
+        _set_job_progress(job_id, 0.5)
+        clips = _generate_clips_for_assets(assets)
+
+        # 插入片段到数据库
+        _db_exec("DELETE FROM clips WHERE project_id = ? AND user_id = ?", (project_id, user_id))
+        for clip in clips:
+            _db_exec(
+                """
+                INSERT INTO clips (
+                    clip_id, project_id, user_id, asset_id, start_ms, end_ms, score, description, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    clip.clip_id,
+                    clip.project_id,
+                    clip.user_id,
+                    clip.asset_id,
+                    clip.start_ms,
+                    clip.end_ms,
+                    clip.score,
+                    clip.description,
+                    _now_iso(),
+                ),
+            )
+
+        return clips
 
 
 def _worker_loop() -> None:
@@ -2377,12 +2550,34 @@ def proxy_chat(
 
 
 @app.post("/api/v1/search")
-def search(_: SearchRequest, __: AuthContext = Depends(get_auth_context)) -> None:
-    _raise_app_error(
-        code="NOT_IMPLEMENTED",
-        message="Semantic Search is not implemented in baseline.",
-        status_code=501,
-        retryable=False,
+def search(
+    request: SearchRequest,
+    req: Request,
+    auth: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    project_id = request.project_id.strip()
+    query = request.query.strip()
+    if not project_id:
+        _raise_app_error(
+            code="CORE_SEARCH_PROJECT_ID_REQUIRED",
+            message="project_id is required.",
+            status_code=400,
+        )
+    if not query:
+        _raise_app_error(
+            code="CORE_SEARCH_QUERY_REQUIRED",
+            message="query is required.",
+            status_code=400,
+        )
+    _require_project(project_id, auth.user_id)
+    return _proxy_server_json(
+        path="/api/v1/search",
+        payload={
+            "project_id": project_id,
+            "query": query,
+            "top_k": request.top_k,
+        },
+        request=req,
     )
 
 

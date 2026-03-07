@@ -228,6 +228,29 @@ class RetryJobResponse(BaseModel):
     job_type: str
 
 
+class SearchRequest(BaseModel):
+    project_id: str = Field(..., description="Project ID（项目标识）")
+    query: str = Field(..., description="Semantic query（语义查询）")
+    top_k: int = Field(default=5, ge=1, le=20, description="Top K（返回条数）")
+
+
+class SearchHit(BaseModel):
+    clip_id: str
+    asset_id: str | None = None
+    project_id: str | None = None
+    user_id: str | None = None
+    description: str | None = None
+    start_ms: int | None = None
+    end_ms: int | None = None
+    score: float
+
+
+class SearchResponse(BaseModel):
+    query: str
+    project_id: str
+    hits: list[SearchHit]
+
+
 class RuntimeCapabilitiesResponse(BaseModel):
     service: Literal["server"] = "server"
     proxies: list[str]
@@ -1118,20 +1141,52 @@ def health() -> dict[str, Any]:
             "backend": "sqlite",
             "db_path": os.path.abspath(SERVER_DB_PATH),
         },
-        "runtime": {
-            "proxies": ["llm_proxy", "embedding_proxy", "vector_search"],
-            "adapters": ["mock_llm", "mock_embedding", "mock_vector_search"],
-            "quota": _SERVER_RUNTIME.usage_quota.get_workspace_capabilities(),
-        },
+        "runtime": _SERVER_RUNTIME.usage_quota.get_runtime_snapshot(),
     }
 
 
 @app.get("/api/v1/runtime/capabilities", response_model=RuntimeCapabilitiesResponse)
 def runtime_capabilities() -> RuntimeCapabilitiesResponse:
-    return RuntimeCapabilitiesResponse(
-        proxies=["llm_proxy", "embedding_proxy", "vector_search"],
-        adapters=["mock_llm", "mock_embedding", "mock_vector_search"],
-        quota=_SERVER_RUNTIME.usage_quota.get_workspace_capabilities(),
+    return RuntimeCapabilitiesResponse(**_SERVER_RUNTIME.usage_quota.get_runtime_snapshot())
+
+
+@app.post("/api/v1/search", response_model=SearchResponse)
+def search(
+    request: SearchRequest,
+    auth: AuthContext = Depends(get_auth_context),
+) -> SearchResponse:
+    project_id = request.project_id.strip()
+    query = request.query.strip()
+    if not project_id:
+        _raise_app_error(
+            code="SERVER_VECTOR_FILTER_INVALID",
+            message="project_id is required.",
+            status_code=400,
+        )
+    if not query:
+        _raise_app_error(
+            code="SERVER_VECTOR_FILTER_INVALID",
+            message="query is required.",
+            status_code=400,
+        )
+    result = _SERVER_RUNTIME.vector_search.semantic_search(
+        query,
+        top_k=request.top_k,
+        filters={
+            "user_id": auth.user_id,
+            "project_id": project_id,
+        },
+    )
+    if not result.ok:
+        _raise_provider_failure(
+            result.payload,
+            default_code="SERVER_VECTOR_SEARCH_FAILED",
+            default_message="Vector search failed.",
+        )
+    return SearchResponse(
+        query=query,
+        project_id=project_id,
+        hits=[SearchHit.model_validate(hit) for hit in result.payload.get("hits", [])],
     )
 
 

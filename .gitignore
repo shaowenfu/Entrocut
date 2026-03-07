@@ -50,3 +50,4 @@ tmp_*/
 core/*.db
 server/*.db
 entrocut_jobs/
+docs/archived

@@ -252,11 +252,80 @@ if kill -0 "${WS_PID}" >/dev/null 2>&1; then
   exit 1
 fi
 
+RENDER_PREVIEW_PAYLOAD="$(
+  (
+    cd "${ROOT_DIR}/server"
+    source venv/bin/activate
+    CHAT_JSON="${CHAT_JSON}" python - <<'PY'
+import json
+import os
+
+chat = json.loads(os.environ["CHAT_JSON"])
+project = dict(chat["project"])
+project["render_type"] = "preview"
+project["preview_quality"] = "low"
+project["format"] = "webm"
+print(json.dumps({"project": project}))
+PY
+  )
+)"
+
+RENDER_PREVIEW_JSON="$(
+  curl --noproxy '*' -sS \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "${RENDER_PREVIEW_PAYLOAD}" \
+    "http://127.0.0.1:${CORE_PORT}/api/v1/render"
+)"
+
+RENDER_EXPORT_PAYLOAD="$(
+  (
+    cd "${ROOT_DIR}/server"
+    source venv/bin/activate
+    CHAT_JSON="${CHAT_JSON}" EXPORT_OUTPUT_PATH="/tmp/entrocut_phase45_${PROJECT_ID}.mp4" python - <<'PY'
+import json
+import os
+
+chat = json.loads(os.environ["CHAT_JSON"])
+project = dict(chat["project"])
+project["render_type"] = "export"
+project["format"] = "mp4"
+project["resolution"] = "720p"
+project["codec"] = "h264"
+project["output_path"] = os.environ["EXPORT_OUTPUT_PATH"]
+print(json.dumps({"project": project}))
+PY
+  )
+)"
+
+RENDER_EXPORT_JSON="$(
+  curl --noproxy '*' -sS \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "${RENDER_EXPORT_PAYLOAD}" \
+    "http://127.0.0.1:${CORE_PORT}/api/v1/render"
+)"
+
+SEARCH_BODY_FILE="$(mktemp /tmp/entrocut_phase45_search_XXXXXX.json)"
+SEARCH_STATUS="$(
+  curl --noproxy '*' -sS \
+    -o "${SEARCH_BODY_FILE}" \
+    -w '%{http_code}' \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "{\"project_id\":\"${PROJECT_ID}\",\"query\":\"ski highlight\",\"top_k\":3}" \
+    "http://127.0.0.1:${CORE_PORT}/api/v1/search" || true
+)"
+
 (
   export PROJECT_JSON="${PROJECT_JSON}"
   export INGEST_JSON="${INGEST_JSON}"
   export INDEX_JSON="${INDEX_JSON}"
   export CHAT_JSON="${CHAT_JSON}"
+  export RENDER_PREVIEW_JSON="${RENDER_PREVIEW_JSON}"
+  export RENDER_EXPORT_JSON="${RENDER_EXPORT_JSON}"
+  export SEARCH_STATUS="${SEARCH_STATUS}"
+  export SEARCH_BODY_FILE="${SEARCH_BODY_FILE}"
   export WS_EVENTS_FILE="${WS_EVENTS_FILE}"
   export CLIENT_PORT="${CLIENT_PORT}"
   cd "${ROOT_DIR}/server"
@@ -270,6 +339,10 @@ project = json.loads(os.environ["PROJECT_JSON"])
 ingest = json.loads(os.environ["INGEST_JSON"])
 index = json.loads(os.environ["INDEX_JSON"])
 chat = json.loads(os.environ["CHAT_JSON"])
+render_preview = json.loads(os.environ["RENDER_PREVIEW_JSON"])
+render_export = json.loads(os.environ["RENDER_EXPORT_JSON"])
+with open(os.environ["SEARCH_BODY_FILE"], "r", encoding="utf-8") as handle:
+    search_result = json.load(handle)
 with open(os.environ["WS_EVENTS_FILE"], "r", encoding="utf-8") as handle:
     events = json.load(handle)
 client_html = urllib.request.urlopen(f"http://127.0.0.1:{os.environ['CLIENT_PORT']}", timeout=5).read().decode("utf-8")
@@ -279,6 +352,15 @@ assert len(ingest.get("assets", [])) > 0, "ingest assets missing"
 assert len(ingest.get("clips", [])) > 0, "ingest clips missing"
 assert int(index.get("indexed", 0)) > 0, "index result missing"
 assert chat.get("decision_type") == "UPDATE_PROJECT_CONTRACT", "chat decision mismatch"
+assert render_preview.get("render_type") == "preview", "render preview mismatch"
+assert str(render_preview.get("preview_url", "")).startswith("file:///"), "render preview url missing"
+assert render_export.get("render_type") == "export", "render export mismatch"
+assert str(render_export.get("export_url", "")).startswith("file://"), "render export url missing"
+assert str(render_export.get("output_path", "")).endswith(".mp4"), "render export output path missing"
+assert os.environ["SEARCH_STATUS"] == "200", "search status mismatch"
+assert search_result.get("project_id") == project.get("project_id"), "search project mismatch"
+assert search_result.get("query") == "ski highlight", "search query mismatch"
+assert len(search_result.get("hits", [])) > 0, "search hits missing"
 assert "Entrocut" in client_html, "client root did not load expected app shell"
 required = {
     "session.ready",
@@ -292,5 +374,7 @@ assert required.issubset(set(events)), f"missing ws events: {required - set(even
 print("phase45_smoke_ok")
 PY
 )
+
+rm -f "${SEARCH_BODY_FILE}"
 
 echo "Phase 4/5 smoke test passed."

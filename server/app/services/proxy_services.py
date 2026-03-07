@@ -144,6 +144,8 @@ class UsageQuotaService:
     usage_repository: UsageRepositoryShell
     embedding_mode: str
     vector_search_mode: str
+    embedding_adapter: str
+    vector_search_adapter: str
 
     def get_workspace_capabilities(self, user_id: str | None = None) -> dict[str, Any]:
         quota_state = self.usage_repository.get_quota_state(user_id or "anonymous")
@@ -153,6 +155,13 @@ class UsageQuotaService:
             "llm": "mock_enabled",
             "quota_state": quota_state["quota_state"],
             "quota_limits": quota_state["limits"],
+        }
+
+    def get_runtime_snapshot(self, user_id: str | None = None) -> dict[str, Any]:
+        return {
+            "proxies": ["llm_proxy", "embedding_proxy", "vector_search"],
+            "adapters": ["mock_llm", self.embedding_adapter, self.vector_search_adapter],
+            "quota": self.get_workspace_capabilities(user_id=user_id),
         }
 
 

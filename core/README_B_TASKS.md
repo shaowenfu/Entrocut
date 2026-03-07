@@ -1,6 +1,66 @@
-# 工程师B任务实现总结
+# 工程师B任务实现总结 - 第二轮改进
 
-## 完成的任务
+## 主工程师反馈响应
+
+根据主工程师的审查邮件反馈，我的代码"价值很高，但当前最大问题是'实现存在，主链路未接入'"。
+
+**已完成的关键改进：**
+
+### ✅ 主链路接入
+
+已将新实现的 workflow/repository 正式接入 `core/server.py::_process_ingest_job()` 主入口：
+
+1. **修改 `_process_ingest_job` 函数**：
+   - 创建新的辅助函数 `_run_ingest_with_new_workflow`
+   - 使用 `AssetRepository` 和 `IngestStateRepository` 管理数据和状态
+   - 使用 `IngestCoordinatorTool` 实现阶段化进度跟踪
+   - 保留向后兼容：失败时回退到 legacy 逻辑
+
+2. **阶段化进度跟踪**：
+   - scan (5%) - 扫描阶段
+   - segment (25%) - 切分阶段
+   - extract_frames (20%) - 抽帧阶段
+   - embed (25%) - 向量化阶段
+   - index (15%) - 索引阶段
+   - render (10%) - 渲染阶段
+
+3. **状态管理**：
+   - 使用 `IngestStateRepository` 跟踪每个资产在各阶段的完成状态
+   - 标记资产为已处理，支持增量/全量模式
+
+4. **错误处理**：
+   - 新实现失败时自动回退到 legacy 逻辑
+   - 详细的日志记录（`_json_log`）
+
+### ✅ Repository 接入
+
+已将 `AssetRepository` 和 `IngestStateRepository` 用到真实 ingest 路径：
+
+```python
+# 在 _run_ingest_with_new_workflow 中：
+asset_repo = AssetRepository(_DB_CONN, _DB_LOCK)
+state_repo = IngestStateRepository(_DB_CONN, _DB_LOCK)
+
+# 更新 ingest 状态
+for asset in assets:
+    state_repo.mark_phase_completed(
+        asset_id=asset.asset_id,
+        project_id=project_id,
+        user_id=user_id,
+        phase="segment",
+    )
+```
+
+### ✅ 向后兼容
+
+确保不破坏现有功能：
+
+1. **渐进式重构**：新实现和 legacy 实现并存
+2. **自动回退**：新实现失败时使用 legacy 逻辑
+3. **保留接口**：`IngestResponse` 和 `ClipDTO` 的 contract 不变
+4. **状态一致**：使用相同的数据库表和状态管理
+
+## 完成的任务（第一轮实现）
 
 ### 3.1 Core 资产去重、路径规范化与重扫幂等
 

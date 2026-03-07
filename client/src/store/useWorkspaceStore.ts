@@ -11,10 +11,12 @@ import {
   coreGetProject,
   coreImportAssets,
   coreIngestProject,
+  coreRender,
   coreUpsertClips,
   coreUploadAssets,
   type CoreAssetDTO,
   type CoreClipDTO,
+  type CoreRenderResponse,
 } from "../services/coreApi";
 import {
   normalizeMediaInput,
@@ -108,6 +110,8 @@ interface WorkspaceState {
   isMediaProcessing: boolean;
   mediaStatusText: string | null;
   isThinking: boolean;
+  isExporting: boolean;
+  exportResult: CoreRenderResponse | null;
   processingPhase: ProcessingPhase;
   eventStreamState: "disconnected" | "connecting" | "connected";
   reconnectState: ReconnectState;
@@ -122,6 +126,7 @@ interface WorkspaceState {
   bootstrapFromLaunch: (input: BootstrapInput) => Promise<void>;
   uploadAssets: (input?: UploadAssetsInput) => Promise<void>;
   sendChat: (prompt: string) => Promise<void>;
+  exportProject: () => Promise<CoreRenderResponse | null>;
   clearLastError: () => void;
 }
 
@@ -498,6 +503,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   isMediaProcessing: false,
   mediaStatusText: null,
   isThinking: false,
+  isExporting: false,
+  exportResult: null,
   processingPhase: "idle",
   eventStreamState: "disconnected",
   reconnectState: "idle",
@@ -801,6 +808,62 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         activeTaskType: null,
         lastError: toWorkspaceError("send_chat_failed", error),
       });
+    }
+  },
+
+  exportProject: async () => {
+    const workspaceId = get().workspaceId;
+    if (!workspaceId) {
+      set({
+        lastError: {
+          code: "WORKSPACE_NOT_READY",
+          message: "workspace_not_ready",
+        },
+      });
+      return null;
+    }
+
+    if (get().isExporting || get().isMediaProcessing) {
+      return null;
+    }
+
+    set({
+      isExporting: true,
+      exportResult: null,
+      workflowState: "rendering",
+      activeTaskType: "render",
+      mediaStatusText: "正在渲染导出...",
+      lastError: null,
+    });
+
+    try {
+      const result = await coreRender({
+        project_id: workspaceId,
+        render_type: "export",
+        format: "mp4",
+        resolution: "original",
+        codec: "h264",
+      });
+
+      set({
+        isExporting: false,
+        exportResult: result,
+        workflowState: "ready",
+        activeTaskType: null,
+        mediaStatusText: null,
+      });
+
+      return result;
+    } catch (error) {
+      set({
+        isExporting: false,
+        exportResult: null,
+        workflowState: "failed",
+        activeTaskType: null,
+        mediaStatusText: null,
+        lastError: toWorkspaceError("export_failed", error),
+      });
+      return null;
     }
   },
 
