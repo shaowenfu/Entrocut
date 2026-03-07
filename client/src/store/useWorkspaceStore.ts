@@ -1,7 +1,10 @@
 import { create } from "zustand";
 import {
-  createCoreProjectEventSocket,
+  closeManagedSocket,
+  createManagedProjectEventSocket,
   type CoreEventEnvelope,
+  type ReconnectState,
+  type SocketManager,
 } from "../services/coreEvents";
 import {
   coreChat,
@@ -65,6 +68,15 @@ export interface AssistantDecisionTurn {
 export type ChatTurn = UserTurn | AssistantDecisionTurn;
 
 type ProcessingPhase = "idle" | "media_processing" | "indexing" | "chat_thinking" | "ready" | "failed";
+type WorkflowState =
+  | "prompt_input_required"
+  | "awaiting_media"
+  | "media_ready"
+  | "media_processing"
+  | "chat_thinking"
+  | "ready"
+  | "rendering"
+  | "failed";
 
 interface WorkspaceError {
   code: string;
@@ -98,6 +110,10 @@ interface WorkspaceState {
   isThinking: boolean;
   processingPhase: ProcessingPhase;
   eventStreamState: "disconnected" | "connecting" | "connected";
+  reconnectState: ReconnectState;
+  workflowState: WorkflowState | null;
+  activeTaskType: string | null;
+  lastEventSequence: number;
   pendingPrompt: string | null;
   lastError: WorkspaceError | null;
   connectProjectEvents: (workspaceId: string) => void;
@@ -116,9 +132,8 @@ const SCENE_STYLES = [
   { colorClass: "scene-purple", bgClass: "scene-bg-purple" },
   { colorClass: "scene-cyan", bgClass: "scene-bg-cyan" },
 ] as const;
-const NO_MEDIA_PROMPT_HINT = "当前没有可用素材，请先引导用户上传视频并给出具体下一步。";
 
-let activeProjectSocket: WebSocket | null = null;
+let activeProjectSocket: SocketManager | null = null;
 let activeProjectSocketId: string | null = null;
 
 function mapMediaStageToPhase(stage: string): ProcessingPhase {
@@ -149,6 +164,28 @@ function formatMediaEventMessage(stage: string, payload: Record<string, unknown>
     default:
       return message || "视频处理中...";
   }
+}
+
+function toProcessingPhaseFromWorkflow(
+  workflowState: string | null,
+  activeTaskType: string | null
+): ProcessingPhase {
+  if (activeTaskType === "index") {
+    return "indexing";
+  }
+  if (activeTaskType === "ingest" || workflowState === "media_processing") {
+    return "media_processing";
+  }
+  if (activeTaskType === "chat" || workflowState === "chat_thinking") {
+    return "chat_thinking";
+  }
+  if (workflowState === "failed") {
+    return "failed";
+  }
+  if (workflowState === "rendering") {
+    return "media_processing";
+  }
+  return "ready";
 }
 
 function toWorkspaceError(message: string, error: unknown): WorkspaceError {
@@ -258,9 +295,34 @@ function mapStoryboardFromServer(
 
 function applyCoreEvent(event: CoreEventEnvelope): void {
   const setState = useWorkspaceStore.setState;
+  const getState = useWorkspaceStore.getState;
+  const nextSequence = typeof event.sequence === "number" ? event.sequence : null;
+  if (event.event !== "session.ready" && nextSequence !== null && nextSequence <= getState().lastEventSequence) {
+    return;
+  }
   switch (event.event) {
     case "session.ready":
-      setState({ eventStreamState: "connected" });
+      setState((state) => {
+        const payloadLastSequence =
+          typeof event.payload.last_sequence === "number" ? event.payload.last_sequence : nextSequence ?? 0;
+        const workflowState =
+          typeof event.payload.workflow_state === "string"
+            ? (event.payload.workflow_state as WorkflowState)
+            : state.workflowState;
+        const activeTaskType =
+          typeof event.payload.active_task_type === "string"
+            ? event.payload.active_task_type
+            : event.payload.active_task_type === null
+            ? null
+            : state.activeTaskType;
+        return {
+          eventStreamState: "connected",
+          workflowState,
+          activeTaskType,
+          lastEventSequence: Math.max(state.lastEventSequence, payloadLastSequence),
+          processingPhase: toProcessingPhaseFromWorkflow(workflowState, activeTaskType),
+        };
+      });
       return;
     case "media.processing.progress": {
       const stage = typeof event.payload.stage === "string" ? event.payload.stage : "scan";
@@ -268,6 +330,9 @@ function applyCoreEvent(event: CoreEventEnvelope): void {
         isMediaProcessing: true,
         mediaStatusText: formatMediaEventMessage(stage, event.payload),
         processingPhase: mapMediaStageToPhase(stage),
+        workflowState: "media_processing",
+        activeTaskType: stage === "index" ? "index" : "ingest",
+        lastEventSequence: nextSequence ?? getState().lastEventSequence,
       });
       return;
     }
@@ -276,21 +341,38 @@ function applyCoreEvent(event: CoreEventEnvelope): void {
         isMediaProcessing: false,
         mediaStatusText:
           typeof event.payload.message === "string" ? event.payload.message : state.mediaStatusText,
+        workflowState: state.isThinking ? "chat_thinking" : "media_ready",
+        activeTaskType: null,
         processingPhase: state.isThinking ? "chat_thinking" : "ready",
+        lastEventSequence: nextSequence ?? state.lastEventSequence,
       }));
       return;
     case "workspace.chat.received":
       setState({
         isThinking: true,
         processingPhase: "chat_thinking",
+        workflowState: "chat_thinking",
+        activeTaskType: "chat",
+        lastEventSequence: nextSequence ?? getState().lastEventSequence,
       });
       return;
     case "workspace.chat.ready":
       setState((state) => ({
         isThinking: false,
-        processingPhase: "ready",
+        workflowState:
+          typeof event.payload.workflow_state === "string"
+            ? (event.payload.workflow_state as WorkflowState)
+            : "ready",
+        activeTaskType: null,
+        processingPhase: toProcessingPhaseFromWorkflow(
+          typeof event.payload.workflow_state === "string"
+            ? event.payload.workflow_state
+            : "ready",
+          null
+        ),
         mediaStatusText:
           typeof event.payload.message === "string" ? event.payload.message : state.mediaStatusText,
+        lastEventSequence: nextSequence ?? state.lastEventSequence,
       }));
       return;
     case "workspace.patch.ready": {
@@ -299,18 +381,34 @@ function applyCoreEvent(event: CoreEventEnvelope): void {
           ? event.payload.reasoning_summary
           : "AI returned a patch.";
       const rawOps = Array.isArray(event.payload.ops) ? event.payload.ops : [];
+      const workflowState =
+        typeof event.payload.workflow_state === "string"
+          ? (event.payload.workflow_state as WorkflowState)
+          : "ready";
+      const decisionType =
+        typeof event.payload.decision_type === "string"
+          ? (event.payload.decision_type as DecisionType)
+          : "UPDATE_PROJECT_CONTRACT";
       const assistantTurn: AssistantDecisionTurn = {
-        id: `assistant_event_${Date.now()}`,
+        id:
+          typeof event.payload.turn_id === "string"
+            ? event.payload.turn_id
+            : event.event_id
+            ? `assistant_event_${event.event_id}`
+            : `assistant_event_${nextSequence ?? Date.now()}`,
         role: "assistant",
         type: "decision",
-        decision_type: "UPDATE_PROJECT_CONTRACT",
+        decision_type: decisionType,
         reasoning_summary: reasoningSummary,
         ops: rawOps.filter((item): item is AgentOperation => typeof item === "object" && item !== null),
       };
       setState((state) => ({
         chatTurns: [...state.chatTurns, assistantTurn],
         isThinking: false,
-        processingPhase: "ready",
+        workflowState,
+        activeTaskType: null,
+        processingPhase: toProcessingPhaseFromWorkflow(workflowState, null),
+        lastEventSequence: nextSequence ?? state.lastEventSequence,
       }));
       return;
     }
@@ -328,6 +426,8 @@ async function runMediaPipeline(projectId: string, pendingPrompt?: string): Prom
     isMediaProcessing: true,
     mediaStatusText: "视频处理中：正在切分镜头...",
     processingPhase: "media_processing",
+    workflowState: "media_processing",
+    activeTaskType: "ingest",
     lastError: null,
   });
 
@@ -339,6 +439,8 @@ async function runMediaPipeline(projectId: string, pendingPrompt?: string): Prom
       storyboard: buildStoryboardFromClips(ingest.clips),
       mediaStatusText: "视频处理中：正在向量化片段...",
       processingPhase: "indexing",
+      workflowState: "media_processing",
+      activeTaskType: "index",
     });
 
     const indexed = await coreUpsertClips({
@@ -363,6 +465,8 @@ async function runMediaPipeline(projectId: string, pendingPrompt?: string): Prom
       isMediaProcessing: false,
       mediaStatusText: null,
       processingPhase: "ready",
+      workflowState: "ready",
+      activeTaskType: null,
     }));
 
     const queued = pendingPrompt?.trim();
@@ -375,6 +479,8 @@ async function runMediaPipeline(projectId: string, pendingPrompt?: string): Prom
       isMediaProcessing: false,
       mediaStatusText: null,
       processingPhase: "failed",
+      workflowState: "failed",
+      activeTaskType: null,
       lastError: toWorkspaceError("media_pipeline_failed", error),
     });
   }
@@ -394,6 +500,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   isThinking: false,
   processingPhase: "idle",
   eventStreamState: "disconnected",
+  reconnectState: "idle",
+  workflowState: null,
+  activeTaskType: null,
+  lastEventSequence: 0,
   pendingPrompt: null,
   lastError: null,
 
@@ -403,36 +513,74 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
 
     if (activeProjectSocket) {
-      activeProjectSocket.close();
+      closeManagedSocket(activeProjectSocket);
       activeProjectSocket = null;
       activeProjectSocketId = null;
     }
 
     set({ eventStreamState: "connecting" });
-    activeProjectSocket = createCoreProjectEventSocket(workspaceId, {
-      onEvent: applyCoreEvent,
-      onOpen: () => {
-        set({ eventStreamState: "connected" });
+    const sessionId = getOrCreateSessionId(workspaceId);
+    activeProjectSocket = createManagedProjectEventSocket(
+      workspaceId,
+      {
+        sessionId,
+        lastSequence: get().lastEventSequence,
+        getLastSequence: () => useWorkspaceStore.getState().lastEventSequence,
       },
-      onClose: () => {
-        set({ eventStreamState: "disconnected" });
-        activeProjectSocket = null;
-        activeProjectSocketId = null;
-      },
-      onError: () => {
-        set({ eventStreamState: "disconnected" });
-      },
-    });
+      {
+        onEvent: applyCoreEvent,
+        onReconnectStateChange: (reconnectState) => {
+          set((state) => ({
+            reconnectState,
+            eventStreamState:
+              reconnectState === "reconnecting"
+                ? "connecting"
+                : reconnectState === "max_attempts_reached"
+                ? "disconnected"
+                : state.eventStreamState,
+          }));
+          if (reconnectState === "max_attempts_reached") {
+            activeProjectSocket = null;
+            activeProjectSocketId = null;
+          }
+        },
+        onOpen: () => {
+          set({ eventStreamState: "connected", reconnectState: "idle" });
+        },
+        onClose: (event) => {
+          const authFailed = event.code === 4400 || event.code === 4401 || event.code === 4403;
+          set((state) => ({
+            eventStreamState: state.reconnectState === "reconnecting" ? "connecting" : "disconnected",
+            reconnectState: authFailed ? "idle" : state.reconnectState,
+            lastError: authFailed
+              ? {
+                  code: "WS_AUTH_FAILED",
+                  message: `websocket_closed_${event.code}`,
+                }
+              : state.lastError,
+          }));
+          if (authFailed) {
+            activeProjectSocket = null;
+            activeProjectSocketId = null;
+          }
+        },
+        onError: () => {
+          set((state) => ({
+            eventStreamState: state.reconnectState === "reconnecting" ? "connecting" : "disconnected",
+          }));
+        },
+      }
+    );
     activeProjectSocketId = workspaceId;
   },
 
   disconnectProjectEvents: () => {
     if (activeProjectSocket) {
-      activeProjectSocket.close();
+      closeManagedSocket(activeProjectSocket);
     }
     activeProjectSocket = null;
     activeProjectSocketId = null;
-    set({ eventStreamState: "disconnected" });
+    set({ eventStreamState: "disconnected", reconnectState: "idle" });
   },
 
   initializeWorkspace: async (workspaceId, workspaceName) => {
@@ -442,7 +590,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       workspaceId,
       workspaceName: workspaceName ?? get().workspaceName ?? workspaceId,
       isLoadingWorkspace: true,
+      reconnectState: shouldResetProject ? "idle" : get().reconnectState,
       currentProject: shouldResetProject ? null : get().currentProject,
+      workflowState: shouldResetProject ? null : get().workflowState,
+      activeTaskType: shouldResetProject ? null : get().activeTaskType,
       lastError: null,
     });
 
@@ -455,11 +606,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         workspaceName: detail.title,
         assets: mappedAssets,
         clips: mappedClips,
+        workflowState: (detail.workflow_state as WorkflowState | undefined) ?? get().workflowState,
+        activeTaskType: detail.active_task_type ?? null,
+        lastEventSequence: detail.last_event_sequence ?? get().lastEventSequence,
         currentProject: get().currentProject,
         storyboard:
           get().storyboard.length > 0
             ? get().storyboard
             : buildStoryboardFromClips(detail.clips),
+        isMediaProcessing: detail.active_task_type === "ingest" || detail.active_task_type === "index",
+        processingPhase: toProcessingPhaseFromWorkflow(
+          detail.workflow_state ?? get().workflowState,
+          detail.active_task_type ?? null
+        ),
       });
     } catch (error) {
       set({
@@ -467,6 +626,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         clips: [],
         storyboard: [],
         currentProject: null,
+        workflowState: null,
+        activeTaskType: null,
         lastError: toWorkspaceError("load_workspace_failed", error),
       });
     } finally {
@@ -489,6 +650,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       isMediaProcessing: false,
       mediaStatusText: null,
       processingPhase: "idle",
+      reconnectState: "idle",
+      workflowState: input.hasMedia ? "media_ready" : "prompt_input_required",
+      activeTaskType: null,
+      lastEventSequence: 0,
       pendingPrompt: input.hasMedia ? trimmedPrompt ?? null : null,
       lastError: null,
     });
@@ -500,9 +665,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       return;
     }
 
-      if (trimmedPrompt) {
-        await get().sendChat(trimmedPrompt);
-        return;
+    if (trimmedPrompt) {
+      await get().sendChat(trimmedPrompt);
+      return;
     }
 
     set({ processingPhase: "ready" });
@@ -572,9 +737,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
 
     const hasMedia = get().assets.length > 0;
-    const composedPrompt = hasMedia
-      ? trimmedPrompt
-      : `${trimmedPrompt}\n\n[system]\n${NO_MEDIA_PROMPT_HINT}`;
     const userTurn: UserTurn = {
       id: `user_${Date.now()}`,
       role: "user",
@@ -585,6 +747,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       chatTurns: [...state.chatTurns, userTurn],
       isThinking: true,
       processingPhase: "chat_thinking",
+      workflowState: "chat_thinking",
+      activeTaskType: "chat",
       lastError: null,
     }));
 
@@ -592,7 +756,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const response = await coreChat({
         project_id: workspaceId,
         session_id: getOrCreateSessionId(workspaceId),
-        message: composedPrompt,
+        message: trimmedPrompt,
         current_project: get().currentProject
           ? (JSON.parse(JSON.stringify(get().currentProject)) as Record<string, unknown>)
           : undefined,
@@ -614,18 +778,27 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
       set((state) => ({
         chatTurns:
-          state.eventStreamState === "connected"
-            ? state.chatTurns
-            : [...state.chatTurns, assistantTurn],
+          state.eventStreamState === "connected" ? state.chatTurns : [...state.chatTurns, assistantTurn],
         currentProject: response.project ?? state.currentProject,
         storyboard: mapStoryboardFromServer(response.storyboard_scenes, state.storyboard),
         isThinking: false,
+        workflowState:
+          response.decision_type === "ASK_USER_CLARIFICATION" && !hasMedia
+            ? "awaiting_media"
+            : "ready",
+        activeTaskType: null,
+        lastEventSequence:
+          state.eventStreamState !== "connected" && typeof response.meta?.core_event_sequence === "number"
+            ? Math.max(state.lastEventSequence, response.meta.core_event_sequence)
+            : state.lastEventSequence,
         processingPhase: "ready",
       }));
     } catch (error) {
       set({
         isThinking: false,
         processingPhase: "failed",
+        workflowState: "failed",
+        activeTaskType: null,
         lastError: toWorkspaceError("send_chat_failed", error),
       });
     }

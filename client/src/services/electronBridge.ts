@@ -8,8 +8,14 @@ export interface MediaPickResult {
   files?: File[];
 }
 
+export type MediaPickMode = "electron-folder" | "browser-files" | "auto";
+
 function hasValidFiles(files?: File[]): files is File[] {
   return Array.isArray(files) && files.some((file) => file.size > 0);
+}
+
+export function isElectronEnvironment(): boolean {
+  return typeof window !== "undefined" && typeof window.electron?.showOpenDirectory === "function";
 }
 
 export function normalizeMediaInput(input?: MediaPickInput): MediaPickResult | null {
@@ -92,4 +98,17 @@ export async function pickMediaFromSystem(): Promise<MediaPickResult | null> {
     return null;
   }
   return { files };
+}
+
+export async function pickMediaByMode(mode: MediaPickMode): Promise<MediaPickResult | null> {
+  if (mode === "electron-folder") {
+    const folderPath = await pickFolderFromElectron();
+    return folderPath ? { folderPath } : null;
+  }
+  if (mode === "browser-files") {
+    const files = await pickVideoFilesFromBrowser();
+    return files && files.length > 0 ? { files } : null;
+  }
+  // auto: 保持原有 fallback 逻辑
+  return pickMediaFromSystem();
 }

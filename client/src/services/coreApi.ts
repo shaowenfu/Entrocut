@@ -40,6 +40,10 @@ export interface CoreProjectDetailDTO {
   title: string;
   ai_status: string;
   last_ai_edit: string;
+  workflow_state?: string;
+  active_task_type?: string | null;
+  pending_prompt?: string | null;
+  last_event_sequence?: number;
   assets: CoreAssetDTO[];
   clips: CoreClipDTO[];
 }
@@ -137,6 +141,9 @@ export interface CoreChatDecisionResponse {
     latency_ms?: number;
     session_id?: string;
     used_clip_count?: number;
+    core_request_id?: string;
+    core_event_sequence?: number;
+    interaction_mode?: string;
   };
 }
 

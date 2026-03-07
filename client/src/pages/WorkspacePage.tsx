@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import {
   ArrowLeft,
   ChevronRight,
@@ -52,6 +52,25 @@ const HEALTH_POLL_INTERVAL_MS = 10000;
 
 function isDecisionTurn(turn: ChatTurn): turn is AssistantDecisionTurn {
   return turn.role === "assistant";
+}
+
+interface EmptyMediaGuidanceProps {
+  onUploadClick: () => void;
+  isDisabled: boolean;
+}
+
+function EmptyMediaGuidance({ onUploadClick, isDisabled }: EmptyMediaGuidanceProps) {
+  return (
+    <div className="empty-media-guidance">
+      <Upload size={32} />
+      <h3>Start by uploading media</h3>
+      <p>Upload videos to enable AI-powered editing capabilities.</p>
+      <button onClick={onUploadClick} disabled={isDisabled}>
+        Upload Videos
+      </button>
+      <small>Or drag and drop files directly into this panel</small>
+    </div>
+  );
 }
 
 function parseSceneDurationSeconds(duration: string): number {
@@ -162,6 +181,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const isMediaProcessing = useWorkspaceStore((state) => state.isMediaProcessing);
   const mediaStatusText = useWorkspaceStore((state) => state.mediaStatusText);
   const eventStreamState = useWorkspaceStore((state) => state.eventStreamState);
+  const reconnectState = useWorkspaceStore((state) => state.reconnectState);
   const lastError = useWorkspaceStore((state) => state.lastError);
   const initializeWorkspace = useWorkspaceStore((state) => state.initializeWorkspace);
   const uploadAssets = useWorkspaceStore((state) => state.uploadAssets);
@@ -179,6 +199,13 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const playbackProgress = Math.min(1, currentTimeSec / safeTotalDurationSec);
   const sessionLabel = `Session #${sessionId.slice(-8).toUpperCase()}`;
   const eventStreamVisualState = toEventStreamVisualState(eventStreamState);
+
+  const reconnectingPill: EventStreamVisualState = useMemo(() => {
+    if (reconnectState === "reconnecting") {
+      return "checking";
+    }
+    return eventStreamVisualState;
+  }, [reconnectState, eventStreamVisualState]);
 
   useEffect(() => {
     void initializeWorkspace(workspaceId, workspaceName);
@@ -418,11 +445,11 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
               core {healthStateLabel(serviceHealth.core.state)}
             </span>
             <span
-              className={`health-pill health-pill-${eventStreamVisualState}`}
-              title={`core event stream ${eventStreamState}`}
+              className={`health-pill health-pill-${reconnectingPill}`}
+              title={`core event stream ${eventStreamState}${reconnectState !== "idle" ? ` - reconnecting` : ""}`}
             >
-              <span className={`health-dot health-dot-${eventStreamVisualState}`} />
-              ws {eventStreamState}
+              <span className={`health-dot health-dot-${reconnectingPill}`} />
+              ws {reconnectState === "reconnecting" ? "reconnecting" : eventStreamState}
             </span>
             <span
               className={`health-pill health-pill-${serviceHealth.server.state}`}
@@ -495,22 +522,24 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                   <span>Upload videos or drop folder here</span>
                 </div>
 
-                <div className="asset-grid">
-                  {assets.map((asset) => (
-                    <article key={asset.id} className="asset-card">
-                      <div className="asset-thumb">
-                        <Film size={14} />
-                        <span>{asset.duration}</span>
-                      </div>
-                      <p title={asset.name}>{asset.name}</p>
-                    </article>
-                  ))}
-                  {assets.length === 0 ? (
-                    <article className="asset-card asset-card-empty">
-                      <p>No assets yet. Upload videos to start processing.</p>
-                    </article>
-                  ) : null}
-                </div>
+                {assets.length === 0 ? (
+                  <EmptyMediaGuidance
+                    onUploadClick={handleAssetBrowse}
+                    isDisabled={isEditLocked}
+                  />
+                ) : (
+                  <div className="asset-grid">
+                    {assets.map((asset) => (
+                      <article key={asset.id} className="asset-card">
+                        <div className="asset-thumb">
+                          <Film size={14} />
+                          <span>{asset.duration}</span>
+                        </div>
+                        <p title={asset.name}>{asset.name}</p>
+                      </article>
+                    ))}
+                  </div>
+                )}
               </>
             ) : (
               <div className="clip-list">
@@ -621,6 +650,13 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                 <span>Send a prompt to start AI editing.</span>
               </div>
             ) : null}
+            {/* 无素材时的提示 */}
+            {assets.length === 0 && chatTurns.length === 0 && !isThinking && !isMediaProcessing && !isLoadingWorkspace && (
+              <div className="chat-limitation-notice">
+                <Sparkles size={14} />
+                <span>AI editing is limited without media. Upload videos first.</span>
+              </div>
+            )}
             <div ref={chatEndRef} />
           </div>
 
@@ -648,7 +684,11 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                 }
               }}
               disabled={isThinking || isEditLocked}
-              placeholder="Describe your edit..."
+              placeholder={
+                assets.length === 0
+                  ? "Upload media first to enable full AI editing, or describe your idea..."
+                  : "Describe your edit..."
+              }
             />
             <button
               type="button"

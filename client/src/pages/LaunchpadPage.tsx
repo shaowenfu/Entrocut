@@ -13,6 +13,10 @@ import {
   Sparkles,
 } from "lucide-react";
 import { useLaunchpadStore } from "../store/useLaunchpadStore";
+import {
+  isElectronEnvironment,
+  pickMediaByMode,
+} from "../services/electronBridge";
 
 const PROMPT_HINTS = [
   "A fast-paced recap of my Tokyo trip",
@@ -53,6 +57,21 @@ function LaunchpadPage() {
     [hintIndex]
   );
 
+  const isElectron = useMemo(() => isElectronEnvironment(), []);
+
+  const dropZoneText = useMemo(() => {
+    if (isElectron) {
+      return {
+        title: "Drop folder or videos here",
+        subtitle: "or click to browse folder",
+      };
+    }
+    return {
+      title: "Drop videos here",
+      subtitle: "or click to upload videos",
+    };
+  }, [isElectron]);
+
   async function handleCreateFromPrompt() {
     if (!prompt.trim()) {
       return;
@@ -85,9 +104,12 @@ function LaunchpadPage() {
     if (!droppedPath && droppedFiles.length === 0) {
       return;
     }
+    // Electron 环境：droppedPath 存在时使用 folderPath，否则使用 files
+    // 浏览器环境：只有 files
+    const isElectron = isElectronEnvironment();
     await startWorkspaceFromLaunchpad({
-      folderPath: droppedPath ?? undefined,
-      files: droppedFiles,
+      folderPath: isElectron && droppedPath ? droppedPath : undefined,
+      files: isElectron && droppedPath ? [] : droppedFiles,
       prompt: prompt.trim() || undefined,
     });
     if (prompt.trim()) {
@@ -96,11 +118,18 @@ function LaunchpadPage() {
   }
 
   async function handleBrowseMedia() {
-    const maybeProjectId = await startWorkspaceFromLaunchpad({
+    // 根据环境显式选择模式
+    const mode = isElectronEnvironment() ? "electron-folder" : "browser-files";
+    const media = await pickMediaByMode(mode);
+    if (!media) {
+      return;
+    }
+    await startWorkspaceFromLaunchpad({
+      folderPath: media.folderPath,
+      files: media.files,
       prompt: prompt.trim() || undefined,
-      shouldPickMedia: true,
     });
-    if (maybeProjectId && prompt.trim()) {
+    if (prompt.trim()) {
       setPrompt("");
     }
   }
@@ -155,8 +184,8 @@ function LaunchpadPage() {
               <div className="intent-drop-icon">
                 <FolderUp size={22} />
               </div>
-              <h3>Drop media here</h3>
-              <p>or click to browse and upload videos</p>
+              <h3>{dropZoneText.title}</h3>
+              <p>{dropZoneText.subtitle}</p>
             </div>
 
             <div className="intent-input-row">
@@ -194,7 +223,7 @@ function LaunchpadPage() {
             </button>
             <button type="button" onClick={() => void handleBrowseMedia()} disabled={isCreating || isImporting}>
               <Cloud size={14} />
-              <span>Browse Media</span>
+              <span>{isElectron ? "Browse Folder" : "Upload Videos"}</span>
             </button>
           </div>
           {lastError ? (
