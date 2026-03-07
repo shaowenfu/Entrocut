@@ -1,16 +1,10 @@
 import { create } from "zustand";
+import { normalizeMediaInput, pickMediaFromSystem, type MediaPickInput } from "../services/electronBridge";
 import {
-  coreCreateProject,
-  coreImportProject,
-  coreListProjects,
-  coreUploadProject,
-  type CoreProjectMetaDTO,
-} from "../services/coreApi";
-import {
-  normalizeMediaInput,
-  pickMediaFromSystem,
-  type MediaPickInput,
-} from "../services/electronBridge";
+  createEmptyPrototypeProject,
+  createPrototypeProject,
+  listPrototypeProjects,
+} from "../mocks/prototypeWorkspace";
 import { useWorkspaceStore } from "./useWorkspaceStore";
 
 export interface ProjectMeta {
@@ -27,10 +21,7 @@ type ErrorCode =
   | "BRIDGE_UNAVAILABLE"
   | "USER_CANCELLED"
   | "INVALID_INPUT"
-  | "HTTP_ERROR"
-  | "NETWORK_ERROR"
-  | "SCHEMA_ERROR"
-  | "AUTH_TOKEN_MISSING"
+  | "PROTOTYPE_ERROR"
   | string;
 
 export interface LaunchpadError {
@@ -104,18 +95,6 @@ function toLaunchpadErrorFromUnknown(
   return toLaunchpadError(fallbackCode, fallbackMessage, error);
 }
 
-function mapProject(item: CoreProjectMetaDTO): ProjectMeta {
-  return {
-    id: item.id,
-    title: item.title,
-    thumbnailClassName: item.thumbnail_class_name ?? "launch-thumb-zinc",
-    storageType: item.storage_type ?? "local",
-    lastActiveText: item.last_active_text ?? "unknown",
-    aiStatus: item.ai_status ?? "Unknown",
-    lastAiEdit: item.last_ai_edit ?? "None",
-  };
-}
-
 export const useLaunchpadStore = create<LaunchpadState>((set, get) => ({
   recentProjects: [],
   activeWorkspaceId: null,
@@ -129,15 +108,12 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => ({
   fetchRecentProjects: async () => {
     set({ isLoadingProjects: true, lastError: null });
     try {
-      const data = await coreListProjects();
-      if (!Array.isArray(data.items)) {
-        throw toLaunchpadError("SCHEMA_ERROR", "projects_items_invalid");
-      }
-      set({ recentProjects: data.items.map(mapProject) });
+      await Promise.resolve();
+      set({ recentProjects: listPrototypeProjects() });
     } catch (error) {
       set({
         recentProjects: [],
-        lastError: toLaunchpadErrorFromUnknown(error, "NETWORK_ERROR", "fetch_projects_failed"),
+        lastError: toLaunchpadErrorFromUnknown(error, "PROTOTYPE_ERROR", "fetch_projects_failed"),
       });
     } finally {
       set({ isLoadingProjects: false });
@@ -163,36 +139,31 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => ({
         return null;
       }
 
-      let created: { project_id: string; title: string };
-      if (hasMedia && media?.folderPath) {
-        created = await coreImportProject(media.folderPath);
-      } else if (hasMedia && media?.files && media.files.length > 0) {
-        created = await coreUploadProject(media.files);
-      } else {
-        created = await coreCreateProject({
-          title: trimmedPrompt.slice(0, 32) || "Untitled Sequence",
-        });
-      }
+      const created = createPrototypeProject({
+        prompt: trimmedPrompt || undefined,
+        folderPath: media?.folderPath,
+        files: media?.files,
+        title: !hasMedia ? trimmedPrompt.slice(0, 32) || "Untitled Prototype" : undefined,
+      });
 
-      const workspaceName = created.title?.trim() || "Untitled Sequence";
       set({
-        activeWorkspaceId: created.project_id,
-        activeWorkspaceName: workspaceName,
+        activeWorkspaceId: created.id,
+        activeWorkspaceName: created.title,
       });
 
       await get().fetchRecentProjects();
       void useWorkspaceStore.getState().bootstrapFromLaunch({
-        projectId: created.project_id,
-        workspaceName,
+        projectId: created.id,
+        workspaceName: created.title,
         prompt: trimmedPrompt || undefined,
         hasMedia,
       });
-      return created.project_id;
+      return created.id;
     } catch (error) {
       set({
         lastError: toLaunchpadErrorFromUnknown(
           error,
-          "NETWORK_ERROR",
+          "PROTOTYPE_ERROR",
           "start_workspace_from_launchpad_failed"
         ),
       });
@@ -212,23 +183,22 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => ({
   createEmptyProject: async () => {
     set({ isCreating: true, lastError: null, isThinking: false });
     try {
-      const created = await coreCreateProject({ title: "Untitled Sequence" });
-      const workspaceName = created.title?.trim() || "Untitled Sequence";
+      const created = createEmptyPrototypeProject("Untitled Prototype");
       set({
-        activeWorkspaceId: created.project_id,
-        activeWorkspaceName: workspaceName,
+        activeWorkspaceId: created.id,
+        activeWorkspaceName: created.title,
       });
       await get().fetchRecentProjects();
       void useWorkspaceStore.getState().bootstrapFromLaunch({
-        projectId: created.project_id,
-        workspaceName,
+        projectId: created.id,
+        workspaceName: created.title,
         hasMedia: false,
       });
-      return created.project_id;
+      return created.id;
     } catch (error) {
       const appError = toLaunchpadErrorFromUnknown(
         error,
-        "NETWORK_ERROR",
+        "PROTOTYPE_ERROR",
         "create_empty_project_failed"
       );
       set({ lastError: appError });
@@ -258,16 +228,11 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => ({
       activeWorkspaceName: project.title,
       lastError: null,
     });
-    void useWorkspaceStore.getState().initializeWorkspace(project.id, project.title);
   },
 
   clearActiveWorkspace: () => {
     useWorkspaceStore.getState().disconnectProjectEvents();
-    set({
-      activeWorkspaceId: null,
-      activeWorkspaceName: null,
-      isThinking: false,
-    });
+    set({ activeWorkspaceId: null, activeWorkspaceName: null });
   },
 
   clearLastError: () => {

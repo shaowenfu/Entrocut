@@ -1,2 +1,0 @@
-"""Server provider adapters."""
-
