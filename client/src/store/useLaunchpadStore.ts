@@ -11,6 +11,7 @@ import {
   toMediaReference,
   type CoreProject,
 } from "../services/coreClient";
+import { registerProjectMediaSources } from "../services/localMediaRegistry";
 import { useWorkspaceStore } from "./useWorkspaceStore";
 
 export interface ProjectMeta {
@@ -387,6 +388,7 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => {
           projectId: created.project.id,
           projectName: created.project.title,
         });
+        registerProjectMediaSources(created.project.id, media);
 
         await navigateToWorkspace({
           projectId: created.project.id,

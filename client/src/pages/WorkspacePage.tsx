@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent } from "react";
 import {
   ArrowLeft,
   ChevronRight,
@@ -9,6 +9,7 @@ import {
   ListVideo,
   Loader2,
   MessageSquare,
+  Pause,
   Play,
   Scissors,
   Send,
@@ -25,6 +26,7 @@ import {
   type ServiceHealthSnapshot,
   type ServiceTarget,
 } from "../services/health";
+import { createThumbnailFromMediaUrl, getProjectMediaSource } from "../services/localMediaRegistry";
 import { getOrCreateSessionId } from "../utils/session";
 import {
   useWorkspaceStore,
@@ -41,6 +43,11 @@ type WorkspacePageProps = {
 type MediaTab = "assets" | "clips";
 type DraggingTarget = "left" | "mid" | null;
 type EventStreamVisualState = "online" | "checking" | "offline";
+type PreviewSelection =
+  | { kind: "asset"; assetId: string }
+  | { kind: "clip"; clipId: string }
+  | { kind: "scene"; sceneId: string }
+  | null;
 
 const SUGGESTION_CHIPS = [
   "Generate rough cut",
@@ -74,6 +81,11 @@ function EmptyMediaGuidance({ onUploadClick, isDisabled }: EmptyMediaGuidancePro
 }
 
 function parseSceneDurationSeconds(duration: string): number {
+  const parsed = Number.parseInt(duration.replace(/[^\d]/g, ""), 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function parseDurationSeconds(duration: string): number {
   const parsed = Number.parseInt(duration.replace(/[^\d]/g, ""), 10);
   return Number.isFinite(parsed) ? parsed : 0;
 }
@@ -149,6 +161,11 @@ function extractDroppedFiles(event: DragEvent<HTMLDivElement>): File[] {
   return Array.from(event.dataTransfer.files ?? []).filter((file) => file.size > 0);
 }
 
+function parseClipTimeSeconds(time: string): number {
+  const parsed = Number.parseInt(time.replace(/[^\d]/g, ""), 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: WorkspacePageProps) {
   const [sessionId] = useState(() => getOrCreateSessionId(workspaceId));
   const [promptText, setPromptText] = useState("");
@@ -162,6 +179,8 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const [patchPulseId, setPatchPulseId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTimeSec, setCurrentTimeSec] = useState(12);
+  const [previewSelection, setPreviewSelection] = useState<PreviewSelection>(null);
+  const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string>>({});
   const [isAssetDropHovering, setIsAssetDropHovering] = useState(false);
   const [serviceHealth, setServiceHealth] = useState<Record<ServiceTarget, ServiceHealthSnapshot>>({
     core: createInitialHealthSnapshot(),
@@ -188,13 +207,14 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
 
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const latestAssistantIdRef = useRef<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const scrubberTrackRef = useRef<HTMLDivElement | null>(null);
 
   const totalDurationSec = storyboard.reduce(
     (total, scene) => total + parseSceneDurationSeconds(scene.duration),
     0
   );
   const safeTotalDurationSec = Math.max(1, totalDurationSec);
-  const playbackProgress = Math.min(1, currentTimeSec / safeTotalDurationSec);
   const sessionLabel = `Session #${sessionId.slice(-8).toUpperCase()}`;
   const eventStreamVisualState = toEventStreamVisualState(eventStreamState);
   const isLoadingWorkspace = loadState === "loading";
@@ -222,6 +242,80 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     return eventStreamVisualState;
   }, [reconnectState, eventStreamVisualState]);
 
+  const activeSceneIndex = useMemo(
+    () =>
+      previewSelection?.kind === "scene"
+        ? storyboard.findIndex((scene) => scene.id === previewSelection.sceneId)
+        : -1,
+    [previewSelection, storyboard]
+  );
+
+  const selectedClip = useMemo(() => {
+    if (previewSelection?.kind === "clip") {
+      return clips.find((clip) => clip.id === previewSelection.clipId) ?? null;
+    }
+    if (previewSelection?.kind === "scene") {
+      return clips[Math.max(activeSceneIndex, 0)] ?? null;
+    }
+    return null;
+  }, [activeSceneIndex, clips, previewSelection]);
+
+  const selectedAsset = useMemo(() => {
+    if (previewSelection?.kind === "asset") {
+      return assets.find((asset) => asset.id === previewSelection.assetId) ?? null;
+    }
+    if (selectedClip) {
+      return assets.find((asset) => asset.name === selectedClip.parent) ?? null;
+    }
+    return assets[0] ?? null;
+  }, [assets, previewSelection, selectedClip]);
+
+  const selectedPreviewSource = useMemo(() => {
+    if (!selectedAsset) {
+      return null;
+    }
+    return getProjectMediaSource(workspaceId, selectedAsset.name);
+  }, [selectedAsset, workspaceId]);
+
+  const previewDurationSec = useMemo(() => {
+    if (selectedClip) {
+      return Math.max(1, parseClipTimeSeconds(selectedClip.end) - parseClipTimeSeconds(selectedClip.start));
+    }
+    if (selectedAsset) {
+      return Math.max(1, parseDurationSeconds(selectedAsset.duration));
+    }
+    return safeTotalDurationSec;
+  }, [safeTotalDurationSec, selectedAsset, selectedClip]);
+
+  const playbackProgress = Math.min(1, currentTimeSec / Math.max(1, previewDurationSec));
+
+  const previewTitle = useMemo(() => {
+    if (previewSelection?.kind === "scene" && activeSceneIndex >= 0) {
+      return storyboard[activeSceneIndex]?.title ?? "Storyboard Scene";
+    }
+    if (selectedClip) {
+      return selectedClip.parent;
+    }
+    return selectedAsset?.name ?? "Preview Stage";
+  }, [activeSceneIndex, previewSelection, selectedAsset, selectedClip, storyboard]);
+
+  const previewSubtitle = useMemo(() => {
+    if (previewSelection?.kind === "scene" && activeSceneIndex >= 0) {
+      return storyboard[activeSceneIndex]?.intent ?? null;
+    }
+    if (selectedClip) {
+      return `${selectedClip.start} - ${selectedClip.end}`;
+    }
+    return selectedAsset?.duration ?? null;
+  }, [activeSceneIndex, previewSelection, selectedAsset, selectedClip, storyboard]);
+
+  const clipThumbnailUrl = useMemo(() => {
+    if (!selectedAsset) {
+      return null;
+    }
+    return thumbnailUrls[selectedAsset.name] ?? null;
+  }, [selectedAsset, thumbnailUrls]);
+
   useEffect(() => {
     void initializeWorkspace(workspaceId, workspaceName);
   }, [initializeWorkspace, workspaceId, workspaceName]);
@@ -239,6 +333,55 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
       current && storyboard.some((scene) => scene.id === current) ? current : storyboard[0].id
     );
   }, [storyboard]);
+
+  useEffect(() => {
+    if (previewSelection) {
+      return;
+    }
+    if (storyboard[0]) {
+      setPreviewSelection({ kind: "scene", sceneId: storyboard[0].id });
+      return;
+    }
+    if (clips[0]) {
+      setPreviewSelection({ kind: "clip", clipId: clips[0].id });
+      return;
+    }
+    if (assets[0]) {
+      setPreviewSelection({ kind: "asset", assetId: assets[0].id });
+    }
+  }, [assets, clips, previewSelection, storyboard]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function generateThumbnails() {
+      const updates: Record<string, string> = {};
+      for (const asset of assets) {
+        if (thumbnailUrls[asset.name]) {
+          continue;
+        }
+        const source = getProjectMediaSource(workspaceId, asset.name);
+        if (!source) {
+          continue;
+        }
+        const thumbnailUrl = await createThumbnailFromMediaUrl(source.url);
+        if (cancelled || !thumbnailUrl) {
+          continue;
+        }
+        updates[asset.name] = thumbnailUrl;
+      }
+      if (!cancelled && Object.keys(updates).length > 0) {
+        setThumbnailUrls((current) => ({
+          ...current,
+          ...updates,
+        }));
+      }
+    }
+
+    void generateThumbnails();
+    return () => {
+      cancelled = true;
+    };
+  }, [assets, thumbnailUrls, workspaceId]);
 
   useEffect(() => {
     const latest = [...chatTurns].reverse().find((turn) => turn.role === "assistant");
@@ -326,28 +469,74 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   }, [dragging, leftWidth]);
 
   useEffect(() => {
-    if (!isPlaying || isThinking || isMediaProcessing) {
-      return;
+    if (currentTimeSec > previewDurationSec) {
+      setCurrentTimeSec(previewDurationSec);
     }
-    const timer = window.setInterval(() => {
-      setCurrentTimeSec((previous) => {
-        const next = previous + 0.25;
-        if (next >= safeTotalDurationSec) {
-          setIsPlaying(false);
-          return safeTotalDurationSec;
-        }
-        return next;
-      });
-    }, 250);
-
-    return () => window.clearInterval(timer);
-  }, [isPlaying, isThinking, isMediaProcessing, safeTotalDurationSec]);
+  }, [currentTimeSec, previewDurationSec]);
 
   useEffect(() => {
-    if (currentTimeSec > safeTotalDurationSec) {
-      setCurrentTimeSec(safeTotalDurationSec);
+    const video = videoRef.current;
+    if (!video || !selectedPreviewSource) {
+      return;
     }
-  }, [currentTimeSec, safeTotalDurationSec]);
+    const clipStartSec = selectedClip ? parseClipTimeSeconds(selectedClip.start) : 0;
+    video.currentTime = clipStartSec;
+    setCurrentTimeSec(0);
+    if (isPlaying) {
+      void video.play().catch(() => {
+        setIsPlaying(false);
+      });
+    } else {
+      video.pause();
+    }
+  }, [isPlaying, selectedClip, selectedPreviewSource]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) {
+      return;
+    }
+
+    const handleTimeUpdate = () => {
+      const clipStartSec = selectedClip ? parseClipTimeSeconds(selectedClip.start) : 0;
+      const clipEndSec = selectedClip ? parseClipTimeSeconds(selectedClip.end) : Number.POSITIVE_INFINITY;
+      setCurrentTimeSec(Math.max(0, video.currentTime - clipStartSec));
+      if (video.currentTime >= clipEndSec) {
+        video.pause();
+        setIsPlaying(false);
+      }
+    };
+
+    const handleLoadedMetadata = () => {
+      const clipStartSec = selectedClip ? parseClipTimeSeconds(selectedClip.start) : 0;
+      video.currentTime = clipStartSec;
+      setCurrentTimeSec(0);
+    };
+
+    const handleEnded = () => {
+      setIsPlaying(false);
+    };
+    const handlePlay = () => {
+      setIsPlaying(true);
+    };
+    const handlePause = () => {
+      setIsPlaying(false);
+    };
+
+    video.addEventListener("timeupdate", handleTimeUpdate);
+    video.addEventListener("loadedmetadata", handleLoadedMetadata);
+    video.addEventListener("ended", handleEnded);
+    video.addEventListener("play", handlePlay);
+    video.addEventListener("pause", handlePause);
+
+    return () => {
+      video.removeEventListener("timeupdate", handleTimeUpdate);
+      video.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      video.removeEventListener("ended", handleEnded);
+      video.removeEventListener("play", handlePlay);
+      video.removeEventListener("pause", handlePause);
+    };
+  }, [selectedClip, selectedPreviewSource]);
 
   async function handleExport() {
     if (!canExport) {
@@ -392,10 +581,52 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     if (chatState === "responding" || isMediaProcessing) {
       return;
     }
-    if (currentTimeSec >= safeTotalDurationSec) {
-      setCurrentTimeSec(0);
+    const video = videoRef.current;
+    if (!video || !selectedPreviewSource) {
+      return;
     }
-    setIsPlaying((previous) => !previous);
+    if (video.paused) {
+      if (currentTimeSec >= previewDurationSec) {
+        const clipStartSec = selectedClip ? parseClipTimeSeconds(selectedClip.start) : 0;
+        video.currentTime = clipStartSec;
+        setCurrentTimeSec(0);
+      }
+      void video.play().catch(() => {
+        setIsPlaying(false);
+      });
+      return;
+    }
+    video.pause();
+  }
+
+  function handleScrubberSeek(clientX: number) {
+    const track = scrubberTrackRef.current;
+    const video = videoRef.current;
+    if (!track || !video || !selectedPreviewSource) {
+      return;
+    }
+    const rect = track.getBoundingClientRect();
+    if (rect.width <= 0) {
+      return;
+    }
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const targetRelativeSec = ratio * previewDurationSec;
+    const clipStartSec = selectedClip ? parseClipTimeSeconds(selectedClip.start) : 0;
+    video.currentTime = clipStartSec + targetRelativeSec;
+    setCurrentTimeSec(targetRelativeSec);
+  }
+
+  function handleScrubberPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    handleScrubberSeek(event.clientX);
+    const track = scrubberTrackRef.current;
+    track?.setPointerCapture(event.pointerId);
+  }
+
+  function handleScrubberPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    if ((event.buttons & 1) !== 1) {
+      return;
+    }
+    handleScrubberSeek(event.clientX);
   }
 
   function handleSceneSeek(sceneId: string, index: number) {
@@ -403,10 +634,10 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
       return;
     }
     setHighlightItem(sceneId);
-    const startSec = storyboard
-      .slice(0, index)
-      .reduce((total, scene) => total + parseSceneDurationSeconds(scene.duration), 0);
-    setCurrentTimeSec(startSec);
+    void index;
+    setPreviewSelection({ kind: "scene", sceneId });
+    setCurrentTimeSec(0);
+    setIsPlaying(true);
   }
 
   async function handleAssetBrowse() {
@@ -552,9 +783,23 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                 ) : (
                   <div className="asset-grid">
                     {assets.map((asset) => (
-                      <article key={asset.id} className="asset-card">
+                      <article
+                        key={asset.id}
+                        className={`asset-card ${
+                          previewSelection?.kind === "asset" && previewSelection.assetId === asset.id ? "is-active" : ""
+                        }`}
+                        onClick={() => {
+                          setPreviewSelection({ kind: "asset", assetId: asset.id });
+                          setCurrentTimeSec(0);
+                          setIsPlaying(true);
+                        }}
+                      >
                         <div className="asset-thumb">
-                          <Film size={14} />
+                          {thumbnailUrls[asset.name] ? (
+                            <img src={thumbnailUrls[asset.name]} alt={asset.name} className="asset-thumb-image" />
+                          ) : (
+                            <Film size={14} />
+                          )}
                           <span>{asset.duration}</span>
                         </div>
                         <p title={asset.name}>{asset.name}</p>
@@ -566,7 +811,17 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
             ) : (
               <div className="clip-list">
                 {clips.map((clip) => (
-                  <article key={clip.id} className="clip-card">
+                  <article
+                    key={clip.id}
+                    className={`clip-card ${
+                      previewSelection?.kind === "clip" && previewSelection.clipId === clip.id ? "is-active" : ""
+                    }`}
+                    onClick={() => {
+                      setPreviewSelection({ kind: "clip", clipId: clip.id });
+                      setCurrentTimeSec(0);
+                      setIsPlaying(true);
+                    }}
+                  >
                     <div className="clip-head">
                       <span className="clip-parent">
                         <Tag size={10} />
@@ -581,6 +836,9 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                     </div>
                     <div className="clip-body">
                       <div className={`clip-thumb ${clip.thumbClass}`}>
+                        {thumbnailUrls[clip.parent] ? (
+                          <img src={thumbnailUrls[clip.parent]} alt={clip.parent} className="clip-thumb-image" />
+                        ) : null}
                         <span>{clip.start}</span>
                       </div>
                       <p title={clip.desc}>“{clip.desc}”</p>
@@ -740,21 +998,46 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                   <Loader2 size={32} />
                   <span>RENDERING PIPELINE</span>
                 </div>
+              ) : selectedPreviewSource ? (
+                <video
+                  ref={videoRef}
+                  className="preview-video"
+                  src={selectedPreviewSource.url}
+                  muted
+                  playsInline
+                  controls={false}
+                />
               ) : (
                 <div className="preview-center">
                   <Film size={40} />
-                  <span>PREVIEW STAGE</span>
+                  <span>PREVIEW SOURCE UNAVAILABLE</span>
                 </div>
               )}
               <div className="timecode">{formatTimecode(currentTimeSec)}</div>
+              {!isThinking && !isMediaProcessing && !isLoadingWorkspace ? (
+                <div className="preview-meta">
+                  <strong>{previewTitle}</strong>
+                  <span>{previewSubtitle ?? "Select an asset, clip, or storyboard scene to preview."}</span>
+                </div>
+              ) : null}
+              {!isThinking && !isMediaProcessing && !isLoadingWorkspace && clipThumbnailUrl ? (
+                <div className="preview-thumbnail-chip">
+                  <img src={clipThumbnailUrl} alt={previewTitle} />
+                </div>
+              ) : null}
               {reasoningOverlay ? <div className="reasoning-overlay">{reasoningOverlay}</div> : null}
             </div>
 
             <div className="scrubber">
               <button type="button" className="icon-btn" aria-label="play" onClick={handleTogglePlay}>
-                <Play size={14} />
+                {isPlaying ? <Pause size={14} /> : <Play size={14} />}
               </button>
-              <div className="scrubber-track">
+              <div
+                ref={scrubberTrackRef}
+                className="scrubber-track"
+                onPointerDown={handleScrubberPointerDown}
+                onPointerMove={handleScrubberPointerMove}
+              >
                 <div
                   className="scrubber-progress"
                   style={{ width: `${Math.max(0, Math.min(100, playbackProgress * 100))}%` }}
@@ -765,7 +1048,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                 />
               </div>
               <div className="scrubber-time">
-                {formatClock(currentTimeSec)} / {formatClock(safeTotalDurationSec)}
+                {formatClock(currentTimeSec)} / {formatClock(previewDurationSec)}
               </div>
             </div>
           </div>
@@ -789,6 +1072,13 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                   onClick={() => handleSceneSeek(scene.id, index)}
                 >
                   <div className={`story-thumb ${scene.colorClass}`}>
+                    {thumbnailUrls[(clips[index] ?? selectedClip)?.parent ?? ""] ? (
+                      <img
+                        src={thumbnailUrls[(clips[index] ?? selectedClip)?.parent ?? ""]}
+                        alt={scene.title}
+                        className="story-thumb-image"
+                      />
+                    ) : null}
                     <span>SCENE {index + 1}</span>
                     <small>{scene.duration}</small>
                   </div>
