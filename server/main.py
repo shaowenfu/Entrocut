@@ -296,6 +296,47 @@ def _raise_app_error(
     )
 
 
+def _provider_failure_status_code(error_code: str) -> int:
+    if error_code == "SERVER_PROVIDER_RATE_LIMITED":
+        return 429
+    if error_code in {"SERVER_PROVIDER_QUOTA_EXCEEDED", "SERVER_VECTOR_FILTER_INVALID"}:
+        return 400
+    if error_code == "SERVER_PROVIDER_UNAVAILABLE":
+        return 503
+    return 502
+
+
+def _raise_provider_failure(
+    payload: dict[str, Any],
+    *,
+    default_code: str,
+    default_message: str,
+) -> None:
+    error_code = str(payload.get("error_code") or default_code)
+    message = str(payload.get("message") or default_message)
+    retryable = bool(payload.get("retryable"))
+    details = {
+        key: value
+        for key, value in payload.items()
+        if key
+        in {
+            "provider",
+            "provider_status",
+            "used",
+            "limit",
+            "project_id",
+            "user_id",
+        }
+    }
+    _raise_app_error(
+        code=error_code,
+        message=message,
+        status_code=_provider_failure_status_code(error_code),
+        details=details or None,
+        retryable=retryable,
+    )
+
+
 @app.middleware("http")
 async def request_context_middleware(request: Request, call_next):
     rid = request.headers.get("x-request-id", "").strip() or f"req_{uuid4().hex[:12]}"
@@ -740,6 +781,17 @@ def _run_index_job(job_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     user_id = payload["user_id"]
     project_id = payload["project_id"]
     clips = payload["clips"]
+    provider_result = _SERVER_RUNTIME.vector_search.upsert_clips(
+        clips,
+        user_id=user_id,
+        project_id=project_id,
+    )
+    if not provider_result.ok:
+        _raise_provider_failure(
+            provider_result.payload,
+            default_code="SERVER_INDEX_UPSERT_FAILED",
+            default_message="Vector upsert failed.",
+        )
     indexed = 0
     failed = 0
     for clip in clips:
@@ -782,8 +834,9 @@ def _run_chat_job(job_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     user_id = payload["user_id"]
     project_id = payload["project_id"]
     message = str(payload["message"]).strip()
-    has_media = bool((payload.get("context") or {}).get("has_media"))
-    clip_count = int((payload.get("context") or {}).get("clip_count") or 0)
+    context = dict(payload.get("context") or {})
+    has_media = bool(context.get("has_media"))
+    clip_count = int(context.get("clip_count") or 0)
     request_id = payload["request_id"]
     latency_ms = 1200 if has_media else 600
 
@@ -825,29 +878,50 @@ def _run_chat_job(job_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         )
         return response.model_dump()
 
+    plan_result = _SERVER_RUNTIME.llm_proxy.plan_edit(message, context=context)
+    if not plan_result.ok:
+        _raise_provider_failure(
+            plan_result.payload,
+            default_code="SERVER_LLM_PLAN_FAILED",
+            default_message="LLM planning failed.",
+        )
+    plan_payload = plan_result.payload
+    normalized_ops = [
+        AgentOperation.model_validate(item)
+        for item in plan_payload.get("ops", [])
+        if isinstance(item, dict)
+    ]
+    normalized_scenes = [
+        StoryboardScene.model_validate(item)
+        for item in plan_payload.get("storyboard_scenes", [])
+        if isinstance(item, dict)
+    ]
     lower = message.lower()
     if "slow" in lower or "慢" in message:
-        scenes = [
+        fallback_scenes = [
             _scene("scene_1", "Calm Establishing", "6s", "Slow pan for atmosphere"),
             _scene("scene_2", "Subject Focus", "8s", "Longer hold to keep pace calm"),
             _scene("scene_3", "Breathing Detail", "5s", "Insert detail shots for rhythm"),
         ]
     else:
-        scenes = [
+        fallback_scenes = [
             _scene("scene_1", "Fast Establishing", "4s", "Quick establish with movement"),
             _scene("scene_2", "Hero Reveal", "6s", "Cut to subject with strong visual anchor"),
             _scene("scene_3", "Momentum Push", "5s", "Increase cadence before transition"),
         ]
+    scenes = (normalized_scenes + fallback_scenes)[:3]
 
     indexed_clips = _list_indexed_clips(user_id, project_id)
-    reasoning = "我已根据当前素材和你的指令生成一版可继续迭代的分镜方案。"
+    reasoning = str(
+        plan_payload.get("reasoning_summary") or "我已根据当前素材和你的指令生成一版可继续迭代的分镜方案。"
+    )
     contract = _build_contract(
         user_id=user_id,
         project_id=project_id,
         reasoning_summary=reasoning,
         clips=indexed_clips,
     )
-    ops = [
+    ops = normalized_ops or [
         AgentOperation(
             op="replace_timeline_item",
             target_item_id="item_1",
@@ -873,6 +947,7 @@ def _run_chat_job(job_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             "session_id": payload.get("session_id"),
             "used_clip_count": max(clip_count, len(indexed_clips)),
             "queued_at": _now_iso(),
+            "planner": "llm_proxy",
         },
     )
     return response.model_dump()

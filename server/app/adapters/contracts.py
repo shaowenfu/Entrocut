@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, Sequence
 
 
 @dataclass(slots=True)
@@ -15,9 +15,16 @@ class LlmAdapter(Protocol):
 
 
 class EmbeddingAdapter(Protocol):
-    def embed(self, image_b64: str) -> ProxyResult: ...
+    def embed(self, content: str, *, modality: str = "image") -> ProxyResult: ...
 
 
 class VectorSearchAdapter(Protocol):
-    def search(self, query: str, *, top_k: int, filters: dict[str, Any]) -> ProxyResult: ...
+    def upsert(
+        self,
+        documents: Sequence[dict[str, Any]],
+        *,
+        user_id: str,
+        project_id: str,
+    ) -> ProxyResult: ...
 
+    def search(self, query: str, *, top_k: int, filters: dict[str, Any]) -> ProxyResult: ...
