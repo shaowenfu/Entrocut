@@ -6,10 +6,11 @@ import {
   type MediaPickInput,
 } from "../services/electronBridge";
 import {
-  createEmptyPrototypeProject,
-  createPrototypeProject,
-  listPrototypeProjects,
-} from "../mocks/prototypeWorkspace";
+  createProject,
+  listProjects,
+  toMediaReference,
+  type CoreProject,
+} from "../services/coreClient";
 import { useWorkspaceStore } from "./useWorkspaceStore";
 
 export interface ProjectMeta {
@@ -126,6 +127,46 @@ function toLaunchpadErrorFromUnknown(
     }
   }
   return toLaunchpadError(fallbackCode, fallbackMessage, error);
+}
+
+function formatLastActiveText(updatedAt: string): string {
+  const updatedAtMs = Date.parse(updatedAt);
+  if (Number.isNaN(updatedAtMs)) {
+    return "Updated recently";
+  }
+  const diffMinutes = Math.max(1, Math.round((Date.now() - updatedAtMs) / 60000));
+  if (diffMinutes < 60) {
+    return `${diffMinutes} min ago`;
+  }
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) {
+    return `${diffHours} hr ago`;
+  }
+  const diffDays = Math.round(diffHours / 24);
+  return `${diffDays} day${diffDays > 1 ? "s" : ""} ago`;
+}
+
+function projectThumbnailClass(projectId: string): string {
+  const variants = [
+    "gradient-peach",
+    "gradient-lime",
+    "gradient-sky",
+    "gradient-rose",
+  ] as const;
+  const index = projectId.length % variants.length;
+  return variants[index];
+}
+
+function mapProjectMeta(project: CoreProject): ProjectMeta {
+  return {
+    id: project.id,
+    title: project.title,
+    thumbnailClassName: projectThumbnailClass(project.id),
+    storageType: "local",
+    lastActiveText: formatLastActiveText(project.updated_at),
+    aiStatus: project.workflow_state,
+    lastAiEdit: `workflow=${project.workflow_state}`,
+  };
 }
 
 function reduceLaunchpadState(
@@ -259,7 +300,7 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => {
     } catch (error) {
       dispatch({
         type: "NAVIGATION_FAILED",
-        error: toLaunchpadErrorFromUnknown(error, "PROTOTYPE_ERROR", "navigation_to_workspace_failed"),
+        error: toLaunchpadErrorFromUnknown(error, "CORE_REQUEST_FAILED", "navigation_to_workspace_failed"),
       });
       throw error;
     }
@@ -270,23 +311,27 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => {
     activeWorkspaceId: null,
     activeWorkspaceName: null,
     projectsLoadState: "idle",
-    systemStatus: "ready",
+    systemStatus: "connecting",
     createState: "idle",
     importState: "idle",
     navigationState: "idle",
     lastError: null,
 
     fetchRecentProjects: async () => {
+      dispatch({ type: "SYSTEM_CHECK_STARTED" });
       dispatch({ type: "PROJECTS_LOAD_STARTED" });
       try {
-        await Promise.resolve();
+        const response = await listProjects();
         dispatch({ type: "SYSTEM_CHECK_SUCCEEDED" });
-        dispatch({ type: "PROJECTS_LOAD_SUCCEEDED", projects: listPrototypeProjects() });
+        dispatch({
+          type: "PROJECTS_LOAD_SUCCEEDED",
+          projects: response.projects.map(mapProjectMeta),
+        });
       } catch (error) {
         dispatch({ type: "SYSTEM_CHECK_FAILED" });
         dispatch({
           type: "PROJECTS_LOAD_FAILED",
-          error: toLaunchpadErrorFromUnknown(error, "PROTOTYPE_ERROR", "fetch_projects_failed"),
+          error: toLaunchpadErrorFromUnknown(error, "CORE_REQUEST_FAILED", "fetch_projects_failed"),
         });
       }
     },
@@ -331,30 +376,29 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => {
           dispatch({ type: "CREATE_STARTED" });
         }
 
-        const created = createPrototypeProject({
+        const created = await createProject({
           prompt: trimmedPrompt || undefined,
-          folderPath: media?.folderPath,
-          files: media?.files,
-          title: !hasMedia ? trimmedPrompt.slice(0, 32) || "Untitled Prototype" : undefined,
+          media: toMediaReference(media),
+          title: !hasMedia ? trimmedPrompt.slice(0, 32) || "Untitled Project" : undefined,
         });
 
         dispatch({
           type: "CREATE_SUCCEEDED",
-          projectId: created.id,
-          projectName: created.title,
+          projectId: created.project.id,
+          projectName: created.project.title,
         });
 
         await navigateToWorkspace({
-          projectId: created.id,
-          workspaceName: created.title,
+          projectId: created.project.id,
+          workspaceName: created.project.title,
           prompt: trimmedPrompt || undefined,
           hasMedia,
         });
-        return created.id;
+        return created.project.id;
       } catch (error) {
         const appError = toLaunchpadErrorFromUnknown(
           error,
-          "PROTOTYPE_ERROR",
+          "CORE_REQUEST_FAILED",
           "start_workspace_from_launchpad_failed"
         );
         if (duringImport) {
@@ -383,22 +427,22 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => {
     createEmptyProject: async () => {
       dispatch({ type: "CREATE_STARTED" });
       try {
-        const created = createEmptyPrototypeProject("Untitled Prototype");
+        const created = await createProject({ title: "Untitled Project" });
         dispatch({
           type: "CREATE_SUCCEEDED",
-          projectId: created.id,
-          projectName: created.title,
+          projectId: created.project.id,
+          projectName: created.project.title,
         });
         await navigateToWorkspace({
-          projectId: created.id,
-          workspaceName: created.title,
+          projectId: created.project.id,
+          workspaceName: created.project.title,
           hasMedia: false,
         });
-        return created.id;
+        return created.project.id;
       } catch (error) {
         const appError = toLaunchpadErrorFromUnknown(
           error,
-          "PROTOTYPE_ERROR",
+          "CORE_REQUEST_FAILED",
           "create_empty_project_failed"
         );
         dispatch({ type: "CREATE_FAILED", error: appError, duringImport: false });

@@ -1,20 +1,27 @@
 import { create } from "zustand";
 import { normalizeMediaInput, pickMediaFromSystem, type MediaPickInput } from "../services/electronBridge";
 import {
-  addPrototypeAssets,
-  applyPrototypePrompt,
-  exportPrototypeProject,
-  getPrototypeProject,
-  type PrototypeAgentOperation,
-  type PrototypeAssistantTurn,
-  type PrototypeAsset,
-  type PrototypeChatTurn,
-  type PrototypeClip,
-  type PrototypeDecisionType,
-  type PrototypeProjectRecord,
-  type PrototypeScene,
-  type PrototypeUserTurn,
-} from "../mocks/prototypeWorkspace";
+  createProjectEventsSocket,
+  exportProject as exportProjectRequest,
+  getWorkspace,
+  importAssets as importAssetsRequest,
+  sendChat as sendChatRequest,
+  toMediaReference,
+  toRequestError,
+  type CoreAsset,
+  type CoreChatAssistantTurn,
+  type CoreChatTurn,
+  type CoreClip,
+  type CoreEventEnvelope,
+  type CoreExportResult,
+  type CoreProject,
+  type CoreStoryboardScene,
+  type CoreTask,
+  type CoreWorkspaceSnapshot,
+  type ProjectWorkflowState,
+  type TaskStatus,
+  type TaskType,
+} from "../services/coreClient";
 
 export interface WorkspaceAssetItem {
   id: string;
@@ -48,33 +55,30 @@ export interface UserTurn {
   content: string;
 }
 
+export interface AssistantDecisionOperation {
+  id: string;
+  action: string;
+  target: string;
+  summary: string;
+}
+
 export interface AssistantDecisionTurn {
   id: string;
   role: "assistant";
   type: "decision";
-  decision_type: PrototypeDecisionType;
+  decision_type: string;
   reasoning_summary: string;
-  ops: PrototypeAgentOperation[];
+  ops: AssistantDecisionOperation[];
 }
 
 export type ChatTurn = UserTurn | AssistantDecisionTurn;
 
 type ProcessingPhase = "idle" | "media_processing" | "indexing" | "chat_thinking" | "ready" | "failed";
-type WorkflowState =
-  | "prompt_input_required"
-  | "awaiting_media"
-  | "media_ready"
-  | "media_processing"
-  | "chat_thinking"
-  | "ready"
-  | "rendering"
-  | "failed";
+type WorkflowState = ProjectWorkflowState;
 type WorkspaceLoadState = "idle" | "loading" | "ready" | "failed";
 type ChatState = "idle" | "responding" | "failed";
 type EventStreamState = "disconnected" | "connecting" | "connected";
 type ReconnectState = "idle" | "reconnecting" | "max_attempts_reached";
-type TaskType = "ingest" | "index" | "chat" | "render";
-type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 
 interface WorkspaceError {
   code: string;
@@ -94,28 +98,19 @@ interface UploadAssetsInput extends MediaPickInput {
   shouldPickMedia?: boolean;
 }
 
-interface ExportResult {
-  render_type: "export";
-  output_url: string;
-  duration_ms: number;
-  file_size_bytes: number | null;
-  thumbnail_url: string | null;
-  format: string;
-  quality: string | null;
-  resolution: string | null;
-}
+interface ExportResult extends CoreExportResult {}
 
 interface ActiveTask {
   id: string;
   type: TaskType;
   status: TaskStatus;
-  progress?: number;
+  progress?: number | null;
   message?: string | null;
 }
 
 type WorkspaceEvent =
   | { type: "WORKSPACE_LOAD_STARTED"; workspaceId: string; workspaceName?: string }
-  | { type: "WORKSPACE_LOAD_SUCCEEDED"; record: PrototypeProjectRecord; workspaceName?: string }
+  | { type: "WORKSPACE_LOAD_SUCCEEDED"; workspace: CoreWorkspaceSnapshot; workspaceName?: string }
   | { type: "WORKSPACE_LOAD_FAILED"; error: WorkspaceError }
   | { type: "BOOTSTRAP_STARTED"; projectId: string; workspaceName: string; prompt?: string; hasMedia: boolean }
   | { type: "EVENT_STREAM_CONNECT_STARTED" }
@@ -123,16 +118,20 @@ type WorkspaceEvent =
   | { type: "EVENT_STREAM_DISCONNECTED" }
   | { type: "EVENT_STREAM_RECONNECTING" }
   | { type: "EVENT_STREAM_MAX_ATTEMPTS_REACHED" }
+  | { type: "WORKSPACE_SNAPSHOT_RECEIVED"; workspace: CoreWorkspaceSnapshot; sequence: number }
+  | { type: "PROJECT_UPDATED"; project: CoreProject; sequence: number }
+  | { type: "ASSETS_UPDATED"; assets: CoreAsset[]; clips: CoreClip[]; sequence: number }
+  | { type: "STORYBOARD_UPDATED"; storyboard: CoreStoryboardScene[]; sequence: number }
+  | { type: "CHAT_TURN_CREATED"; turn: CoreChatTurn; sequence: number }
+  | { type: "TASK_UPDATED"; task: CoreTask; workflowState: WorkflowState; sequence: number }
+  | { type: "ERROR_OCCURRED"; error: WorkspaceError; workflowState?: WorkflowState; sequence: number }
   | { type: "ASSET_UPLOAD_STARTED"; task: ActiveTask }
   | { type: "ASSET_UPLOAD_CANCELLED" }
-  | { type: "ASSET_UPLOAD_SUCCEEDED"; record: PrototypeProjectRecord }
   | { type: "ASSET_UPLOAD_FAILED"; error: WorkspaceError }
-  | { type: "CHAT_STARTED"; prompt: string; task: ActiveTask; userTurn: UserTurn }
-  | { type: "CHAT_QUEUED"; prompt: string; userTurn: UserTurn; assistantTurn: AssistantDecisionTurn }
-  | { type: "CHAT_SUCCEEDED"; record: PrototypeProjectRecord; hasMedia: boolean }
+  | { type: "CHAT_REQUEST_ACCEPTED"; task: ActiveTask }
   | { type: "CHAT_FAILED"; error: WorkspaceError }
   | { type: "EXPORT_STARTED"; task: ActiveTask }
-  | { type: "EXPORT_SUCCEEDED"; result: ExportResult }
+  | { type: "EXPORT_COMPLETED"; result: ExportResult; sequence: number }
   | { type: "EXPORT_FAILED"; error: WorkspaceError }
   | { type: "CLEAR_ERROR" };
 
@@ -175,28 +174,38 @@ interface WorkspaceState {
   clearLastError: () => void;
 }
 
+const MAX_RECONNECT_ATTEMPTS = 4;
+const RECONNECT_DELAY_MS = 1200;
+
+let projectEventsSocket: WebSocket | null = null;
+let socketProjectId: string | null = null;
+let reconnectTimerId: number | null = null;
+let reconnectAttempts = 0;
+let shouldReconnect = false;
+let activeWorkspaceLoadToken = 0;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
 function toWorkspaceError(message: string, error: unknown): WorkspaceError {
-  const maybe = error as {
-    code?: string;
-    message?: string;
-    cause?: string;
-    requestId?: string;
-    request_id?: string;
-  };
+  const maybe = toRequestError(error);
   return {
-    code: maybe.code ?? "WORKSPACE_ERROR",
-    message: maybe.message ?? message,
-    cause: maybe.cause,
-    requestId:
-      typeof maybe.requestId === "string"
-        ? maybe.requestId
-        : typeof maybe.request_id === "string"
-        ? maybe.request_id
+    code: maybe.code,
+    message: maybe.message || message,
+    cause:
+      typeof maybe.details?.cause === "string"
+        ? maybe.details.cause
+        : error instanceof Error
+        ? error.message
         : undefined,
+    requestId: maybe.requestId,
   };
 }
 
-function mapAssets(assets: PrototypeAsset[]): WorkspaceAssetItem[] {
+function mapAssets(assets: CoreAsset[]): WorkspaceAssetItem[] {
   return assets.map((asset) => ({
     id: asset.id,
     name: asset.name,
@@ -205,7 +214,7 @@ function mapAssets(assets: PrototypeAsset[]): WorkspaceAssetItem[] {
   }));
 }
 
-function mapClips(clips: PrototypeClip[]): WorkspaceClipItem[] {
+function mapClips(clips: CoreClip[]): WorkspaceClipItem[] {
   return clips.map((clip) => ({
     id: clip.id,
     parent: clip.parent,
@@ -217,7 +226,7 @@ function mapClips(clips: PrototypeClip[]): WorkspaceClipItem[] {
   }));
 }
 
-function mapStoryboard(storyboard: PrototypeScene[]): StoryboardScene[] {
+function mapStoryboard(storyboard: CoreStoryboardScene[]): StoryboardScene[] {
   return storyboard.map((scene) => ({
     id: scene.id,
     title: scene.title,
@@ -228,59 +237,74 @@ function mapStoryboard(storyboard: PrototypeScene[]): StoryboardScene[] {
   }));
 }
 
-function mapTurns(turns: PrototypeChatTurn[]): ChatTurn[] {
+function mapTurns(turns: CoreChatTurn[]): ChatTurn[] {
   return turns.map((turn) => {
     if (turn.role === "user") {
-      return turn as PrototypeUserTurn;
+      return turn as UserTurn;
     }
-    return turn as PrototypeAssistantTurn;
+    return {
+      ...(turn as CoreChatAssistantTurn),
+    };
   });
 }
 
-function buildCurrentProject(record: PrototypeProjectRecord): Record<string, unknown> {
-  return {
-    project_id: record.id,
-    title: record.title,
-    storyboard_count: record.storyboard.length,
-    asset_count: record.assets.length,
-    clip_count: record.clips.length,
-    mode: "prototype",
-  };
-}
-
-function mapRecord(record: PrototypeProjectRecord, workspaceName?: string): Partial<WorkspaceState> {
-  return {
-    workspaceId: record.id,
-    workspaceName: workspaceName ?? record.title,
-    assets: mapAssets(record.assets),
-    clips: mapClips(record.clips),
-    storyboard: mapStoryboard(record.storyboard),
-    chatTurns: mapTurns(record.chatTurns),
-    currentProject: buildCurrentProject(record),
-    lastEventSequence: Date.now(),
-  };
-}
-
-function createId(prefix: string): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return `${prefix}_${crypto.randomUUID().replaceAll("-", "").slice(0, 10)}`;
+function mapTask(task: CoreTask | null): ActiveTask | null {
+  if (!task) {
+    return null;
   }
-  return `${prefix}_${Math.random().toString(16).slice(2, 12)}`;
-}
-
-function createTask(type: TaskType, message?: string): ActiveTask {
   return {
-    id: createId(`task_${type}`),
-    type,
-    status: "running",
-    message: message ?? null,
+    id: task.id,
+    type: task.type,
+    status: task.status,
+    progress: task.progress,
+    message: task.message,
   };
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, ms);
-  });
+function buildCurrentProject(input: {
+  project: CoreProject;
+  assets: WorkspaceAssetItem[];
+  clips: WorkspaceClipItem[];
+  storyboard: StoryboardScene[];
+}): Record<string, unknown> {
+  return {
+    project_id: input.project.id,
+    title: input.project.title,
+    workflow_state: input.project.workflow_state,
+    storyboard_count: input.storyboard.length,
+    asset_count: input.assets.length,
+    clip_count: input.clips.length,
+    mode: "core",
+  };
+}
+
+function mapWorkspace(workspace: CoreWorkspaceSnapshot, workspaceName?: string): Partial<WorkspaceState> {
+  const assets = mapAssets(workspace.assets);
+  const clips = mapClips(workspace.clips);
+  const storyboard = mapStoryboard(workspace.storyboard);
+  return {
+    workspaceId: workspace.project.id,
+    workspaceName: workspaceName ?? workspace.project.title,
+    assets,
+    clips,
+    storyboard,
+    chatTurns: mapTurns(workspace.chat_turns),
+    currentProject: buildCurrentProject({
+      project: workspace.project,
+      assets,
+      clips,
+      storyboard,
+    }),
+    workflowState: workspace.project.workflow_state,
+    activeTask: mapTask(workspace.active_task),
+  };
+}
+
+function appendTurn(turns: ChatTurn[], nextTurn: ChatTurn): ChatTurn[] {
+  if (turns.some((turn) => turn.id === nextTurn.id)) {
+    return turns;
+  }
+  return [...turns, nextTurn];
 }
 
 function deriveProcessingPhase(
@@ -378,13 +402,14 @@ function reduceWorkspaceState(
       };
     case "WORKSPACE_LOAD_SUCCEEDED":
       return {
-        ...mapRecord(event.record, event.workspaceName),
+        ...mapWorkspace(event.workspace, event.workspaceName),
         loadState: "ready",
-        workflowState: event.record.assets.length > 0 ? "ready" : "awaiting_media",
-        chatState: "idle",
-        activeTask: null,
-        eventStreamState: "connected",
-        reconnectState: "idle",
+        chatState:
+          event.workspace.active_task?.type === "chat" &&
+          (event.workspace.active_task.status === "queued" || event.workspace.active_task.status === "running")
+            ? "responding"
+            : "idle",
+        lastError: null,
       };
     case "WORKSPACE_LOAD_FAILED":
       return {
@@ -392,6 +417,7 @@ function reduceWorkspaceState(
         clips: [],
         storyboard: [],
         currentProject: null,
+        chatTurns: [],
         loadState: "failed",
         workflowState: "failed",
         chatState: "failed",
@@ -402,13 +428,8 @@ function reduceWorkspaceState(
       return {
         workspaceId: event.projectId,
         workspaceName: event.workspaceName,
-        assets: [],
-        clips: [],
-        storyboard: [],
-        currentProject: null,
-        chatTurns: [],
-        exportResult: null,
         pendingPrompt: event.prompt?.trim() ?? null,
+        exportResult: null,
         lastEventSequence: 0,
         lastError: null,
         loadState: "idle",
@@ -429,7 +450,6 @@ function reduceWorkspaceState(
     case "EVENT_STREAM_DISCONNECTED":
       return {
         eventStreamState: "disconnected",
-        reconnectState: "idle",
       };
     case "EVENT_STREAM_RECONNECTING":
       return {
@@ -438,6 +458,112 @@ function reduceWorkspaceState(
     case "EVENT_STREAM_MAX_ATTEMPTS_REACHED":
       return {
         reconnectState: "max_attempts_reached",
+        eventStreamState: "disconnected",
+      };
+    case "WORKSPACE_SNAPSHOT_RECEIVED":
+      return {
+        ...mapWorkspace(event.workspace),
+        loadState: "ready",
+        chatState:
+          event.workspace.active_task?.type === "chat" &&
+          (event.workspace.active_task.status === "queued" || event.workspace.active_task.status === "running")
+            ? "responding"
+            : "idle",
+        lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
+      };
+    case "PROJECT_UPDATED": {
+      const currentProject = buildCurrentProject({
+        project: event.project,
+        assets: state.assets,
+        clips: state.clips,
+        storyboard: state.storyboard,
+      });
+      return {
+        currentProject,
+        workflowState: event.project.workflow_state,
+        lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
+      };
+    }
+    case "ASSETS_UPDATED": {
+      const assets = mapAssets(event.assets);
+      const clips = mapClips(event.clips);
+      const currentProject = state.currentProject
+        ? buildCurrentProject({
+            project: {
+              id: String(state.currentProject.project_id ?? state.workspaceId ?? ""),
+              title: String(state.currentProject.title ?? state.workspaceName ?? ""),
+              workflow_state: (state.workflowState ?? "media_ready") as ProjectWorkflowState,
+              created_at: "",
+              updated_at: "",
+            },
+            assets,
+            clips,
+            storyboard: state.storyboard,
+          })
+        : state.currentProject;
+      return {
+        assets,
+        clips,
+        currentProject,
+        lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
+      };
+    }
+    case "STORYBOARD_UPDATED": {
+      const storyboard = mapStoryboard(event.storyboard);
+      const currentProject = state.currentProject
+        ? buildCurrentProject({
+            project: {
+              id: String(state.currentProject.project_id ?? state.workspaceId ?? ""),
+              title: String(state.currentProject.title ?? state.workspaceName ?? ""),
+              workflow_state: (state.workflowState ?? "ready") as ProjectWorkflowState,
+              created_at: "",
+              updated_at: "",
+            },
+            assets: state.assets,
+            clips: state.clips,
+            storyboard,
+          })
+        : state.currentProject;
+      return {
+        storyboard,
+        currentProject,
+        lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
+      };
+    }
+    case "CHAT_TURN_CREATED":
+      return {
+        chatTurns: appendTurn(
+          state.chatTurns,
+          event.turn.role === "user"
+            ? (event.turn as UserTurn)
+            : ({
+                ...(event.turn as CoreChatAssistantTurn),
+              } as AssistantDecisionTurn)
+        ),
+        lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
+      };
+    case "TASK_UPDATED": {
+      const activeTask =
+        event.task.status === "queued" || event.task.status === "running" ? mapTask(event.task) : null;
+      const nextChatState =
+        event.task.type === "chat" && (event.task.status === "queued" || event.task.status === "running")
+          ? "responding"
+          : event.task.type === "chat" && event.task.status === "failed"
+          ? "failed"
+          : "idle";
+      return {
+        activeTask,
+        workflowState: event.workflowState,
+        chatState: nextChatState,
+        lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
+        lastError: event.task.status === "failed" ? state.lastError : null,
+      };
+    }
+    case "ERROR_OCCURRED":
+      return {
+        workflowState: event.workflowState ?? state.workflowState,
+        lastError: event.error,
+        lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
       };
     case "ASSET_UPLOAD_STARTED":
       return {
@@ -449,39 +575,18 @@ function reduceWorkspaceState(
       return {
         activeTask: null,
       };
-    case "ASSET_UPLOAD_SUCCEEDED":
-      return {
-        ...mapRecord(event.record),
-        workflowState: "ready",
-        activeTask: null,
-        chatState: "idle",
-      };
     case "ASSET_UPLOAD_FAILED":
       return {
         workflowState: "failed",
         activeTask: null,
         lastError: event.error,
       };
-    case "CHAT_STARTED":
+    case "CHAT_REQUEST_ACCEPTED":
       return {
-        chatTurns: [...state.chatTurns, event.userTurn],
         chatState: "responding",
         workflowState: "chat_thinking",
         activeTask: event.task,
         lastError: null,
-      };
-    case "CHAT_QUEUED":
-      return {
-        pendingPrompt: event.prompt,
-        chatTurns: [...state.chatTurns, event.userTurn, event.assistantTurn],
-      };
-    case "CHAT_SUCCEEDED":
-      return {
-        ...mapRecord(event.record),
-        chatState: "idle",
-        workflowState: event.hasMedia ? "ready" : "awaiting_media",
-        activeTask: null,
-        pendingPrompt: null,
       };
     case "CHAT_FAILED":
       return {
@@ -497,11 +602,11 @@ function reduceWorkspaceState(
         activeTask: event.task,
         lastError: null,
       };
-    case "EXPORT_SUCCEEDED":
+    case "EXPORT_COMPLETED":
       return {
         exportResult: event.result,
         workflowState: "ready",
-        activeTask: null,
+        lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
       };
     case "EXPORT_FAILED":
       return {
@@ -516,6 +621,25 @@ function reduceWorkspaceState(
     default:
       return state;
   }
+}
+
+function clearReconnectTimer(): void {
+  if (reconnectTimerId !== null) {
+    window.clearTimeout(reconnectTimerId);
+    reconnectTimerId = null;
+  }
+}
+
+function closeProjectSocket(): void {
+  if (projectEventsSocket) {
+    projectEventsSocket.onopen = null;
+    projectEventsSocket.onmessage = null;
+    projectEventsSocket.onerror = null;
+    projectEventsSocket.onclose = null;
+    projectEventsSocket.close();
+    projectEventsSocket = null;
+  }
+  socketProjectId = null;
 }
 
 const initialState: Omit<
@@ -583,31 +707,188 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     });
   };
 
+  const handleEventEnvelope = (payload: CoreEventEnvelope) => {
+    switch (payload.event) {
+      case "workspace.snapshot":
+        dispatch({
+          type: "WORKSPACE_SNAPSHOT_RECEIVED",
+          workspace: (payload.data as { workspace: CoreWorkspaceSnapshot }).workspace,
+          sequence: payload.sequence,
+        });
+        break;
+      case "task.updated": {
+        const data = payload.data as { task: CoreTask; workflow_state: WorkflowState };
+        dispatch({
+          type: "TASK_UPDATED",
+          task: data.task,
+          workflowState: data.workflow_state,
+          sequence: payload.sequence,
+        });
+        if (
+          data.task.type === "ingest" &&
+          data.task.status === "succeeded" &&
+          get().pendingPrompt?.trim() &&
+          get().assets.length > 0
+        ) {
+          const queuedPrompt = get().pendingPrompt!.trim();
+          applyDirectPatch({ pendingPrompt: null });
+          void get().sendChat(queuedPrompt);
+        }
+        break;
+      }
+      case "chat.turn.created":
+        dispatch({
+          type: "CHAT_TURN_CREATED",
+          turn: (payload.data as { turn: CoreChatTurn }).turn,
+          sequence: payload.sequence,
+        });
+        break;
+      case "storyboard.updated":
+        dispatch({
+          type: "STORYBOARD_UPDATED",
+          storyboard: (payload.data as { storyboard: CoreStoryboardScene[] }).storyboard,
+          sequence: payload.sequence,
+        });
+        break;
+      case "assets.updated": {
+        const data = payload.data as { assets: CoreAsset[]; clips: CoreClip[] };
+        dispatch({
+          type: "ASSETS_UPDATED",
+          assets: data.assets,
+          clips: data.clips,
+          sequence: payload.sequence,
+        });
+        break;
+      }
+      case "project.updated":
+        dispatch({
+          type: "PROJECT_UPDATED",
+          project: (payload.data as { project: CoreProject }).project,
+          sequence: payload.sequence,
+        });
+        break;
+      case "export.completed":
+        dispatch({
+          type: "EXPORT_COMPLETED",
+          result: (payload.data as { result: ExportResult }).result,
+          sequence: payload.sequence,
+        });
+        break;
+      case "error.occurred": {
+        const data = payload.data as {
+          code: string;
+          message: string;
+          workflow_state?: WorkflowState;
+        };
+        dispatch({
+          type: "ERROR_OCCURRED",
+          error: {
+            code: data.code,
+            message: data.message,
+          },
+          workflowState: data.workflow_state,
+          sequence: payload.sequence,
+        });
+        break;
+      }
+      default:
+        break;
+    }
+  };
+
+  const openProjectEvents = (workspaceId: string) => {
+    if (
+      socketProjectId === workspaceId &&
+      projectEventsSocket &&
+      (projectEventsSocket.readyState === WebSocket.CONNECTING ||
+        projectEventsSocket.readyState === WebSocket.OPEN)
+    ) {
+      return;
+    }
+    clearReconnectTimer();
+    closeProjectSocket();
+    shouldReconnect = true;
+    socketProjectId = workspaceId;
+    dispatch({ type: "EVENT_STREAM_CONNECT_STARTED" });
+
+    const socket = createProjectEventsSocket(workspaceId);
+    projectEventsSocket = socket;
+
+    socket.onopen = () => {
+      reconnectAttempts = 0;
+      dispatch({ type: "EVENT_STREAM_CONNECTED" });
+    };
+
+    socket.onmessage = (event) => {
+      try {
+        handleEventEnvelope(JSON.parse(event.data) as CoreEventEnvelope);
+      } catch (error) {
+        dispatch({
+          type: "ERROR_OCCURRED",
+          error: toWorkspaceError("event_stream_parse_failed", error),
+          sequence: get().lastEventSequence,
+        });
+      }
+    };
+
+    socket.onerror = () => {
+      dispatch({
+        type: "EVENT_STREAM_RECONNECTING",
+      });
+    };
+
+    socket.onclose = () => {
+      projectEventsSocket = null;
+      if (!shouldReconnect || get().workspaceId !== workspaceId) {
+        dispatch({ type: "EVENT_STREAM_DISCONNECTED" });
+        return;
+      }
+      if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        dispatch({ type: "EVENT_STREAM_MAX_ATTEMPTS_REACHED" });
+        return;
+      }
+      reconnectAttempts += 1;
+      dispatch({ type: "EVENT_STREAM_RECONNECTING" });
+      reconnectTimerId = window.setTimeout(() => {
+        openProjectEvents(workspaceId);
+      }, RECONNECT_DELAY_MS);
+    };
+  };
+
   return {
     ...initialState,
 
     connectProjectEvents: (workspaceId) => {
-      void workspaceId;
-      dispatch({ type: "EVENT_STREAM_CONNECT_STARTED" });
-      dispatch({ type: "EVENT_STREAM_CONNECTED" });
+      openProjectEvents(workspaceId);
     },
 
     disconnectProjectEvents: () => {
+      shouldReconnect = false;
+      reconnectAttempts = 0;
+      clearReconnectTimer();
+      closeProjectSocket();
       dispatch({ type: "EVENT_STREAM_DISCONNECTED" });
     },
 
     initializeWorkspace: async (workspaceId, workspaceName) => {
-      dispatch({ type: "EVENT_STREAM_CONNECT_STARTED" });
+      const loadToken = ++activeWorkspaceLoadToken;
+      const shouldResetConnection = get().workspaceId !== workspaceId;
+      if (shouldResetConnection) {
+        get().disconnectProjectEvents();
+      }
       dispatch({ type: "WORKSPACE_LOAD_STARTED", workspaceId, workspaceName });
 
       try {
-        const record = getPrototypeProject(workspaceId);
-        if (!record) {
-          throw new Error("prototype_project_not_found");
+        const response = await getWorkspace(workspaceId);
+        if (loadToken !== activeWorkspaceLoadToken) {
+          return;
         }
-        dispatch({ type: "EVENT_STREAM_CONNECTED" });
-        dispatch({ type: "WORKSPACE_LOAD_SUCCEEDED", record, workspaceName });
+        dispatch({ type: "WORKSPACE_LOAD_SUCCEEDED", workspace: response.workspace, workspaceName });
+        get().connectProjectEvents(workspaceId);
       } catch (error) {
+        if (loadToken !== activeWorkspaceLoadToken) {
+          return;
+        }
         dispatch({
           type: "WORKSPACE_LOAD_FAILED",
           error: toWorkspaceError("load_workspace_failed", error),
@@ -626,16 +907,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       });
 
       await get().initializeWorkspace(input.projectId, input.workspaceName);
-
-      if (trimmedPrompt) {
-        await get().sendChat(trimmedPrompt);
+      if (get().loadState !== "ready") {
         return;
       }
 
-      if (get().loadState === "ready") {
-        applyDirectPatch({
-          workflowState: get().assets.length > 0 ? "ready" : "awaiting_media",
-        });
+      if (trimmedPrompt && input.hasMedia) {
+        for (let attempt = 0; attempt < 8; attempt += 1) {
+          if (get().eventStreamState === "connected") {
+            break;
+          }
+          await sleep(50);
+        }
+        await get().sendChat(trimmedPrompt);
       }
     },
 
@@ -660,24 +943,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         return;
       }
 
-      dispatch({
-        type: "ASSET_UPLOAD_STARTED",
-        task: createTask("ingest", "正在刷新 prototype 素材示意..."),
-      });
+      const mediaReference = toMediaReference(media);
+      if (!mediaReference) {
+        dispatch({
+          type: "ASSET_UPLOAD_FAILED",
+          error: {
+            code: "INVALID_MEDIA_REFERENCE",
+            message: "invalid_media_reference",
+          },
+        });
+        return;
+      }
 
       try {
-        await sleep(220);
-        const updated = addPrototypeAssets(workspaceId, media);
-        if (!updated) {
-          throw new Error("prototype_project_not_found");
-        }
-        dispatch({ type: "ASSET_UPLOAD_SUCCEEDED", record: updated });
-
-        const queuedPrompt = get().pendingPrompt?.trim();
-        if (queuedPrompt) {
-          applyDirectPatch({ pendingPrompt: null });
-          await get().sendChat(queuedPrompt);
-        }
+        const response = await importAssetsRequest(workspaceId, { media: mediaReference });
+        dispatch({
+          type: "ASSET_UPLOAD_STARTED",
+          task: mapTask(response.task)!,
+        });
       } catch (error) {
         dispatch({
           type: "ASSET_UPLOAD_FAILED",
@@ -693,52 +976,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         return;
       }
 
-      if (get().isThinking) {
+      if (get().chatState === "responding") {
         return;
       }
 
-      if (get().isMediaProcessing) {
-        dispatch({
-          type: "CHAT_QUEUED",
-          prompt: trimmedPrompt,
-          userTurn: {
-            id: `user_${Date.now()}`,
-            role: "user",
-            content: trimmedPrompt,
-          },
-          assistantTurn: {
-            id: `assistant_${Date.now()}`,
-            role: "assistant",
-            type: "decision",
-            decision_type: "ASK_USER_CLARIFICATION",
-            reasoning_summary: "素材示意还在刷新，完成后会自动应用这条指令。",
-            ops: [{ op: "prompt_queued", note: "Queued in prototype mode" }],
-          },
-        });
+      if (get().assets.length === 0) {
+        applyDirectPatch({ pendingPrompt: trimmedPrompt });
         return;
       }
-
-      dispatch({
-        type: "CHAT_STARTED",
-        prompt: trimmedPrompt,
-        task: createTask("chat", "Analyzing footage and generating edit..."),
-        userTurn: {
-          id: `user_${Date.now()}`,
-          role: "user",
-          content: trimmedPrompt,
-        },
-      });
 
       try {
-        await sleep(320);
-        const updated = applyPrototypePrompt(workspaceId, trimmedPrompt);
-        if (!updated) {
-          throw new Error("prototype_project_not_found");
-        }
+        const response = await sendChatRequest(workspaceId, { prompt: trimmedPrompt });
         dispatch({
-          type: "CHAT_SUCCEEDED",
-          record: updated,
-          hasMedia: updated.assets.length > 0,
+          type: "CHAT_REQUEST_ACCEPTED",
+          task: mapTask(response.task)!,
         });
       } catch (error) {
         dispatch({
@@ -760,23 +1011,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         return null;
       }
 
-      if (get().isExporting || get().isMediaProcessing) {
-        return null;
-      }
-
-      dispatch({
-        type: "EXPORT_STARTED",
-        task: createTask("render", "正在生成 prototype 导出路径..."),
-      });
-
       try {
-        await sleep(280);
-        const result = exportPrototypeProject(workspaceId);
-        if (!result) {
-          throw new Error("prototype_project_not_found");
-        }
-        dispatch({ type: "EXPORT_SUCCEEDED", result });
-        return result;
+        const response = await exportProjectRequest(workspaceId, {});
+        dispatch({
+          type: "EXPORT_STARTED",
+          task: mapTask(response.task)!,
+        });
+        return null;
       } catch (error) {
         dispatch({
           type: "EXPORT_FAILED",

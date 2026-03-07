@@ -57,22 +57,27 @@ export async function pickVideoFilesFromBrowser(): Promise<File[] | null> {
     input.accept = "video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi";
     input.style.display = "none";
     let settled = false;
+    let cancelTimer: number | null = null;
 
     const cleanup = () => {
+      if (cancelTimer !== null) {
+        window.clearTimeout(cancelTimer);
+        cancelTimer = null;
+      }
       input.value = "";
       window.removeEventListener("focus", handleWindowFocus, true);
       input.remove();
     };
 
     const handleWindowFocus = () => {
-      window.setTimeout(() => {
+      cancelTimer = window.setTimeout(() => {
         if (settled) {
           return;
         }
         settled = true;
         cleanup();
         resolve(null);
-      }, 0);
+      }, 300);
     };
 
     input.onchange = () => {

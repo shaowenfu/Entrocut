@@ -129,15 +129,12 @@ function toEventStreamVisualState(
 }
 
 function formatOperation(op: AssistantDecisionTurn["ops"][number]): string {
-  const parts = [op.op];
-  if (op.target_item_id) {
-    parts.push(`target=${op.target_item_id}`);
+  const parts = [op.action];
+  if (op.target) {
+    parts.push(`target=${op.target}`);
   }
-  if (op.new_clip_id) {
-    parts.push(`clip=${op.new_clip_id}`);
-  }
-  if (op.note) {
-    parts.push(`note=${op.note}`);
+  if (op.summary) {
+    parts.push(`summary=${op.summary}`);
   }
   return parts.join(" | ");
 }
@@ -206,7 +203,12 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const isExporting = activeTask?.type === "render" && activeTask.status === "running";
   const mediaStatusText =
     isMediaProcessing || isExporting ? activeTask?.message ?? null : null;
-  const canSendChat = !isEditLocked && chatState !== "responding" && workflowState !== "rendering";
+  const canSendChat =
+    !isEditLocked &&
+    assets.length > 0 &&
+    chatState !== "responding" &&
+    workflowState !== "rendering" &&
+    !(activeTask && activeTask.status === "running");
   const canUploadAssets = !isEditLocked && workflowState !== "rendering";
   const canExport =
     workflowState === "ready" &&
@@ -635,7 +637,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                         <div className="decision-ops">
                           {turn.ops.map((op) => (
                             <div
-                              key={`${op.op}_${op.target_item_id ?? ""}_${op.new_clip_id ?? ""}_${op.note ?? ""}`}
+                              key={`${op.action}_${op.target}_${op.summary}`}
                               className="decision-op"
                             >
                               <span />
