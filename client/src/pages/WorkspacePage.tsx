@@ -175,11 +175,10 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const clips = useWorkspaceStore((state) => state.clips);
   const storyboard = useWorkspaceStore((state) => state.storyboard);
   const chatTurns = useWorkspaceStore((state) => state.chatTurns);
-  const isLoadingWorkspace = useWorkspaceStore((state) => state.isLoadingWorkspace);
-  const isThinking = useWorkspaceStore((state) => state.isThinking);
-  const isMediaProcessing = useWorkspaceStore((state) => state.isMediaProcessing);
-  const mediaStatusText = useWorkspaceStore((state) => state.mediaStatusText);
-  const isExporting = useWorkspaceStore((state) => state.isExporting);
+  const loadState = useWorkspaceStore((state) => state.loadState);
+  const chatState = useWorkspaceStore((state) => state.chatState);
+  const activeTask = useWorkspaceStore((state) => state.activeTask);
+  const workflowState = useWorkspaceStore((state) => state.workflowState);
   const exportResult = useWorkspaceStore((state) => state.exportResult);
   const eventStreamState = useWorkspaceStore((state) => state.eventStreamState);
   const reconnectState = useWorkspaceStore((state) => state.reconnectState);
@@ -201,6 +200,18 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const playbackProgress = Math.min(1, currentTimeSec / safeTotalDurationSec);
   const sessionLabel = `Session #${sessionId.slice(-8).toUpperCase()}`;
   const eventStreamVisualState = toEventStreamVisualState(eventStreamState);
+  const isLoadingWorkspace = loadState === "loading";
+  const isThinking = chatState === "responding";
+  const isMediaProcessing = activeTask?.type === "ingest" && activeTask.status === "running";
+  const isExporting = activeTask?.type === "render" && activeTask.status === "running";
+  const mediaStatusText =
+    isMediaProcessing || isExporting ? activeTask?.message ?? null : null;
+  const canSendChat = !isEditLocked && chatState !== "responding" && workflowState !== "rendering";
+  const canUploadAssets = !isEditLocked && workflowState !== "rendering";
+  const canExport =
+    workflowState === "ready" &&
+    !isEditLocked &&
+    !(activeTask && activeTask.status === "running");
 
   const reconnectingPill: EventStreamVisualState = useMemo(() => {
     if (reconnectState === "reconnecting") {
@@ -337,7 +348,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   }, [currentTimeSec, safeTotalDurationSec]);
 
   async function handleExport() {
-    if (isExporting || isMediaProcessing) {
+    if (!canExport) {
       return;
     }
     setIsEditLocked(true);
@@ -359,7 +370,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   }
 
   function handleSuggestionPick(suggestion: string) {
-    if (isThinking || isEditLocked) {
+    if (!canSendChat) {
       return;
     }
     setPromptText(suggestion);
@@ -367,7 +378,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
 
   async function handleSendChat() {
     const trimmed = promptText.trim();
-    if (!trimmed || isThinking || isEditLocked) {
+    if (!trimmed || !canSendChat) {
       return;
     }
     setPromptText("");
@@ -376,7 +387,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   }
 
   function handleTogglePlay() {
-    if (isThinking || isMediaProcessing) {
+    if (chatState === "responding" || isMediaProcessing) {
       return;
     }
     if (currentTimeSec >= safeTotalDurationSec) {
@@ -513,10 +524,10 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
               <>
                 <div
                   className={`asset-upload-entry ${isAssetDropHovering ? "is-hovering" : ""} ${
-                    isEditLocked ? "is-disabled" : ""
+                    !canUploadAssets ? "is-disabled" : ""
                   }`}
                   onClick={() => {
-                    if (!isEditLocked) {
+                    if (canUploadAssets) {
                       void handleAssetBrowse();
                     }
                   }}
@@ -534,7 +545,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                 {assets.length === 0 ? (
                   <EmptyMediaGuidance
                     onUploadClick={handleAssetBrowse}
-                    isDisabled={isEditLocked}
+                    isDisabled={!canUploadAssets}
                   />
                 ) : (
                   <div className="asset-grid">
@@ -675,7 +686,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                 key={suggestion}
                 type="button"
                 onClick={() => handleSuggestionPick(suggestion)}
-                disabled={isThinking || isEditLocked}
+                disabled={!canSendChat}
               >
                 {suggestion}
               </button>
@@ -692,7 +703,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                   void handleSendChat();
                 }
               }}
-              disabled={isThinking || isEditLocked}
+              disabled={!canSendChat}
               placeholder={
                 assets.length === 0
                   ? "Upload media first to enable full AI editing, or describe your idea..."
@@ -702,7 +713,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
             <button
               type="button"
               onClick={() => void handleSendChat()}
-              disabled={!promptText.trim() || isThinking || isEditLocked}
+              disabled={!promptText.trim() || !canSendChat}
               aria-label="send"
             >
               <Send size={16} />

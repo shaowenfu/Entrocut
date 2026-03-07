@@ -15,7 +15,6 @@ import {
 import { useLaunchpadStore } from "../store/useLaunchpadStore";
 import {
   isElectronEnvironment,
-  pickMediaByMode,
 } from "../services/electronBridge";
 
 const PROMPT_HINTS = [
@@ -30,15 +29,22 @@ function LaunchpadPage() {
   const [isDropHovering, setIsDropHovering] = useState(false);
   const [hintIndex, setHintIndex] = useState(0);
   const recentProjects = useLaunchpadStore((state) => state.recentProjects);
-  const isLoadingProjects = useLaunchpadStore((state) => state.isLoadingProjects);
-  const isImporting = useLaunchpadStore((state) => state.isImporting);
-  const isCreating = useLaunchpadStore((state) => state.isCreating);
+  const projectsLoadState = useLaunchpadStore((state) => state.projectsLoadState);
+  const createState = useLaunchpadStore((state) => state.createState);
+  const importState = useLaunchpadStore((state) => state.importState);
+  const navigationState = useLaunchpadStore((state) => state.navigationState);
   const lastError = useLaunchpadStore((state) => state.lastError);
   const fetchRecentProjects = useLaunchpadStore((state) => state.fetchRecentProjects);
   const startWorkspaceFromLaunchpad = useLaunchpadStore((state) => state.startWorkspaceFromLaunchpad);
+  const pickMediaAndStartWorkspace = useLaunchpadStore((state) => state.pickMediaAndStartWorkspace);
   const createEmptyProject = useLaunchpadStore((state) => state.createEmptyProject);
   const openWorkspace = useLaunchpadStore((state) => state.openWorkspace);
   const clearLastError = useLaunchpadStore((state) => state.clearLastError);
+
+  const isLoadingProjects = projectsLoadState === "loading";
+  const isCreating = createState === "creating";
+  const isImporting = importState === "picking_media" || importState === "importing";
+  const isBusy = isCreating || isImporting || navigationState === "entering_workspace";
 
   useEffect(() => {
     void fetchRecentProjects();
@@ -118,17 +124,7 @@ function LaunchpadPage() {
   }
 
   async function handleBrowseMedia() {
-    // 根据环境显式选择模式
-    const mode = isElectronEnvironment() ? "electron-folder" : "browser-files";
-    const media = await pickMediaByMode(mode);
-    if (!media) {
-      return;
-    }
-    await startWorkspaceFromLaunchpad({
-      folderPath: media.folderPath,
-      files: media.files,
-      prompt: prompt.trim() || undefined,
-    });
+    await pickMediaAndStartWorkspace(prompt.trim() || undefined);
     if (prompt.trim()) {
       setPrompt("");
     }
@@ -167,9 +163,9 @@ function LaunchpadPage() {
 
           <div className={`intent-drop-shell ${isDropHovering ? "is-hovering" : ""}`}>
             <div
-              className={`intent-drop-surface ${isCreating || isImporting ? "is-disabled" : ""}`}
+              className={`intent-drop-surface ${isBusy ? "is-disabled" : ""}`}
               onClick={() => {
-                if (isCreating || isImporting) {
+                if (isBusy) {
                   return;
                 }
                 void handleBrowseMedia();
