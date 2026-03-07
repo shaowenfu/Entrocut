@@ -81,7 +81,7 @@ start_python_service() {
     CORE_INGEST_QUEUE_KEY="${CORE_INGEST_QUEUE_KEY}" \
     SERVER_INDEX_QUEUE_KEY="${SERVER_INDEX_QUEUE_KEY}" \
     SERVER_CHAT_QUEUE_KEY="${SERVER_CHAT_QUEUE_KEY}" \
-    nohup uvicorn "${app_entry}" --host 127.0.0.1 --port "${port}" --reload > "${log_file}" 2>&1 &
+    nohup uvicorn "${app_entry}" --host 127.0.0.1 --port "${port}" --reload < /dev/null > "${log_file}" 2>&1 &
     echo "$!" >> "${PID_FILE}"
   )
 }
@@ -95,7 +95,7 @@ start_client_service() {
     if [[ ! -d node_modules ]]; then
       npm install
     fi
-    nohup npm run dev -- --host 127.0.0.1 --port 5173 > "${log_file}" 2>&1 &
+    nohup npm run dev -- --host 127.0.0.1 --port 5173 < /dev/null > "${log_file}" 2>&1 &
     echo "$!" >> "${PID_FILE}"
   )
 }

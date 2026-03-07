@@ -11,6 +11,7 @@ CORE_DB_PATH="${CORE_DB_PATH:-/tmp/entrocut_phase45_core.db}"
 SERVER_DB_PATH="${SERVER_DB_PATH:-/tmp/entrocut_phase45_server.db}"
 SERVER_BASE_URL="http://127.0.0.1:${SERVER_PORT}"
 LOG_DIR="${ROOT_DIR}/logs"
+export NO_PROXY="${NO_PROXY:-127.0.0.1,localhost}"
 
 mkdir -p "${LOG_DIR}"
 rm -f "${CORE_DB_PATH}" "${SERVER_DB_PATH}"
@@ -23,6 +24,18 @@ REDIS_LOG="${LOG_DIR}/phase45_redis.log"
 if ! redis-cli -u "${REDIS_URL}" ping >/dev/null 2>&1; then
   redis-server --port 6379 --save "" --appendonly no --daemonize yes --dir "${LOG_DIR}" --logfile "${REDIS_LOG}"
 fi
+
+ensure_client_deps() {
+  if [[ -d node_modules ]]; then
+    return 0
+  fi
+  if [[ -n "${CI:-}" || "${INSTALL_CLIENT_DEPS:-}" == "1" ]]; then
+    npm ci
+    return 0
+  fi
+  echo "client/node_modules 缺失，无法运行三端冒烟测试。"
+  exit 1
+}
 
 start_service() {
   local service_dir="$1"
@@ -38,7 +51,7 @@ start_service() {
     CORE_DB_PATH="${CORE_DB_PATH}" \
     SERVER_DB_PATH="${SERVER_DB_PATH}" \
     SERVER_BASE_URL="${SERVER_BASE_URL}" \
-    nohup uvicorn "${module}" --host 127.0.0.1 --port "${port}" > "${log_file}" 2>&1 &
+    nohup uvicorn "${module}" --host 127.0.0.1 --port "${port}" < /dev/null > "${log_file}" 2>&1 &
     echo "$!"
   )
 }
@@ -53,8 +66,8 @@ trap cleanup EXIT
 
 for _ in $(seq 1 60); do
   if \
-    curl -sS "http://127.0.0.1:${CORE_PORT}/health" >/dev/null 2>&1 && \
-    curl -sS "http://127.0.0.1:${SERVER_PORT}/health" >/dev/null 2>&1; then
+    curl --noproxy '*' -sS "http://127.0.0.1:${CORE_PORT}/health" >/dev/null 2>&1 && \
+    curl --noproxy '*' -sS "http://127.0.0.1:${SERVER_PORT}/health" >/dev/null 2>&1; then
     break
   fi
   sleep 0.5
@@ -67,19 +80,16 @@ TOKEN="$(
 
 (
   cd "${ROOT_DIR}/client"
-  if [[ ! -d node_modules ]]; then
-    echo "client/node_modules 缺失，无法运行三端冒烟测试。"
-    exit 1
-  fi
+  ensure_client_deps
   VITE_AUTH_TOKEN="${TOKEN}" \
-  nohup npm run dev -- --host 127.0.0.1 --port "${CLIENT_PORT}" > "${CLIENT_LOG}" 2>&1 &
+  nohup npm run dev -- --host 127.0.0.1 --port "${CLIENT_PORT}" < /dev/null > "${CLIENT_LOG}" 2>&1 &
   CLIENT_PID="$!"
   echo "${CLIENT_PID}" > /tmp/entrocut_phase45_client.pid
 )
 CLIENT_PID="$(cat /tmp/entrocut_phase45_client.pid)"
 
 for _ in $(seq 1 60); do
-  if curl -sS "http://127.0.0.1:${CLIENT_PORT}" >/dev/null 2>&1; then
+  if curl --noproxy '*' -sS "http://127.0.0.1:${CLIENT_PORT}" >/dev/null 2>&1; then
     break
   fi
   sleep 0.5
@@ -89,7 +99,7 @@ TMP_VIDEO="$(mktemp /tmp/entrocut_phase45_video_XXXXXX.mp4)"
 printf 'mock-video' > "${TMP_VIDEO}"
 
 PROJECT_JSON="$(
-  curl -sS \
+  curl --noproxy '*' -sS \
     -H "Authorization: Bearer ${TOKEN}" \
     -F "files=@${TMP_VIDEO};type=video/mp4" \
     "http://127.0.0.1:${CORE_PORT}/api/v1/projects/upload"
@@ -114,7 +124,7 @@ rm -f "${WS_READY_FILE}"
 (
   cd "${ROOT_DIR}/server"
   source venv/bin/activate
-  WS_URL="ws://127.0.0.1:${CORE_PORT}/ws/projects/${PROJECT_ID}" \
+  WS_URL="ws://127.0.0.1:${CORE_PORT}/ws/projects/${PROJECT_ID}?access_token=${TOKEN}&session_id=phase45_smoke_session&last_sequence=0" \
   WS_EVENTS_FILE="${WS_EVENTS_FILE}" \
   WS_READY_FILE="${WS_READY_FILE}" \
   python - <<'PY'
@@ -170,7 +180,7 @@ if [[ ! -f "${WS_READY_FILE}" ]]; then
 fi
 
 INGEST_JSON="$(
-  curl -sS \
+  curl --noproxy '*' -sS \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
     -d "{\"project_id\":\"${PROJECT_ID}\"}" \
@@ -192,7 +202,7 @@ PY
 )"
 
 INDEX_JSON="$(
-  curl -sS \
+  curl --noproxy '*' -sS \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
     -d "${INDEX_PAYLOAD}" \
@@ -223,7 +233,7 @@ PY
 )"
 
 CHAT_JSON="$(
-  curl -sS \
+  curl --noproxy '*' -sS \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
     -d "${CHAT_PAYLOAD}" \

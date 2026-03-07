@@ -7,6 +7,13 @@ REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379/0}"
 CORE_PORT="${CORE_PORT:-8000}"
 SERVER_PORT="${SERVER_PORT:-8001}"
 LOG_DIR="${ROOT_DIR}/logs"
+SMOKE_MODE="${SMOKE_MODE:-baseline}"
+export NO_PROXY="${NO_PROXY:-127.0.0.1,localhost}"
+
+if [[ "${SMOKE_MODE}" == "phase45" || -n "${CI:-}" ]]; then
+  exec bash "${ROOT_DIR}/scripts/phase45_smoke_test.sh"
+fi
+
 mkdir -p "${LOG_DIR}"
 source "${ROOT_DIR}/server/venv/bin/activate"
 
@@ -27,7 +34,7 @@ start_service() {
     source venv/bin/activate
     AUTH_JWT_SECRET="${AUTH_JWT_SECRET}" \
     REDIS_URL="${REDIS_URL}" \
-    uvicorn "${module}" --host 127.0.0.1 --port "${port}" > "${log_file}" 2>&1 &
+    nohup uvicorn "${module}" --host 127.0.0.1 --port "${port}" < /dev/null > "${log_file}" 2>&1 &
     echo "$!"
   )
 }
@@ -40,7 +47,7 @@ cleanup() {
 trap cleanup EXIT
 
 for _ in $(seq 1 40); do
-  if curl -s "http://127.0.0.1:${CORE_PORT}/health" >/dev/null 2>&1 && curl -s "http://127.0.0.1:${SERVER_PORT}/health" >/dev/null 2>&1; then
+  if curl --noproxy '*' -s "http://127.0.0.1:${CORE_PORT}/health" >/dev/null 2>&1 && curl --noproxy '*' -s "http://127.0.0.1:${SERVER_PORT}/health" >/dev/null 2>&1; then
     break
   fi
   sleep 0.2
@@ -52,7 +59,7 @@ TOKEN="$(
 )"
 
 PROJECT_JSON="$(
-  curl -s \
+  curl --noproxy '*' -s \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
     -d '{"title":"Smoke Project"}' \
@@ -60,7 +67,7 @@ PROJECT_JSON="$(
 )"
 
 CHAT_JSON="$(
-  curl -s \
+  curl --noproxy '*' -s \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
     -d "$(PROJECT_JSON="${PROJECT_JSON}" python - <<'PY'
