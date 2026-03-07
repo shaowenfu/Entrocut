@@ -3,8 +3,9 @@
   "configurations": [
     {
       "name": "Debug Core (FastAPI)",
-      "type": "python",
+      "type": "debugpy",
       "request": "launch",
+      "python": "${workspaceFolder}/core/venv/bin/python",
       "module": "uvicorn",
       "cwd": "${workspaceFolder}/core",
       "args": [
@@ -20,8 +21,9 @@
     },
     {
       "name": "Debug Server (FastAPI)",
-      "type": "python",
+      "type": "debugpy",
       "request": "launch",
+      "python": "${workspaceFolder}/server/venv/bin/python",
       "module": "uvicorn",
       "cwd": "${workspaceFolder}/server",
       "args": [

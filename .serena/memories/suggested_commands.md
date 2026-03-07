@@ -1,0 +1,13 @@
+# Suggested commands
+- Start all local services: `./scripts/dev_up.sh`
+- Issue dev token: `AUTH_JWT_SECRET=entrocut-dev-secret-change-me ./scripts/issue_dev_token.sh`
+- Baseline smoke: `bash scripts/smoke_test.sh`
+- Phase 4/5 three-end smoke: `bash scripts/phase45_smoke_test.sh`
+- Server plan stability check: `bash scripts/phase45_server_plan_stability.sh`
+- Prompt queue last-only check: `bash scripts/phase45_prompt_queue_last_only_check.sh`
+- Disconnect recovery check: `bash scripts/phase45_disconnect_recovery_test.sh`
+- Core manual run: `cd core && source venv/bin/activate && uvicorn server:app --host 127.0.0.1 --port 8000 --reload`
+- Server manual run: `cd server && source venv/bin/activate && uvicorn main:app --host 127.0.0.1 --port 8001 --reload`
+- Client manual run: `cd client && npm run dev -- --host 127.0.0.1 --port 5173`
+- Pre-change shared-workspace check: `git status --short`
+- Pre-submit check: `git diff --stat && git status --short`
