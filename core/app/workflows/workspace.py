@@ -10,8 +10,8 @@ class WorkspaceWorkflowShell:
     def __init__(self, hub: ProjectWebSocketHub) -> None:
         self._hub = hub
 
-    async def notify_chat_received(self, *, project_id: str, message: str, request_id: str | None = None) -> None:
-        await self._hub.broadcast(
+    async def notify_chat_received(self, *, project_id: str, message: str, request_id: str | None = None) -> int:
+        return await self._hub.broadcast(
             CoreEventEnvelope(
                 event="workspace.chat.received",
                 project_id=project_id,
@@ -20,9 +20,17 @@ class WorkspaceWorkflowShell:
             )
         )
 
-    async def notify_chat_ready(self, *, project_id: str, summary: str, request_id: str | None = None) -> None:
+    async def notify_chat_ready(
+        self,
+        *,
+        project_id: str,
+        summary: str,
+        workflow_state: str = "ready",
+        request_id: str | None = None,
+    ) -> int:
         payload = NotificationPayload(level="info", message=summary).model_dump()
-        await self._hub.broadcast(
+        payload["workflow_state"] = workflow_state
+        return await self._hub.broadcast(
             CoreEventEnvelope(
                 event="workspace.chat.ready",
                 project_id=project_id,
@@ -37,10 +45,19 @@ class WorkspaceWorkflowShell:
         project_id: str,
         reasoning_summary: str,
         ops: list[dict[str, Any]],
+        turn_id: str | None = None,
+        decision_type: str = "UPDATE_PROJECT_CONTRACT",
+        workflow_state: str = "ready",
         request_id: str | None = None,
-    ) -> None:
-        payload = WorkspacePatchPayload(reasoning_summary=reasoning_summary, ops=ops).model_dump()
-        await self._hub.broadcast(
+    ) -> int:
+        payload = WorkspacePatchPayload(
+            turn_id=turn_id,
+            decision_type=decision_type,
+            workflow_state=workflow_state,
+            reasoning_summary=reasoning_summary,
+            ops=ops,
+        ).model_dump()
+        return await self._hub.broadcast(
             CoreEventEnvelope(
                 event="workspace.patch.ready",
                 project_id=project_id,

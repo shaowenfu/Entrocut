@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
+from urllib.parse import quote
 
 import jwt
 import redis
@@ -184,6 +185,10 @@ class ProjectDetailResponse(BaseModel):
     title: str
     ai_status: str
     last_ai_edit: str
+    workflow_state: str = "ready"
+    active_task_type: str | None = None
+    pending_prompt: str | None = None
+    last_event_sequence: int = 0
     assets: list[AssetDTO]
     clips: list[ClipDTO]
 
@@ -232,6 +237,8 @@ class RetryJobResponse(BaseModel):
 class RuntimeCapabilitiesResponse(BaseModel):
     service: Literal["core"] = "core"
     websocket_path: str
+    websocket_auth: str = "query_token"
+    session_resume: bool = True
     workflows: list[str]
     tools: list[str]
     gateways: list[str]
@@ -266,6 +273,16 @@ _THUMBNAIL_CLASSES = [
     "launch-thumb-rose",
 ]
 _VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm"}
+_WORKFLOW_PROMPT_INPUT_REQUIRED = "prompt_input_required"
+_WORKFLOW_AWAITING_MEDIA = "awaiting_media"
+_WORKFLOW_MEDIA_READY = "media_ready"
+_WORKFLOW_MEDIA_PROCESSING = "media_processing"
+_WORKFLOW_CHAT_THINKING = "chat_thinking"
+_WORKFLOW_READY = "ready"
+_WORKFLOW_RENDERING = "rendering"
+_WORKFLOW_FAILED = "failed"
+_ACTIVE_TASK_TYPES = {"ingest", "index", "chat", "render"}
+_UNSET = object()
 _DB_LOCK = threading.Lock()
 _WORKER_STOP = threading.Event()
 _WORKER_READY = threading.Event()
@@ -292,8 +309,8 @@ def _json_log(event: str, **kwargs: Any) -> None:
     logger.info(json.dumps(payload, ensure_ascii=False))
 
 
-def _run_sync_coro(coro: Any) -> None:
-    asyncio.run(coro)
+def _run_sync_coro(coro: Any) -> Any:
+    return asyncio.run(coro)
 
 
 def _error_response(
@@ -498,6 +515,18 @@ def get_auth_context(authorization: str | None = Header(default=None)) -> AuthCo
     return _decode_token(authorization)
 
 
+def _get_websocket_auth_context(websocket: WebSocket) -> AuthContext:
+    query_authorization = websocket.query_params.get("authorization", "").strip()
+    access_token = websocket.query_params.get("access_token", "").strip()
+    header_authorization = websocket.headers.get("authorization", "").strip()
+    authorization = header_authorization
+    if not authorization and query_authorization:
+        authorization = query_authorization
+    if not authorization and access_token:
+        authorization = f"Bearer {access_token}"
+    return _decode_token(authorization)
+
+
 def _get_db() -> sqlite3.Connection:
     if _DB_CONN is None:
         raise RuntimeError("DB is not initialized.")
@@ -694,6 +723,25 @@ def _init_db() -> None:
             """
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_project ON jobs(project_id, user_id, updated_at DESC);")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS project_runtime_state (
+                project_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                workflow_state TEXT NOT NULL,
+                pending_prompt TEXT,
+                pending_session_id TEXT,
+                active_task_type TEXT,
+                active_task_request_id TEXT,
+                active_task_started_at TEXT,
+                event_sequence INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            );
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_project_runtime_user ON project_runtime_state(user_id, updated_at DESC);"
+        )
     _DB_CONN = conn
 
 
@@ -915,6 +963,178 @@ def _require_project(project_id: str, user_id: str) -> sqlite3.Row:
 def _count_user_projects(user_id: str) -> int:
     row = _db_fetchone("SELECT COUNT(*) AS count FROM projects WHERE user_id = ?", (user_id,))
     return int(row["count"]) if row else 0
+
+
+def _default_workflow_state(*, has_media: bool) -> str:
+    return _WORKFLOW_MEDIA_READY if has_media else _WORKFLOW_PROMPT_INPUT_REQUIRED
+
+
+def _seed_project_runtime_state(*, project_id: str, user_id: str, workflow_state: str) -> None:
+    _db_exec(
+        """
+        INSERT OR IGNORE INTO project_runtime_state (
+            project_id, user_id, workflow_state, pending_prompt, pending_session_id,
+            active_task_type, active_task_request_id, active_task_started_at, event_sequence, updated_at
+        ) VALUES (?, ?, ?, NULL, NULL, NULL, NULL, NULL, 0, ?)
+        """,
+        (project_id, user_id, workflow_state, _now_iso()),
+    )
+
+
+def _load_project_runtime_state(project_id: str, user_id: str) -> sqlite3.Row:
+    row = _db_fetchone(
+        """
+        SELECT project_id, user_id, workflow_state, pending_prompt, pending_session_id,
+               active_task_type, active_task_request_id, active_task_started_at, event_sequence, updated_at
+        FROM project_runtime_state
+        WHERE project_id = ? AND user_id = ?
+        """,
+        (project_id, user_id),
+    )
+    if row:
+        return row
+    project = _require_project(project_id, user_id)
+    _seed_project_runtime_state(
+        project_id=project_id,
+        user_id=user_id,
+        workflow_state=_default_workflow_state(
+            has_media=bool(_list_project_assets(project_id, user_id) or project["source_folder_path"])
+        ),
+    )
+    row = _db_fetchone(
+        """
+        SELECT project_id, user_id, workflow_state, pending_prompt, pending_session_id,
+               active_task_type, active_task_request_id, active_task_started_at, event_sequence, updated_at
+        FROM project_runtime_state
+        WHERE project_id = ? AND user_id = ?
+        """,
+        (project_id, user_id),
+    )
+    if row is None:
+        raise RuntimeError("project_runtime_state bootstrap failed")
+    return row
+
+
+def _update_project_runtime_state(
+    *,
+    project_id: str,
+    user_id: str,
+    workflow_state: str | object = _UNSET,
+    pending_prompt: str | None | object = _UNSET,
+    pending_session_id: str | None | object = _UNSET,
+    active_task_type: str | None | object = _UNSET,
+    active_task_request_id: str | None | object = _UNSET,
+    active_task_started_at: str | None | object = _UNSET,
+    event_sequence: int | object = _UNSET,
+) -> None:
+    assignments: list[str] = []
+    params: list[Any] = []
+    if workflow_state is not _UNSET:
+        assignments.append("workflow_state = ?")
+        params.append(workflow_state)
+    if pending_prompt is not _UNSET:
+        assignments.append("pending_prompt = ?")
+        params.append(pending_prompt)
+    if pending_session_id is not _UNSET:
+        assignments.append("pending_session_id = ?")
+        params.append(pending_session_id)
+    if active_task_type is not _UNSET:
+        assignments.append("active_task_type = ?")
+        params.append(active_task_type)
+    if active_task_request_id is not _UNSET:
+        assignments.append("active_task_request_id = ?")
+        params.append(active_task_request_id)
+    if active_task_started_at is not _UNSET:
+        assignments.append("active_task_started_at = ?")
+        params.append(active_task_started_at)
+    if event_sequence is not _UNSET:
+        assignments.append("event_sequence = ?")
+        params.append(event_sequence)
+    assignments.append("updated_at = ?")
+    params.append(_now_iso())
+    params.extend((project_id, user_id))
+    _db_exec(
+        f"""
+        UPDATE project_runtime_state
+        SET {", ".join(assignments)}
+        WHERE project_id = ? AND user_id = ?
+        """,
+        tuple(params),
+    )
+
+
+def _set_project_workflow_state(
+    *,
+    project_id: str,
+    user_id: str,
+    workflow_state: str,
+    pending_prompt: str | None | object = _UNSET,
+    pending_session_id: str | None | object = _UNSET,
+) -> None:
+    _load_project_runtime_state(project_id, user_id)
+    _update_project_runtime_state(
+        project_id=project_id,
+        user_id=user_id,
+        workflow_state=workflow_state,
+        pending_prompt=pending_prompt,
+        pending_session_id=pending_session_id,
+    )
+
+
+def _acquire_project_task(*, project_id: str, user_id: str, task_type: str, request_id: str) -> None:
+    if task_type not in _ACTIVE_TASK_TYPES:
+        raise ValueError(f"unsupported task_type: {task_type}")
+    state = _load_project_runtime_state(project_id, user_id)
+    active_task_type = state["active_task_type"]
+    if active_task_type:
+        _raise_app_error(
+            code="CORE_PROJECT_BUSY",
+            message="Project already has an active task.",
+            status_code=409,
+            details={
+                "project_id": project_id,
+                "active_task_type": active_task_type,
+                "active_task_request_id": state["active_task_request_id"],
+            },
+        )
+    cursor = _db_exec(
+        """
+        UPDATE project_runtime_state
+        SET active_task_type = ?, active_task_request_id = ?, active_task_started_at = ?, updated_at = ?
+        WHERE project_id = ? AND user_id = ? AND (active_task_type IS NULL OR active_task_type = '')
+        """,
+        (task_type, request_id, _now_iso(), _now_iso(), project_id, user_id),
+    )
+    if cursor.rowcount <= 0:
+        refreshed = _load_project_runtime_state(project_id, user_id)
+        _raise_app_error(
+            code="CORE_PROJECT_BUSY",
+            message="Project already has an active task.",
+            status_code=409,
+            details={
+                "project_id": project_id,
+                "active_task_type": refreshed["active_task_type"],
+                "active_task_request_id": refreshed["active_task_request_id"],
+            },
+        )
+
+
+def _release_project_task(*, project_id: str, user_id: str, task_type: str, request_id: str | None = None) -> None:
+    _db_exec(
+        """
+        UPDATE project_runtime_state
+        SET active_task_type = NULL, active_task_request_id = NULL, active_task_started_at = NULL, updated_at = ?
+        WHERE project_id = ? AND user_id = ? AND active_task_type = ?
+          AND (? IS NULL OR active_task_request_id = ?)
+        """,
+        (_now_iso(), project_id, user_id, task_type, request_id, request_id),
+    )
+
+
+def _set_project_event_sequence(project_id: str, user_id: str, sequence: int) -> int:
+    _load_project_runtime_state(project_id, user_id)
+    _update_project_runtime_state(project_id=project_id, user_id=user_id, event_sequence=sequence)
+    return sequence
 
 
 def _insert_project(
@@ -1165,15 +1385,30 @@ def _wait_job_completion(*, job_id: str, user_id: str, timeout_sec: float) -> sq
 
 def _enqueue_ingest_job(*, user_id: str, project_id: str, request_id: str) -> str:
     _require_project(project_id, user_id)
-    job_id = _create_job(
-        user_id=user_id,
-        project_id=project_id,
-        job_type="ingest",
-        payload={"project_id": project_id, "user_id": user_id},
-        request_id=request_id,
-    )
-    _enqueue_job(CORE_QUEUE_KEY, job_id)
-    return job_id
+    _acquire_project_task(project_id=project_id, user_id=user_id, task_type="ingest", request_id=request_id)
+    try:
+        _set_project_workflow_state(
+            project_id=project_id,
+            user_id=user_id,
+            workflow_state=_WORKFLOW_MEDIA_PROCESSING,
+        )
+        job_id = _create_job(
+            user_id=user_id,
+            project_id=project_id,
+            job_type="ingest",
+            payload={"project_id": project_id, "user_id": user_id, "request_id": request_id},
+            request_id=request_id,
+        )
+        _enqueue_job(CORE_QUEUE_KEY, job_id)
+        return job_id
+    except Exception:
+        _release_project_task(
+            project_id=project_id,
+            user_id=user_id,
+            task_type="ingest",
+            request_id=request_id,
+        )
+        raise
 
 
 def _process_ingest_job(job_id: str) -> None:
@@ -1191,6 +1426,7 @@ def _process_ingest_job(job_id: str) -> None:
     payload = json.loads(row["payload_json"])
     project_id = payload["project_id"]
     user_id = payload["user_id"]
+    request_id = str(payload.get("request_id") or "")
 
     try:
         _set_job_running(job_id)
@@ -1250,6 +1486,10 @@ def _process_ingest_job(job_id: str) -> None:
             ai_status=f"Analyzed {len(clips)} clips",
             last_ai_edit="Ingest completed",
         )
+        runtime_state = _load_project_runtime_state(project_id, user_id)
+        next_workflow_state = _WORKFLOW_READY
+        if runtime_state["pending_prompt"]:
+            next_workflow_state = _WORKFLOW_MEDIA_READY
 
         result = IngestResponse(
             project_id=project_id,
@@ -1271,12 +1511,22 @@ def _process_ingest_job(job_id: str) -> None:
             ),
         ).model_dump()
         _set_job_success(job_id, result)
+        _set_project_workflow_state(
+            project_id=project_id,
+            user_id=user_id,
+            workflow_state=next_workflow_state,
+        )
     except AppError as exc:
         _set_job_failed(
             job_id,
             error_code=exc.code,
             error_message=exc.message,
             retryable=exc.retryable,
+        )
+        _set_project_workflow_state(
+            project_id=project_id,
+            user_id=user_id,
+            workflow_state=_WORKFLOW_FAILED,
         )
     except Exception as exc:
         _set_job_failed(
@@ -1285,7 +1535,19 @@ def _process_ingest_job(job_id: str) -> None:
             error_message="Ingest job failed unexpectedly.",
             retryable=True,
         )
+        _set_project_workflow_state(
+            project_id=project_id,
+            user_id=user_id,
+            workflow_state=_WORKFLOW_FAILED,
+        )
         _json_log("ingest_job_crash", job_id=job_id, reason=str(exc))
+    finally:
+        _release_project_task(
+            project_id=project_id,
+            user_id=user_id,
+            task_type="ingest",
+            request_id=request_id or None,
+        )
 
 
 def _worker_loop() -> None:
@@ -1350,6 +1612,8 @@ def health() -> dict[str, Any]:
         },
         "runtime": {
             "websocket": "/ws/projects/{project_id}",
+            "websocket_auth": "query_token",
+            "session_resume": True,
             "workflows": ["launchpad", "ingest", "chat", "render"],
             "tools": _CORE_RUNTIME.tool_registry.list_names(),
             "gateways": ["server_proxy", "mock_server_gateway"],
@@ -1361,6 +1625,8 @@ def health() -> dict[str, Any]:
 def runtime_capabilities() -> RuntimeCapabilitiesResponse:
     return RuntimeCapabilitiesResponse(
         websocket_path="/ws/projects/{project_id}",
+        websocket_auth="query_token",
+        session_resume=True,
         workflows=["launchpad", "ingest", "chat", "render"],
         tools=_CORE_RUNTIME.tool_registry.list_names(),
         gateways=["server_proxy", "mock_server_gateway"],
@@ -1369,25 +1635,75 @@ def runtime_capabilities() -> RuntimeCapabilitiesResponse:
 
 @app.websocket("/ws/projects/{project_id}")
 async def project_event_stream(websocket: WebSocket, project_id: str) -> None:
-    await _CORE_RUNTIME.websocket_hub.connect(project_id, websocket)
     try:
+        auth = _get_websocket_auth_context(websocket)
+        _require_project(project_id, auth.user_id)
+        runtime_state = _load_project_runtime_state(project_id, auth.user_id)
+        session_id = websocket.query_params.get("session_id", "").strip() or None
+        raw_last_sequence = websocket.query_params.get("last_sequence", "0").strip() or "0"
+        last_sequence = int(raw_last_sequence)
+    except ValueError:
+        await websocket.accept()
+        await websocket.send_json(
+            CoreEventEnvelope(
+                event="notification",
+                project_id=project_id,
+                payload=NotificationPayload(level="error", message="invalid_last_sequence").model_dump(),
+            ).model_dump()
+        )
+        await websocket.close(code=4400, reason="invalid_last_sequence")
+        return
+    except AppError as exc:
+        await websocket.accept()
+        await websocket.send_json(
+            CoreEventEnvelope(
+                event="notification",
+                project_id=project_id,
+                payload=NotificationPayload(level="error", message=f"ws_auth_failed:{exc.code}").model_dump(),
+            ).model_dump()
+        )
+        close_code = 4401 if exc.status_code == 401 else 4403
+        await websocket.close(code=close_code, reason=exc.code)
+        return
+
+    connection_id = await _CORE_RUNTIME.websocket_hub.connect(project_id, websocket)
+    try:
+        replayed_count = 0
+        if last_sequence > 0:
+            replayed_count = await _CORE_RUNTIME.websocket_hub.replay(
+                project_id,
+                websocket,
+                after_sequence=last_sequence,
+            )
+        current_sequence = await _CORE_RUNTIME.websocket_hub.current_sequence(project_id)
         await websocket.send_json(
             CoreEventEnvelope(
                 event="session.ready",
                 project_id=project_id,
-                payload=CoreSessionReadyPayload(project_id=project_id).model_dump(),
+                session_id=session_id,
+                sequence=current_sequence,
+                payload=CoreSessionReadyPayload(
+                    project_id=project_id,
+                    connection_id=connection_id,
+                    authenticated_user_id=auth.user_id,
+                    last_sequence=current_sequence,
+                    replayed_count=replayed_count,
+                    active_task_type=runtime_state["active_task_type"],
+                    workflow_state=runtime_state["workflow_state"],
+                ).model_dump(),
             ).model_dump()
         )
         while True:
             message = await websocket.receive_json()
             action = str(message.get("action", "")).strip()
-            session_id = str(message.get("session_id", "")).strip() or None
+            session_id = str(message.get("session_id", "")).strip() or session_id
 
             if action == "ping":
                 await websocket.send_json(
                     CoreEventEnvelope(
                         event="notification",
                         project_id=project_id,
+                        sequence=await _CORE_RUNTIME.websocket_hub.current_sequence(project_id),
                         session_id=session_id,
                         payload=NotificationPayload(level="info", message="pong").model_dump(),
                     ).model_dump()
@@ -1411,11 +1727,19 @@ async def project_event_stream(websocket: WebSocket, project_id: str) -> None:
                 await _CORE_RUNTIME.workspace_workflow.notify_chat_ready(
                     project_id=project_id,
                     summary=summary,
+                    workflow_state=_WORKFLOW_READY,
                 )
                 await _CORE_RUNTIME.workspace_workflow.notify_patch_ready(
                     project_id=project_id,
                     reasoning_summary=summary,
                     ops=[item for item in parsed_ops if isinstance(item, dict)],
+                    turn_id=f"turn_{uuid4().hex[:12]}",
+                    workflow_state=_WORKFLOW_READY,
+                )
+                _update_project_runtime_state(
+                    project_id=project_id,
+                    user_id=auth.user_id,
+                    event_sequence=await _CORE_RUNTIME.websocket_hub.current_sequence(project_id),
                 )
                 continue
 
@@ -1427,6 +1751,7 @@ async def project_event_stream(websocket: WebSocket, project_id: str) -> None:
                     CoreEventEnvelope(
                         event="notification",
                         project_id=project_id,
+                        sequence=await _CORE_RUNTIME.websocket_hub.current_sequence(project_id),
                         session_id=session_id,
                         payload=NotificationPayload(level="info", message=summary).model_dump(),
                     ).model_dump()
@@ -1437,6 +1762,7 @@ async def project_event_stream(websocket: WebSocket, project_id: str) -> None:
                 CoreEventEnvelope(
                     event="notification",
                     project_id=project_id,
+                    sequence=await _CORE_RUNTIME.websocket_hub.current_sequence(project_id),
                     session_id=session_id,
                     payload=NotificationPayload(level="warning", message=f"unsupported_action:{action or 'unknown'}").model_dump(),
                 ).model_dump()
@@ -1476,6 +1802,7 @@ def list_projects(auth: AuthContext = Depends(get_auth_context)) -> ListProjects
 @app.get("/api/v1/projects/{project_id}", response_model=ProjectDetailResponse)
 def get_project(project_id: str, auth: AuthContext = Depends(get_auth_context)) -> ProjectDetailResponse:
     record = _require_project(project_id, auth.user_id)
+    runtime_state = _load_project_runtime_state(project_id, auth.user_id)
     assets = _list_project_assets(project_id, auth.user_id)
     clips = _list_project_clips(project_id, auth.user_id)
     return ProjectDetailResponse(
@@ -1483,6 +1810,10 @@ def get_project(project_id: str, auth: AuthContext = Depends(get_auth_context)) 
         title=record["title"],
         ai_status=record["ai_status"],
         last_ai_edit=record["last_ai_edit"],
+        workflow_state=runtime_state["workflow_state"],
+        active_task_type=runtime_state["active_task_type"],
+        pending_prompt=runtime_state["pending_prompt"],
+        last_event_sequence=int(runtime_state["event_sequence"] or 0),
         assets=[_asset_to_dto(asset) for asset in assets],
         clips=[_clip_to_dto(clip) for clip in clips],
     )
@@ -1521,15 +1852,24 @@ def create_project(
         ai_status="Media linked" if imported_assets else "Ready for prompt",
         last_ai_edit="Project created",
     )
+    _seed_project_runtime_state(
+        project_id=project_id,
+        user_id=auth.user_id,
+        workflow_state=_default_workflow_state(has_media=bool(imported_assets)),
+    )
     if imported_assets:
         _insert_assets(imported_assets)
-    _run_sync_coro(
+    event_sequence = int(
+        _run_sync_coro(
         _CORE_RUNTIME.launchpad_workflow.notify_project_initialized(
             project_id=project_id,
             title=title,
             request_id=_get_request_id(req),
         )
+        )
+        or 0
     )
+    _set_project_event_sequence(project_id, auth.user_id, event_sequence)
     return CreateProjectResponse(project_id=project_id, title=title)
 
 
@@ -1554,15 +1894,24 @@ def import_project(
         ai_status="Media linked" if assets else "No media found",
         last_ai_edit="Imported from local folder",
     )
+    _seed_project_runtime_state(
+        project_id=project_id,
+        user_id=auth.user_id,
+        workflow_state=_default_workflow_state(has_media=bool(assets)),
+    )
     if assets:
         _insert_assets(assets)
-    _run_sync_coro(
+    event_sequence = int(
+        _run_sync_coro(
         _CORE_RUNTIME.launchpad_workflow.notify_project_initialized(
             project_id=project_id,
             title=title,
             request_id=_get_request_id(req),
         )
+        )
+        or 0
     )
+    _set_project_event_sequence(project_id, auth.user_id, event_sequence)
     return CreateProjectResponse(project_id=project_id, title=title)
 
 
@@ -1602,16 +1951,22 @@ async def upload_project(
         ai_status=f"Uploaded {len(assets)} videos",
         last_ai_edit="Uploaded from browser picker",
     )
+    _seed_project_runtime_state(
+        project_id=project_id,
+        user_id=auth.user_id,
+        workflow_state=_default_workflow_state(has_media=bool(assets)),
+    )
     _insert_assets(assets)
 
     for file in files:
         await file.close()
 
-    await _CORE_RUNTIME.launchpad_workflow.notify_project_initialized(
+    event_sequence = await _CORE_RUNTIME.launchpad_workflow.notify_project_initialized(
         project_id=project_id,
         title=normalized_title,
         request_id=_get_request_id(req),
     )
+    _set_project_event_sequence(project_id, auth.user_id, int(event_sequence or 0))
     return CreateProjectResponse(project_id=project_id, title=normalized_title)
 
 
@@ -1643,7 +1998,13 @@ def add_assets_from_folder(
         ai_status=f"Media linked ({total_assets} assets)",
         last_ai_edit="Added assets from local folder",
     )
-    _run_sync_coro(
+    _set_project_workflow_state(
+        project_id=project_id,
+        user_id=auth.user_id,
+        workflow_state=_WORKFLOW_MEDIA_READY,
+    )
+    event_sequence = int(
+        _run_sync_coro(
         _CORE_RUNTIME.launchpad_workflow.notify_media_progress(
             project_id=project_id,
             stage="scan",
@@ -1651,7 +2012,10 @@ def add_assets_from_folder(
             message="folder_assets_linked",
             request_id=_get_request_id(req),
         )
+        )
+        or 0
     )
+    _set_project_event_sequence(project_id, auth.user_id, event_sequence)
     return AddAssetsResponse(project_id=project_id, added_count=inserted, total_assets=total_assets)
 
 
@@ -1683,15 +2047,21 @@ async def add_assets_from_upload(
         ai_status=f"Media linked ({total_assets} assets)",
         last_ai_edit=f"Uploaded {inserted} assets",
     )
+    _set_project_workflow_state(
+        project_id=project_id,
+        user_id=auth.user_id,
+        workflow_state=_WORKFLOW_MEDIA_READY,
+    )
     for file in files:
         await file.close()
-    await _CORE_RUNTIME.launchpad_workflow.notify_media_progress(
+    event_sequence = await _CORE_RUNTIME.launchpad_workflow.notify_media_progress(
         project_id=project_id,
         stage="scan",
         progress=0.2,
         message="uploaded_assets_linked",
         request_id=_get_request_id(req),
     )
+    _set_project_event_sequence(project_id, auth.user_id, int(event_sequence or 0))
     return AddAssetsResponse(project_id=project_id, added_count=inserted, total_assets=total_assets)
 
 
@@ -1737,13 +2107,17 @@ def ingest(
             retryable=True,
         )
     response = IngestResponse.model_validate(json.loads(result_json))
-    _run_sync_coro(
+    event_sequence = int(
+        _run_sync_coro(
         _CORE_RUNTIME.launchpad_workflow.notify_media_completed(
             project_id=request.project_id,
             message="ingest_completed",
             request_id=_get_request_id(req),
         )
+        )
+        or 0
     )
+    _set_project_event_sequence(request.project_id, auth.user_id, event_sequence)
     return response
 
 
@@ -1770,6 +2144,19 @@ def retry_job(job_id: str, auth: AuthContext = Depends(get_auth_context)) -> Ret
             status_code=409,
             details={"job_id": job_id},
         )
+    request_id = str(row["request_id"] or f"req_{uuid4().hex[:12]}")
+    if row["job_type"] == "ingest":
+        _acquire_project_task(
+            project_id=row["project_id"],
+            user_id=auth.user_id,
+            task_type="ingest",
+            request_id=request_id,
+        )
+        _set_project_workflow_state(
+            project_id=row["project_id"],
+            user_id=auth.user_id,
+            workflow_state=_WORKFLOW_MEDIA_PROCESSING,
+        )
     _db_exec(
         """
         UPDATE jobs
@@ -1778,7 +2165,17 @@ def retry_job(job_id: str, auth: AuthContext = Depends(get_auth_context)) -> Ret
         """,
         (_now_iso(), job_id, auth.user_id),
     )
-    _enqueue_job(CORE_QUEUE_KEY, job_id)
+    try:
+        _enqueue_job(CORE_QUEUE_KEY, job_id)
+    except Exception:
+        if row["job_type"] == "ingest":
+            _release_project_task(
+                project_id=row["project_id"],
+                user_id=auth.user_id,
+                task_type="ingest",
+                request_id=request_id,
+            )
+        raise
     return RetryJobResponse(
         job_id=job_id,
         status="queued",
@@ -1791,63 +2188,192 @@ def retry_job(job_id: str, auth: AuthContext = Depends(get_auth_context)) -> Ret
 def proxy_index_upsert(
     request: IndexUpsertRequest,
     req: Request,
-    _: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
-    response = _proxy_server_json(
-        path="/api/v1/index/upsert-clips",
-        payload=request.model_dump(),
-        request=req,
-    )
-    indexed = response.get("indexed")
-    _run_sync_coro(
-        _CORE_RUNTIME.launchpad_workflow.notify_media_progress(
-            project_id=request.project_id,
-            stage="index",
-            progress=1.0,
-            message=f"index_upsert_completed:{indexed}",
-            request_id=_get_request_id(req),
+    _require_project(request.project_id, auth.user_id)
+    request_id = _get_request_id(req)
+    _acquire_project_task(project_id=request.project_id, user_id=auth.user_id, task_type="index", request_id=request_id)
+    try:
+        response = _proxy_server_json(
+            path="/api/v1/index/upsert-clips",
+            payload=request.model_dump(),
+            request=req,
         )
-    )
-    return response
+        indexed = response.get("indexed")
+        _touch_project(
+            project_id=request.project_id,
+            user_id=auth.user_id,
+            ai_status=f"Indexed {indexed or 0} clips",
+            last_ai_edit="Clip index updated",
+        )
+        _set_project_workflow_state(
+            project_id=request.project_id,
+            user_id=auth.user_id,
+            workflow_state=_WORKFLOW_READY,
+        )
+        event_sequence = int(
+            _run_sync_coro(
+            _CORE_RUNTIME.launchpad_workflow.notify_media_progress(
+                project_id=request.project_id,
+                stage="index",
+                progress=1.0,
+                message=f"index_upsert_completed:{indexed}",
+                request_id=request_id,
+            )
+            )
+            or 0
+        )
+        _set_project_event_sequence(request.project_id, auth.user_id, event_sequence)
+        return response
+    except AppError:
+        _set_project_workflow_state(
+            project_id=request.project_id,
+            user_id=auth.user_id,
+            workflow_state=_WORKFLOW_FAILED,
+        )
+        raise
+    finally:
+        _release_project_task(
+            project_id=request.project_id,
+            user_id=auth.user_id,
+            task_type="index",
+            request_id=request_id,
+        )
 
 
 @app.post("/api/v1/chat")
 def proxy_chat(
     request: ChatRequest,
     req: Request,
-    _: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
-    _run_sync_coro(
-        _CORE_RUNTIME.workspace_workflow.notify_chat_received(
+    _require_project(request.project_id, auth.user_id)
+    request_id = _get_request_id(req)
+    asset_count = len(_list_project_assets(request.project_id, auth.user_id))
+    clip_count = len(_list_project_clips(request.project_id, auth.user_id))
+    runtime_state = _load_project_runtime_state(request.project_id, auth.user_id)
+
+    _acquire_project_task(project_id=request.project_id, user_id=auth.user_id, task_type="chat", request_id=request_id)
+    _set_project_workflow_state(
+        project_id=request.project_id,
+        user_id=auth.user_id,
+        workflow_state=_WORKFLOW_CHAT_THINKING,
+    )
+    try:
+        engineered = _CORE_RUNTIME.context_engineering.build_chat_request(
+            prompt=request.message,
             project_id=request.project_id,
-            message=request.message,
-            request_id=_get_request_id(req),
+            user_id=auth.user_id,
+            client_context=request.context,
+            runtime_state={
+                "workflow_state": runtime_state["workflow_state"],
+                "active_task_type": runtime_state["active_task_type"],
+                "pending_prompt": runtime_state["pending_prompt"],
+            },
+            asset_count=asset_count,
+            clip_count=clip_count,
+            current_project=request.current_project,
         )
-    )
-    response = _proxy_server_json(
-        path="/api/v1/chat",
-        payload=request.model_dump(exclude_none=True),
-        request=req,
-    )
-    reasoning_summary = str(response.get("reasoning_summary", "chat_ready"))
-    ops = response.get("ops")
-    parsed_ops = ops if isinstance(ops, list) else []
-    _run_sync_coro(
-        _CORE_RUNTIME.workspace_workflow.notify_chat_ready(
+        _run_sync_coro(
+            _CORE_RUNTIME.workspace_workflow.notify_chat_received(
+                project_id=request.project_id,
+                message=request.message,
+                request_id=request_id,
+            )
+        )
+        response = _proxy_server_json(
+            path="/api/v1/chat",
+            payload={
+                **request.model_dump(exclude_none=True),
+                "message": engineered.prompt,
+                "user_id": auth.user_id,
+                "context": engineered.context,
+            },
+            request=req,
+        )
+        reasoning_summary = str(response.get("reasoning_summary", "chat_ready"))
+        ops = response.get("ops")
+        parsed_ops = ops if isinstance(ops, list) else []
+        decision_type = str(response.get("decision_type") or "UPDATE_PROJECT_CONTRACT")
+        next_workflow_state = _WORKFLOW_AWAITING_MEDIA if engineered.requires_media else _WORKFLOW_READY
+        if decision_type == "ASK_USER_CLARIFICATION" and engineered.requires_media:
+            _touch_project(
+                project_id=request.project_id,
+                user_id=auth.user_id,
+                ai_status="Awaiting media upload",
+                last_ai_edit="Prompt requires media",
+            )
+            _set_project_workflow_state(
+                project_id=request.project_id,
+                user_id=auth.user_id,
+                workflow_state=_WORKFLOW_AWAITING_MEDIA,
+                pending_prompt=None,
+                pending_session_id=request.session_id,
+            )
+        else:
+            _touch_project(
+                project_id=request.project_id,
+                user_id=auth.user_id,
+                ai_status="AI ready",
+                last_ai_edit="Chat response prepared",
+            )
+            _set_project_workflow_state(
+                project_id=request.project_id,
+                user_id=auth.user_id,
+                workflow_state=next_workflow_state,
+                pending_prompt=None,
+                pending_session_id=request.session_id if engineered.requires_media else None,
+            )
+        chat_ready_sequence = int(
+            _run_sync_coro(
+            _CORE_RUNTIME.workspace_workflow.notify_chat_ready(
+                project_id=request.project_id,
+                summary=reasoning_summary,
+                workflow_state=next_workflow_state,
+                request_id=request_id,
+            )
+            )
+            or 0
+        )
+        patch_sequence = int(
+            _run_sync_coro(
+            _CORE_RUNTIME.workspace_workflow.notify_patch_ready(
+                project_id=request.project_id,
+                reasoning_summary=reasoning_summary,
+                ops=[item for item in parsed_ops if isinstance(item, dict)],
+                turn_id=f"turn_{request_id}",
+                decision_type=decision_type,
+                workflow_state=next_workflow_state,
+                request_id=request_id,
+            )
+            )
+            or 0
+        )
+        current_sequence = _set_project_event_sequence(
+            request.project_id,
+            auth.user_id,
+            max(chat_ready_sequence, patch_sequence),
+        )
+        meta = dict(response.get("meta") or {})
+        meta["core_request_id"] = request_id
+        meta["core_event_sequence"] = current_sequence
+        meta["interaction_mode"] = engineered.interaction_mode
+        response["meta"] = meta
+        return response
+    except AppError:
+        _set_project_workflow_state(
             project_id=request.project_id,
-            summary=reasoning_summary,
-            request_id=_get_request_id(req),
+            user_id=auth.user_id,
+            workflow_state=_WORKFLOW_FAILED,
         )
-    )
-    _run_sync_coro(
-        _CORE_RUNTIME.workspace_workflow.notify_patch_ready(
+        raise
+    finally:
+        _release_project_task(
             project_id=request.project_id,
-            reasoning_summary=reasoning_summary,
-            ops=[item for item in parsed_ops if isinstance(item, dict)],
-            request_id=_get_request_id(req),
+            user_id=auth.user_id,
+            task_type="chat",
+            request_id=request_id,
         )
-    )
-    return response
 
 
 @app.post("/api/v1/search")
@@ -1861,10 +2387,89 @@ def search(_: SearchRequest, __: AuthContext = Depends(get_auth_context)) -> Non
 
 
 @app.post("/api/v1/render")
-def render(_: RenderRequest, __: AuthContext = Depends(get_auth_context)) -> None:
-    _raise_app_error(
-        code="NOT_IMPLEMENTED",
-        message="Render is not implemented in baseline.",
-        status_code=501,
-        retryable=False,
+def render(
+    request: RenderRequest,
+    req: Request,
+    auth: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    project = dict(request.project)
+    project_id = str(project.get("project_id") or "").strip()
+    if not project_id:
+        _raise_app_error(
+            code="CORE_RENDER_PROJECT_ID_REQUIRED",
+            message="project.project_id is required.",
+            status_code=400,
+        )
+    _require_project(project_id, auth.user_id)
+    request_id = _get_request_id(req)
+    render_type = str(project.get("render_type") or "preview").strip() or "preview"
+    _acquire_project_task(project_id=project_id, user_id=auth.user_id, task_type="render", request_id=request_id)
+    _set_project_workflow_state(
+        project_id=project_id,
+        user_id=auth.user_id,
+        workflow_state=_WORKFLOW_RENDERING,
     )
+    try:
+        render_kwargs: dict[str, Any]
+        if render_type == "export":
+            render_kwargs = {
+                "format": str(project.get("format") or project.get("export_format") or "mp4"),
+                "resolution": str(project.get("resolution") or project.get("export_resolution") or "original"),
+                "codec": str(project.get("codec") or project.get("export_codec") or "h264"),
+                "output_path": project.get("output_path"),
+            }
+        else:
+            render_kwargs = {
+                "quality": str(project.get("preview_quality") or "low"),
+                "format": str(project.get("format") or project.get("preview_format") or "webm"),
+            }
+        result = _run_sync_coro(
+            _CORE_RUNTIME.render_workflow.render(
+                project_id=project_id,
+                timeline_json=project,
+                render_type=render_type,
+                request_id=request_id,
+                **render_kwargs,
+            )
+        )
+        current_sequence = int(_run_sync_coro(_CORE_RUNTIME.websocket_hub.current_sequence(project_id)) or 0)
+        _set_project_event_sequence(project_id, auth.user_id, current_sequence)
+        _touch_project(
+            project_id=project_id,
+            user_id=auth.user_id,
+            ai_status=f"{render_type.capitalize()} ready",
+            last_ai_edit=f"{render_type.capitalize()} render completed",
+        )
+        _set_project_workflow_state(
+            project_id=project_id,
+            user_id=auth.user_id,
+            workflow_state=_WORKFLOW_READY,
+        )
+        return result
+    except AppError:
+        _set_project_workflow_state(
+            project_id=project_id,
+            user_id=auth.user_id,
+            workflow_state=_WORKFLOW_FAILED,
+        )
+        raise
+    except Exception as exc:
+        _set_project_workflow_state(
+            project_id=project_id,
+            user_id=auth.user_id,
+            workflow_state=_WORKFLOW_FAILED,
+        )
+        _raise_app_error(
+            code="CORE_RENDER_FAILED",
+            message="Render failed unexpectedly.",
+            status_code=500,
+            details={"cause": str(exc), "project_id": project_id},
+            retryable=True,
+        )
+    finally:
+        _release_project_task(
+            project_id=project_id,
+            user_id=auth.user_id,
+            task_type="render",
+            request_id=request_id,
+        )
