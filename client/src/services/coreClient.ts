@@ -25,27 +25,59 @@ export interface CoreProject {
 export interface CoreAsset {
   id: string;
   name: string;
-  duration: string;
+  duration_ms: number;
   type: AssetType;
+  source_path?: string | null;
 }
 
 export interface CoreClip {
   id: string;
-  parent: string;
-  start: string;
-  end: string;
-  score: string;
-  desc: string;
-  thumbClass: string;
+  asset_id: string;
+  source_start_ms: number;
+  source_end_ms: number;
+  visual_desc: string;
+  semantic_tags: string[];
+  confidence?: number | null;
+  thumbnail_ref?: string | null;
 }
 
-export interface CoreStoryboardScene {
+export interface CoreShot {
   id: string;
-  title: string;
-  duration: string;
-  intent: string;
-  colorClass: string;
-  bgClass: string;
+  clip_id: string;
+  source_in_ms: number;
+  source_out_ms: number;
+  order: number;
+  enabled: boolean;
+  label?: string | null;
+  intent?: string | null;
+  note?: string | null;
+  locked_fields?: Array<"source_range" | "order" | "clip_id" | "enabled">;
+}
+
+export interface CoreScene {
+  id: string;
+  shot_ids: string[];
+  order: number;
+  enabled: boolean;
+  label?: string | null;
+  intent?: string | null;
+  note?: string | null;
+  locked_fields?: Array<"shot_ids" | "order" | "enabled" | "intent">;
+}
+
+export interface CoreEditDraft {
+  id: string;
+  project_id: string;
+  version: number;
+  status: "draft" | "ready" | "rendering" | "failed";
+  assets: CoreAsset[];
+  clips: CoreClip[];
+  shots: CoreShot[];
+  scenes?: CoreScene[] | null;
+  selected_scene_id?: string | null;
+  selected_shot_id?: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface CoreChatUserTurn {
@@ -84,9 +116,7 @@ export interface CoreTask {
 
 export interface CoreWorkspaceSnapshot {
   project: CoreProject;
-  assets: CoreAsset[];
-  clips: CoreClip[];
-  storyboard: CoreStoryboardScene[];
+  edit_draft: CoreEditDraft;
   chat_turns: CoreChatTurn[];
   active_task: CoreTask | null;
 }
@@ -151,6 +181,10 @@ export interface ImportAssetsRequest {
 
 export interface ChatRequest {
   prompt: string;
+  target?: {
+    scene_id?: string | null;
+    shot_id?: string | null;
+  };
 }
 
 export interface ExportRequest {

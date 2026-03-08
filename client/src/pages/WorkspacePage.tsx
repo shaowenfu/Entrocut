@@ -255,7 +255,11 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
       return clips.find((clip) => clip.id === previewSelection.clipId) ?? null;
     }
     if (previewSelection?.kind === "scene") {
-      return clips[Math.max(activeSceneIndex, 0)] ?? null;
+      const activeScene = activeSceneIndex >= 0 ? storyboard[activeSceneIndex] : null;
+      if (!activeScene?.primaryClipId) {
+        return null;
+      }
+      return clips.find((clip) => clip.id === activeScene.primaryClipId) ?? null;
     }
     return null;
   }, [activeSceneIndex, clips, previewSelection]);
@@ -1072,9 +1076,15 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                   onClick={() => handleSceneSeek(scene.id, index)}
                 >
                   <div className={`story-thumb ${scene.colorClass}`}>
-                    {thumbnailUrls[(clips[index] ?? selectedClip)?.parent ?? ""] ? (
+                    {thumbnailUrls[
+                      (clips.find((clip) => clip.id === scene.primaryClipId) ?? selectedClip)?.parent ?? ""
+                    ] ? (
                       <img
-                        src={thumbnailUrls[(clips[index] ?? selectedClip)?.parent ?? ""]}
+                        src={
+                          thumbnailUrls[
+                            (clips.find((clip) => clip.id === scene.primaryClipId) ?? selectedClip)?.parent ?? ""
+                          ]
+                        }
                         alt={scene.title}
                         className="story-thumb-image"
                       />

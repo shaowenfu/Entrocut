@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-APP_VERSION = "0.7.0-in-memory"
+APP_VERSION = "0.8.0-edit-draft"
 REWRITE_PHASE = "clean_room_rewrite"
 CORE_MODE = "prototype_backed"
 
@@ -45,7 +45,10 @@ ProjectWorkflowState = Literal[
 AssetType = Literal["video", "audio"]
 TaskType = Literal["ingest", "index", "chat", "render"]
 TaskStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
-DecisionType = Literal["storyboard_patch"]
+EditDraftStatus = Literal["draft", "ready", "rendering", "failed"]
+LockedShotField = Literal["source_range", "order", "clip_id", "enabled"]
+LockedSceneField = Literal["shot_ids", "order", "enabled", "intent"]
+DecisionType = Literal["EDIT_DRAFT_PATCH"]
 
 
 class CoreApiError(Exception):
@@ -106,27 +109,59 @@ class ProjectModel(BaseModel):
 class AssetModel(BaseModel):
     id: str
     name: str
-    duration: str
+    duration_ms: int
     type: AssetType
+    source_path: str | None = None
 
 
 class ClipModel(BaseModel):
     id: str
-    parent: str
-    start: str
-    end: str
-    score: str
-    desc: str
-    thumbClass: str
+    asset_id: str
+    source_start_ms: int
+    source_end_ms: int
+    visual_desc: str
+    semantic_tags: list[str]
+    confidence: float | None = None
+    thumbnail_ref: str | None = None
 
 
-class StoryboardSceneModel(BaseModel):
+class ShotModel(BaseModel):
     id: str
-    title: str
-    duration: str
-    intent: str
-    colorClass: str
-    bgClass: str
+    clip_id: str
+    source_in_ms: int
+    source_out_ms: int
+    order: int
+    enabled: bool
+    label: str | None = None
+    intent: str | None = None
+    note: str | None = None
+    locked_fields: list[LockedShotField] = Field(default_factory=list)
+
+
+class SceneModel(BaseModel):
+    id: str
+    shot_ids: list[str]
+    order: int
+    enabled: bool
+    label: str | None = None
+    intent: str | None = None
+    note: str | None = None
+    locked_fields: list[LockedSceneField] = Field(default_factory=list)
+
+
+class EditDraftModel(BaseModel):
+    id: str
+    project_id: str
+    version: int
+    status: EditDraftStatus
+    assets: list[AssetModel]
+    clips: list[ClipModel]
+    shots: list[ShotModel]
+    scenes: list[SceneModel] | None = None
+    selected_scene_id: str | None = None
+    selected_shot_id: str | None = None
+    created_at: str
+    updated_at: str
 
 
 class UserTurnModel(BaseModel):
@@ -166,9 +201,7 @@ class TaskModel(BaseModel):
 
 class WorkspaceSnapshotModel(BaseModel):
     project: ProjectModel
-    assets: list[AssetModel]
-    clips: list[ClipModel]
-    storyboard: list[StoryboardSceneModel]
+    edit_draft: EditDraftModel
     chat_turns: list[ChatTurnModel]
     active_task: TaskModel | None = None
 
@@ -196,8 +229,14 @@ class ImportAssetsRequest(BaseModel):
     media: MediaReference
 
 
+class ChatTarget(BaseModel):
+    scene_id: str | None = None
+    shot_id: str | None = None
+
+
 class ChatRequest(BaseModel):
     prompt: str
+    target: ChatTarget | None = None
 
 
 class ExportRequest(BaseModel):
@@ -250,27 +289,30 @@ def _derive_title(title: str | None, prompt: str | None, media: MediaReference |
     return "Untitled Project"
 
 
-def _media_names(media: MediaReference) -> list[str]:
-    names = [file.name.strip() for file in media.files if file.name.strip()]
-    if names:
-        return names
+def _media_file_refs(media: MediaReference) -> list[MediaFileReference]:
+    if media.files:
+        return media.files
     if media.folder_path:
         folder_name = Path(media.folder_path).name or "media"
-        return [f"{folder_name}.mp4"]
+        return [MediaFileReference(name=f"{folder_name}.mp4", path=media.folder_path)]
     return []
 
 
 def _build_assets(media: MediaReference) -> list[AssetModel]:
     assets: list[AssetModel] = []
-    for index, name in enumerate(_media_names(media), start=1):
-        suffix = "audio" if name.lower().endswith((".mp3", ".wav", ".aac")) else "video"
+    for index, file_ref in enumerate(_media_file_refs(media), start=1):
+        name = file_ref.name.strip()
+        if not name:
+            continue
+        asset_type: AssetType = "audio" if name.lower().endswith((".mp3", ".wav", ".aac")) else "video"
         duration_seconds = 18 + index * 7
         assets.append(
             AssetModel(
                 id=_entity_id("asset"),
                 name=name,
-                duration=f"{duration_seconds}s",
-                type=suffix,
+                duration_ms=duration_seconds * 1000,
+                type=asset_type,
+                source_path=file_ref.path.strip() if file_ref.path and file_ref.path.strip() else None,
             )
         )
     return assets
@@ -278,42 +320,96 @@ def _build_assets(media: MediaReference) -> list[AssetModel]:
 
 def _build_clips(assets: list[AssetModel]) -> list[ClipModel]:
     clips: list[ClipModel] = []
+    semantic_bank = [
+        ["wide", "establishing", "environment"],
+        ["action", "subject", "motion"],
+        ["detail", "texture", "closeup"],
+        ["transition", "reaction", "cutaway"],
+    ]
     for asset_index, asset in enumerate(assets, start=1):
         for offset in range(2):
-            clip_index = (asset_index - 1) * 2 + offset + 1
+            clip_index = (asset_index - 1) * 2 + offset
+            start_ms = offset * 6000
+            end_ms = start_ms + 6000
+            semantic_tags = semantic_bank[clip_index % len(semantic_bank)]
             clips.append(
                 ClipModel(
                     id=_entity_id("clip"),
-                    parent=asset.name,
-                    start=f"{offset * 6}s",
-                    end=f"{offset * 6 + 6}s",
-                    score=f"{92 - clip_index}",
-                    desc=f"{asset.name} candidate highlight {offset + 1}",
-                    thumbClass=f"thumb-gradient-{(clip_index % 4) + 1}",
+                    asset_id=asset.id,
+                    source_start_ms=start_ms,
+                    source_end_ms=end_ms,
+                    visual_desc=f"{asset.name} candidate highlight {offset + 1}",
+                    semantic_tags=semantic_tags,
+                    confidence=round(0.92 - clip_index * 0.05, 2),
+                    thumbnail_ref=f"thumb-gradient-{(clip_index % 4) + 1}",
                 )
             )
     return clips
 
 
-def _build_storyboard(clips: list[ClipModel], prompt: str) -> list[StoryboardSceneModel]:
-    base_prompt = _trimmed(prompt) or "Generate a tighter first cut"
+def _draft_from_payload(project_id: str, created_at: str, media: MediaReference | None) -> EditDraftModel:
+    assets = _build_assets(media) if media else []
+    clips = _build_clips(assets)
+    return EditDraftModel(
+        id=_entity_id("draft"),
+        project_id=project_id,
+        version=1,
+        status="draft",
+        assets=assets,
+        clips=clips,
+        shots=[],
+        scenes=None,
+        selected_scene_id=None,
+        selected_shot_id=None,
+        created_at=created_at,
+        updated_at=created_at,
+    )
+
+
+def _bump_draft(draft: EditDraftModel, **changes: Any) -> EditDraftModel:
+    next_version = int(changes.pop("version", draft.version + 1))
+    next_updated_at = str(changes.pop("updated_at", _now_iso()))
+    return draft.model_copy(update={"version": next_version, "updated_at": next_updated_at, **changes})
+
+
+def _build_edit_plan(clips: list[ClipModel], prompt: str) -> tuple[list[ShotModel], list[SceneModel]]:
     selected = clips[: min(3, len(clips))]
-    storyboard: list[StoryboardSceneModel] = []
-    titles = ["Cold Open", "Momentum Lift", "Payoff"]
-    color_classes = ["bg-sky-200", "bg-amber-200", "bg-emerald-200"]
-    bg_classes = ["from-sky-50 to-sky-100", "from-amber-50 to-amber-100", "from-emerald-50 to-emerald-100"]
+    base_prompt = _trimmed(prompt) or "Generate a tighter first cut"
+    shot_labels = ["Open", "Lift", "Payoff"]
+    shots: list[ShotModel] = []
+    scenes: list[SceneModel] = []
+
     for index, clip in enumerate(selected):
-        storyboard.append(
-            StoryboardSceneModel(
+        shot_duration_ms = min(clip.source_end_ms - clip.source_start_ms, 4000 + index * 1000)
+        source_in_ms = clip.source_start_ms
+        source_out_ms = source_in_ms + shot_duration_ms
+        shot = ShotModel(
+            id=_entity_id("shot"),
+            clip_id=clip.id,
+            source_in_ms=source_in_ms,
+            source_out_ms=source_out_ms,
+            order=index,
+            enabled=True,
+            label=shot_labels[index] if index < len(shot_labels) else f"Shot {index + 1}",
+            intent=f"{base_prompt[:60]} | {clip.visual_desc}",
+            note=None,
+            locked_fields=[],
+        )
+        shots.append(shot)
+        scenes.append(
+            SceneModel(
                 id=_entity_id("scene"),
-                title=titles[index],
-                duration=f"{4 + index}s",
-                intent=f"{base_prompt[:60]} | {clip.desc}",
-                colorClass=color_classes[index],
-                bgClass=bg_classes[index],
+                shot_ids=[shot.id],
+                order=index,
+                enabled=True,
+                label=shot.label,
+                intent=shot.intent,
+                note=None,
+                locked_fields=[],
             )
         )
-    return storyboard
+
+    return shots, scenes
 
 
 class InMemoryProjectStore:
@@ -350,11 +446,9 @@ class InMemoryProjectStore:
         now = _now_iso()
         project_id = _entity_id("proj")
         title = _derive_title(normalized_title, normalized_prompt, payload.media)
-        assets = _build_assets(payload.media) if payload.media else []
-        clips = _build_clips(assets)
-        workflow_state: ProjectWorkflowState
-        if assets:
-            workflow_state = "media_ready"
+        edit_draft = _draft_from_payload(project_id, now, payload.media)
+        if edit_draft.assets:
+            workflow_state: ProjectWorkflowState = "media_ready"
         elif normalized_prompt:
             workflow_state = "awaiting_media"
         else:
@@ -369,9 +463,7 @@ class InMemoryProjectStore:
         )
         record = {
             "project": project.model_dump(),
-            "assets": [asset.model_dump() for asset in assets],
-            "clips": [clip.model_dump() for clip in clips],
-            "storyboard": [],
+            "edit_draft": edit_draft.model_dump(),
             "chat_turns": [],
             "active_task": None,
             "export_result": None,
@@ -387,9 +479,7 @@ class InMemoryProjectStore:
         return WorkspaceSnapshotModel.model_validate(
             {
                 "project": record["project"],
-                "assets": record["assets"],
-                "clips": record["clips"],
-                "storyboard": record["storyboard"],
+                "edit_draft": record["edit_draft"],
                 "chat_turns": record["chat_turns"],
                 "active_task": record["active_task"],
             }
@@ -434,8 +524,7 @@ class InMemoryProjectStore:
                 subscribers.discard(queue)
 
     async def queue_assets_import(self, project_id: str, media: MediaReference) -> TaskModel:
-        names = _media_names(media)
-        if not names:
+        if not _media_file_refs(media):
             raise CoreApiError(
                 status_code=422,
                 code="MEDIA_REFERENCE_REQUIRED",
@@ -467,7 +556,14 @@ class InMemoryProjectStore:
     async def _run_assets_import(self, project_id: str, media: MediaReference, task: TaskModel) -> None:
         record = self.get_project_or_raise(project_id)
         await asyncio.sleep(0.05)
-        running = task.model_copy(update={"status": "running", "progress": 45, "message": "Scanning media references", "updated_at": _now_iso()})
+        running = task.model_copy(
+            update={
+                "status": "running",
+                "progress": 45,
+                "message": "Scanning media references",
+                "updated_at": _now_iso(),
+            }
+        )
         record["active_task"] = running.model_dump()
         await self.emit(
             project_id,
@@ -476,24 +572,31 @@ class InMemoryProjectStore:
         )
 
         await asyncio.sleep(0.05)
-        assets = _build_assets(media)
-        clips = _build_clips(assets)
-        record["assets"] = [*record["assets"], *[asset.model_dump() for asset in assets]]
-        record["clips"] = [*record["clips"], *[clip.model_dump() for clip in clips]]
-        record["project"]["workflow_state"] = "media_ready"
-        record["project"]["updated_at"] = _now_iso()
-        await self.emit(
-            project_id,
-            "assets.updated",
-            {"assets": record["assets"], "clips": record["clips"]},
+        draft = EditDraftModel.model_validate(record["edit_draft"])
+        new_assets = _build_assets(media)
+        new_clips = _build_clips(new_assets)
+        next_draft = _bump_draft(
+            draft,
+            assets=[*draft.assets, *new_assets],
+            clips=[*draft.clips, *new_clips],
+            status="ready" if draft.shots else "draft",
         )
+        record["edit_draft"] = next_draft.model_dump()
+        record["project"]["workflow_state"] = "ready" if next_draft.shots else "media_ready"
+        record["project"]["updated_at"] = next_draft.updated_at
+        await self.emit(project_id, "edit_draft.updated", {"edit_draft": next_draft.model_dump()})
         await self.emit(project_id, "project.updated", {"project": record["project"]})
 
         succeeded = running.model_copy(
-            update={"status": "succeeded", "progress": 100, "message": "Media ingest completed", "updated_at": _now_iso()}
+            update={
+                "status": "succeeded",
+                "progress": 100,
+                "message": "Media ingest completed",
+                "updated_at": _now_iso(),
+            }
         )
         record["active_task"] = None
-        next_workflow_state: ProjectWorkflowState = "ready" if record["storyboard"] else "media_ready"
+        next_workflow_state: ProjectWorkflowState = "ready" if next_draft.shots else "media_ready"
         record["project"]["workflow_state"] = next_workflow_state
         record["project"]["updated_at"] = _now_iso()
         await self.emit(project_id, "project.updated", {"project": record["project"]})
@@ -503,7 +606,7 @@ class InMemoryProjectStore:
             {"task": succeeded.model_dump(), "workflow_state": next_workflow_state},
         )
 
-    async def queue_chat(self, project_id: str, prompt: str) -> TaskModel:
+    async def queue_chat(self, project_id: str, prompt: str, target: ChatTarget | None) -> TaskModel:
         normalized_prompt = _trimmed(prompt)
         if normalized_prompt is None:
             raise CoreApiError(
@@ -513,7 +616,8 @@ class InMemoryProjectStore:
             )
 
         record = self.get_project_or_raise(project_id)
-        if not record["assets"]:
+        draft = EditDraftModel.model_validate(record["edit_draft"])
+        if not draft.assets:
             raise CoreApiError(
                 status_code=409,
                 code="MEDIA_REQUIRED_FOR_CHAT",
@@ -551,14 +655,14 @@ class InMemoryProjectStore:
             "task.updated",
             {"task": task.model_dump(), "workflow_state": "chat_thinking"},
         )
-        asyncio.create_task(self._run_chat(project_id, normalized_prompt, task))
+        asyncio.create_task(self._run_chat(project_id, normalized_prompt, target, task))
         return task
 
-    async def _run_chat(self, project_id: str, prompt: str, task: TaskModel) -> None:
+    async def _run_chat(self, project_id: str, prompt: str, target: ChatTarget | None, task: TaskModel) -> None:
         record = self.get_project_or_raise(project_id)
         await asyncio.sleep(0.05)
         running = task.model_copy(
-            update={"status": "running", "message": "Analyzing footage and drafting storyboard", "updated_at": _now_iso()}
+            update={"status": "running", "message": "Analyzing footage and updating edit draft", "updated_at": _now_iso()}
         )
         record["active_task"] = running.model_dump()
         await self.emit(
@@ -568,37 +672,46 @@ class InMemoryProjectStore:
         )
 
         await asyncio.sleep(0.08)
-        clips = [ClipModel.model_validate(clip) for clip in record["clips"]]
-        storyboard = _build_storyboard(clips, prompt)
+        draft = EditDraftModel.model_validate(record["edit_draft"])
+        shots, scenes = _build_edit_plan(draft.clips, prompt)
+        scoped_target = "selected scene" if target and target.scene_id else "whole draft"
+        next_draft = _bump_draft(
+            draft,
+            shots=shots,
+            scenes=scenes,
+            selected_scene_id=scenes[0].id if scenes else None,
+            selected_shot_id=shots[0].id if shots else None,
+            status="ready",
+        )
         assistant_turn = AssistantDecisionTurnModel(
             id=_entity_id("turn"),
             role="assistant",
             type="decision",
-            decision_type="storyboard_patch",
-            reasoning_summary=f"Refocused the cut around: {prompt[:80]}",
+            decision_type="EDIT_DRAFT_PATCH",
+            reasoning_summary=f"Refocused the cut around {scoped_target}: {prompt[:80]}",
             ops=[
                 AssistantDecisionOperationModel(
                     id=_entity_id("op"),
-                    action="replace_storyboard",
-                    target="workspace.storyboard",
-                    summary="Generated a tighter storyboard from current clips.",
+                    action="replace_edit_draft_structure",
+                    target="workspace.edit_draft",
+                    summary="Generated a new shot sequence and optional scene grouping from current clips.",
                 ),
                 AssistantDecisionOperationModel(
                     id=_entity_id("op"),
-                    action="promote_clip_cluster",
-                    target="workspace.clips",
-                    summary="Raised the most dynamic clips to the front of the draft.",
+                    action="select_edit_target",
+                    target="workspace.edit_draft.selected_scene_id",
+                    summary="Moved the active focus to the primary scene of the new draft.",
                 ),
             ],
         )
-        record["storyboard"] = [scene.model_dump() for scene in storyboard]
+        record["edit_draft"] = next_draft.model_dump()
         record["chat_turns"].append(assistant_turn.model_dump())
         record["project"]["workflow_state"] = "ready"
-        record["project"]["updated_at"] = _now_iso()
+        record["project"]["updated_at"] = next_draft.updated_at
         record["active_task"] = None
 
         await self.emit(project_id, "chat.turn.created", {"turn": assistant_turn.model_dump()})
-        await self.emit(project_id, "storyboard.updated", {"storyboard": record["storyboard"]})
+        await self.emit(project_id, "edit_draft.updated", {"edit_draft": next_draft.model_dump()})
         await self.emit(project_id, "project.updated", {"project": record["project"]})
 
         succeeded = running.model_copy(update={"status": "succeeded", "message": "Chat completed", "updated_at": _now_iso()})
@@ -610,11 +723,12 @@ class InMemoryProjectStore:
 
     async def queue_export(self, project_id: str, payload: ExportRequest) -> TaskModel:
         record = self.get_project_or_raise(project_id)
-        if not record["storyboard"]:
+        draft = EditDraftModel.model_validate(record["edit_draft"])
+        if not draft.shots:
             raise CoreApiError(
                 status_code=409,
-                code="STORYBOARD_REQUIRED",
-                message="Storyboard is required before export can run.",
+                code="EDIT_DRAFT_REQUIRED",
+                message="Edit draft with at least one shot is required before export can run.",
                 details={"project_id": project_id},
             )
         active_task = record["active_task"]
@@ -639,6 +753,7 @@ class InMemoryProjectStore:
         record["active_task"] = task.model_dump()
         record["project"]["workflow_state"] = "rendering"
         record["project"]["updated_at"] = now
+        record["edit_draft"] = _bump_draft(draft, status="rendering", updated_at=now).model_dump()
         await self.emit(
             project_id,
             "task.updated",
@@ -669,11 +784,15 @@ class InMemoryProjectStore:
             "quality": payload.quality,
             "resolution": "1920x1080",
         }
+        draft = EditDraftModel.model_validate(record["edit_draft"])
+        ready_draft = _bump_draft(draft, status="ready")
         record["export_result"] = result
+        record["edit_draft"] = ready_draft.model_dump()
         record["active_task"] = None
         record["project"]["workflow_state"] = "ready"
-        record["project"]["updated_at"] = _now_iso()
+        record["project"]["updated_at"] = ready_draft.updated_at
 
+        await self.emit(project_id, "edit_draft.updated", {"edit_draft": ready_draft.model_dump()})
         await self.emit(project_id, "export.completed", {"result": result})
         await self.emit(project_id, "project.updated", {"project": record["project"]})
         succeeded = running.model_copy(update={"status": "succeeded", "progress": 100, "message": "Export completed", "updated_at": _now_iso()})
@@ -737,7 +856,7 @@ def health() -> dict[str, Any]:
         "timestamp": _now_iso(),
         "notes": [
             "Legacy business logic has been removed.",
-            "This service now runs an in-memory prototype contract for Launchpad and Workspace.",
+            "This service now runs an in-memory EditDraft contract for Launchpad and Workspace.",
         ],
     }
 
@@ -788,7 +907,7 @@ async def import_assets(project_id: str, payload: ImportAssetsRequest) -> TaskRe
 
 @app.post("/api/v1/projects/{project_id}/chat", response_model=TaskResponse)
 async def chat(project_id: str, payload: ChatRequest) -> TaskResponse:
-    task = await store.queue_chat(project_id, payload.prompt)
+    task = await store.queue_chat(project_id, payload.prompt, payload.target)
     return TaskResponse(task=task)
 
 
@@ -825,7 +944,7 @@ def root() -> dict[str, Any]:
         "service": "core",
         "phase": REWRITE_PHASE,
         "mode": CORE_MODE,
-        "message": "EntroCut core serves an in-memory contract for Launchpad, Workspace, chat, and project events.",
+        "message": "EntroCut core serves an in-memory EditDraft contract for Launchpad, Workspace, chat, and project events.",
         "env": {
             "core_db_path": os.getenv("CORE_DB_PATH", "not_configured"),
             "server_base_url": os.getenv("SERVER_BASE_URL", "http://127.0.0.1:8001"),

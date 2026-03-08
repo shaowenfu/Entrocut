@@ -8,14 +8,13 @@ import {
   sendChat as sendChatRequest,
   toMediaReference,
   toRequestError,
-  type CoreAsset,
   type CoreChatAssistantTurn,
   type CoreChatTurn,
-  type CoreClip,
+  type CoreEditDraft,
   type CoreEventEnvelope,
   type CoreExportResult,
   type CoreProject,
-  type CoreStoryboardScene,
+  type CoreShot,
   type CoreTask,
   type CoreWorkspaceSnapshot,
   type ProjectWorkflowState,
@@ -29,6 +28,7 @@ export interface WorkspaceAssetItem {
   name: string;
   duration: string;
   type: "video" | "audio";
+  sourcePath?: string | null;
 }
 
 export interface WorkspaceClipItem {
@@ -48,6 +48,8 @@ export interface StoryboardScene {
   intent: string;
   colorClass: string;
   bgClass: string;
+  shotIds: string[];
+  primaryClipId: string | null;
 }
 
 export interface UserTurn {
@@ -120,9 +122,8 @@ type WorkspaceEvent =
   | { type: "EVENT_STREAM_RECONNECTING" }
   | { type: "EVENT_STREAM_MAX_ATTEMPTS_REACHED" }
   | { type: "WORKSPACE_SNAPSHOT_RECEIVED"; workspace: CoreWorkspaceSnapshot; sequence: number }
+  | { type: "EDIT_DRAFT_UPDATED"; editDraft: CoreEditDraft; sequence: number }
   | { type: "PROJECT_UPDATED"; project: CoreProject; sequence: number }
-  | { type: "ASSETS_UPDATED"; assets: CoreAsset[]; clips: CoreClip[]; sequence: number }
-  | { type: "STORYBOARD_UPDATED"; storyboard: CoreStoryboardScene[]; sequence: number }
   | { type: "CHAT_TURN_CREATED"; turn: CoreChatTurn; sequence: number }
   | { type: "TASK_UPDATED"; task: CoreTask; workflowState: WorkflowState; sequence: number }
   | { type: "ERROR_OCCURRED"; error: WorkspaceError; workflowState?: WorkflowState; sequence: number }
@@ -139,6 +140,7 @@ type WorkspaceEvent =
 interface WorkspaceState {
   workspaceId: string | null;
   workspaceName: string | null;
+  editDraft: CoreEditDraft | null;
   assets: WorkspaceAssetItem[];
   clips: WorkspaceClipItem[];
   storyboard: StoryboardScene[];
@@ -206,36 +208,86 @@ function toWorkspaceError(message: string, error: unknown): WorkspaceError {
   };
 }
 
-function mapAssets(assets: CoreAsset[]): WorkspaceAssetItem[] {
-  return assets.map((asset) => ({
+function formatDurationLabel(durationMs: number): string {
+  return `${Math.max(1, Math.round(durationMs / 1000))}s`;
+}
+
+function formatTimeLabel(timeMs: number): string {
+  return `${Math.max(0, Math.round(timeMs / 1000))}s`;
+}
+
+function clipThumbClass(index: number): string {
+  return `thumb-gradient-${(index % 4) + 1}`;
+}
+
+function sceneColorClass(index: number): string {
+  return ["bg-sky-200", "bg-amber-200", "bg-emerald-200", "bg-rose-200"][index % 4]!;
+}
+
+function sceneBgClass(index: number): string {
+  return [
+    "from-sky-50 to-sky-100",
+    "from-amber-50 to-amber-100",
+    "from-emerald-50 to-emerald-100",
+    "from-rose-50 to-rose-100",
+  ][index % 4]!;
+}
+
+function mapAssets(editDraft: CoreEditDraft): WorkspaceAssetItem[] {
+  return editDraft.assets.map((asset) => ({
     id: asset.id,
     name: asset.name,
-    duration: asset.duration,
+    duration: formatDurationLabel(asset.duration_ms),
     type: asset.type,
+    sourcePath: asset.source_path ?? null,
   }));
 }
 
-function mapClips(clips: CoreClip[]): WorkspaceClipItem[] {
-  return clips.map((clip) => ({
+function mapClips(editDraft: CoreEditDraft): WorkspaceClipItem[] {
+  const assetsById = new Map(editDraft.assets.map((asset) => [asset.id, asset]));
+  return editDraft.clips.map((clip, index) => ({
     id: clip.id,
-    parent: clip.parent,
-    start: clip.start,
-    end: clip.end,
-    score: clip.score,
-    desc: clip.desc,
-    thumbClass: clip.thumbClass,
+    parent: assetsById.get(clip.asset_id)?.name ?? "Unknown Asset",
+    start: formatTimeLabel(clip.source_start_ms),
+    end: formatTimeLabel(clip.source_end_ms),
+    score:
+      typeof clip.confidence === "number"
+        ? `${Math.round(Math.max(0, Math.min(1, clip.confidence)) * 100)}`
+        : "n/a",
+    desc: clip.visual_desc,
+    thumbClass: clip.thumbnail_ref ?? clipThumbClass(index),
   }));
 }
 
-function mapStoryboard(storyboard: CoreStoryboardScene[]): StoryboardScene[] {
-  return storyboard.map((scene) => ({
-    id: scene.id,
-    title: scene.title,
-    duration: scene.duration,
-    intent: scene.intent,
-    colorClass: scene.colorClass,
-    bgClass: scene.bgClass,
-  }));
+function mapStoryboard(editDraft: CoreEditDraft): StoryboardScene[] {
+  if (!editDraft.scenes || editDraft.scenes.length === 0) {
+    return [];
+  }
+
+  const shotsById = new Map(editDraft.shots.map((shot) => [shot.id, shot]));
+  return editDraft.scenes
+    .filter((scene) => scene.enabled)
+    .sort((left, right) => left.order - right.order)
+    .map((scene, index) => {
+      const sceneShots = scene.shot_ids
+        .map((shotId) => shotsById.get(shotId))
+        .filter((shot): shot is CoreShot => Boolean(shot))
+        .sort((left, right) => left.order - right.order);
+      const durationMs = sceneShots.reduce(
+        (total, shot) => total + Math.max(0, shot.source_out_ms - shot.source_in_ms),
+        0
+      );
+      return {
+        id: scene.id,
+        title: scene.label?.trim() || `Scene ${index + 1}`,
+        duration: formatDurationLabel(durationMs),
+        intent: scene.intent?.trim() || sceneShots[0]?.intent?.trim() || "No scene intent yet",
+        colorClass: sceneColorClass(index),
+        bgClass: sceneBgClass(index),
+        shotIds: scene.shot_ids,
+        primaryClipId: sceneShots[0]?.clip_id ?? null,
+      };
+    });
 }
 
 function mapTurns(turns: CoreChatTurn[]): ChatTurn[] {
@@ -267,25 +319,31 @@ function buildCurrentProject(input: {
   assets: WorkspaceAssetItem[];
   clips: WorkspaceClipItem[];
   storyboard: StoryboardScene[];
+  editDraft: CoreEditDraft;
 }): Record<string, unknown> {
   return {
     project_id: input.project.id,
     title: input.project.title,
     workflow_state: input.project.workflow_state,
+    edit_draft_id: input.editDraft.id,
+    edit_draft_version: input.editDraft.version,
     storyboard_count: input.storyboard.length,
     asset_count: input.assets.length,
     clip_count: input.clips.length,
+    shot_count: input.editDraft.shots.length,
     mode: "core",
   };
 }
 
 function mapWorkspace(workspace: CoreWorkspaceSnapshot, workspaceName?: string): Partial<WorkspaceState> {
-  const assets = mapAssets(workspace.assets);
-  const clips = mapClips(workspace.clips);
-  const storyboard = mapStoryboard(workspace.storyboard);
+  const editDraft = workspace.edit_draft;
+  const assets = mapAssets(editDraft);
+  const clips = mapClips(editDraft);
+  const storyboard = mapStoryboard(editDraft);
   return {
     workspaceId: workspace.project.id,
     workspaceName: workspaceName ?? workspace.project.title,
+    editDraft,
     assets,
     clips,
     storyboard,
@@ -295,6 +353,7 @@ function mapWorkspace(workspace: CoreWorkspaceSnapshot, workspaceName?: string):
       assets,
       clips,
       storyboard,
+      editDraft,
     }),
     workflowState: workspace.project.workflow_state,
     activeTask: mapTask(workspace.active_task),
@@ -341,6 +400,7 @@ function withDerivedFields(
     | "reconnectState"
     | "workspaceId"
     | "workspaceName"
+    | "editDraft"
     | "assets"
     | "clips"
     | "storyboard"
@@ -375,6 +435,7 @@ function reduceWorkspaceState(
     WorkspaceState,
     | "workspaceId"
     | "workspaceName"
+    | "editDraft"
     | "assets"
     | "clips"
     | "storyboard"
@@ -414,6 +475,7 @@ function reduceWorkspaceState(
       };
     case "WORKSPACE_LOAD_FAILED":
       return {
+        editDraft: null,
         assets: [],
         clips: [],
         storyboard: [],
@@ -429,6 +491,7 @@ function reduceWorkspaceState(
       return {
         workspaceId: event.projectId,
         workspaceName: event.workspaceName,
+        editDraft: null,
         pendingPrompt: event.prompt?.trim() ?? null,
         exportResult: null,
         lastEventSequence: 0,
@@ -472,62 +535,58 @@ function reduceWorkspaceState(
             : "idle",
         lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
       };
+    case "EDIT_DRAFT_UPDATED": {
+      const assets = mapAssets(event.editDraft);
+      const clips = mapClips(event.editDraft);
+      const storyboard = mapStoryboard(event.editDraft);
+      const currentProject = buildCurrentProject({
+        project: {
+          id: String(state.workspaceId ?? ""),
+          title: String(state.workspaceName ?? ""),
+          workflow_state: (state.workflowState ?? "media_ready") as ProjectWorkflowState,
+          created_at: "",
+          updated_at: "",
+        },
+        assets,
+        clips,
+        storyboard,
+        editDraft: event.editDraft,
+      });
+      return {
+        editDraft: event.editDraft,
+        assets,
+        clips,
+        storyboard,
+        currentProject,
+        lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
+      };
+    }
     case "PROJECT_UPDATED": {
       const currentProject = buildCurrentProject({
         project: event.project,
         assets: state.assets,
         clips: state.clips,
         storyboard: state.storyboard,
+        editDraft:
+          state.editDraft ??
+          ({
+            id: "",
+            project_id: event.project.id,
+            version: 0,
+            status: "draft",
+            assets: [],
+            clips: [],
+            shots: [],
+            scenes: null,
+            selected_scene_id: null,
+            selected_shot_id: null,
+            created_at: "",
+            updated_at: "",
+          } as CoreEditDraft),
       });
       return {
         currentProject,
         workflowState: event.project.workflow_state,
-        lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
-      };
-    }
-    case "ASSETS_UPDATED": {
-      const assets = mapAssets(event.assets);
-      const clips = mapClips(event.clips);
-      const currentProject = state.currentProject
-        ? buildCurrentProject({
-            project: {
-              id: String(state.currentProject.project_id ?? state.workspaceId ?? ""),
-              title: String(state.currentProject.title ?? state.workspaceName ?? ""),
-              workflow_state: (state.workflowState ?? "media_ready") as ProjectWorkflowState,
-              created_at: "",
-              updated_at: "",
-            },
-            assets,
-            clips,
-            storyboard: state.storyboard,
-          })
-        : state.currentProject;
-      return {
-        assets,
-        clips,
-        currentProject,
-        lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
-      };
-    }
-    case "STORYBOARD_UPDATED": {
-      const storyboard = mapStoryboard(event.storyboard);
-      const currentProject = state.currentProject
-        ? buildCurrentProject({
-            project: {
-              id: String(state.currentProject.project_id ?? state.workspaceId ?? ""),
-              title: String(state.currentProject.title ?? state.workspaceName ?? ""),
-              workflow_state: (state.workflowState ?? "ready") as ProjectWorkflowState,
-              created_at: "",
-              updated_at: "",
-            },
-            assets: state.assets,
-            clips: state.clips,
-            storyboard,
-          })
-        : state.currentProject;
-      return {
-        storyboard,
-        currentProject,
         lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
       };
     }
@@ -656,6 +715,7 @@ const initialState: Omit<
 > = {
   workspaceId: null,
   workspaceName: null,
+  editDraft: null,
   assets: [],
   clips: [],
   storyboard: [],
@@ -744,23 +804,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           sequence: payload.sequence,
         });
         break;
-      case "storyboard.updated":
+      case "edit_draft.updated":
         dispatch({
-          type: "STORYBOARD_UPDATED",
-          storyboard: (payload.data as { storyboard: CoreStoryboardScene[] }).storyboard,
+          type: "EDIT_DRAFT_UPDATED",
+          editDraft: (payload.data as { edit_draft: CoreEditDraft }).edit_draft,
           sequence: payload.sequence,
         });
         break;
-      case "assets.updated": {
-        const data = payload.data as { assets: CoreAsset[]; clips: CoreClip[] };
-        dispatch({
-          type: "ASSETS_UPDATED",
-          assets: data.assets,
-          clips: data.clips,
-          sequence: payload.sequence,
-        });
-        break;
-      }
       case "project.updated":
         dispatch({
           type: "PROJECT_UPDATED",
