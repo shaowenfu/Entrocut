@@ -6,7 +6,11 @@
 
 1. [Core API / WS Contract](./core_api_ws_contract.md)
    - 当前前端与本地 `Core` 之间的最小契约
+   - 已按 `EditDraft schema` 修正剪辑结构相关表述
    - 包含资源模型、`HTTP API`、`WebSocket event stream` 和错误语义
+2. [EditDraft Schema](./edit_draft_schema.md)
+   - 当前推荐的剪辑草案结构定义
+   - 说明 `Asset / Clip / Shot / Scene / EditDraft` 的分层原则与边界
 
 ## 开发日记
 

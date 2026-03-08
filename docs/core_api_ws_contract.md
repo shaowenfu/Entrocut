@@ -14,6 +14,15 @@
 2. `Workspace（工作台）` 状态机
 3. 最小 `Chat-to-Cut` 本地闭环
 
+本文档中涉及剪辑结构的部分，以 [EditDraft Schema](./edit_draft_schema.md) 为准。
+
+因此：
+
+1. `clip` 是分析/检索单元
+2. `shot` 是最小可编辑语义单元
+3. `scene` 是可选工作分组层
+4. 当前原型 UI 中的 `storyboard` 应视为 `EditDraft.scenes` 的展示视图，而不是最终执行层
+
 ## 1. 设计目标
 
 当前 `Core contract` 只覆盖以下能力：
@@ -49,7 +58,7 @@
 1. 接受命令
    例如创建项目、导入素材、发送 chat、发起导出
 2. 推送状态变化
-   例如任务开始、任务进度、分镜更新、导出完成、失败
+   例如任务开始、任务进度、剪辑草案更新、导出完成、失败
 
 所以：
 
@@ -87,7 +96,7 @@ interface Asset {
   id: string;
   name: string;
   type: "video" | "audio";
-  duration: string;
+  duration_ms: number;
 }
 ```
 
@@ -96,29 +105,68 @@ interface Asset {
 ```ts
 interface Clip {
   id: string;
-  parent: string;
-  start: string;
-  end: string;
-  score: string;
-  desc: string;
-  thumb_class?: string | null;
+  asset_id: string;
+  source_start_ms: number;
+  source_end_ms: number;
+  visual_desc: string;
+  semantic_tags: string[];
+  confidence?: number | null;
+  thumbnail_ref?: string | null;
 }
 ```
 
-### 4.4 StoryboardScene
+### 4.4 Shot
 
 ```ts
-interface StoryboardScene {
+interface Shot {
   id: string;
-  title: string;
-  duration: string;
-  intent: string;
-  color_class?: string | null;
-  bg_class?: string | null;
+  clip_id: string;
+  source_in_ms: number;
+  source_out_ms: number;
+  order: number;
+  enabled: boolean;
+  label?: string | null;
+  intent?: string | null;
+  note?: string | null;
+  locked_fields?: Array<"source_range" | "order" | "clip_id" | "enabled">;
 }
 ```
 
-### 4.5 ChatTurn
+### 4.5 Scene
+
+```ts
+interface Scene {
+  id: string;
+  shot_ids: string[];
+  order: number;
+  enabled: boolean;
+  label?: string | null;
+  intent?: string | null;
+  note?: string | null;
+  locked_fields?: Array<"shot_ids" | "order" | "enabled" | "intent">;
+}
+```
+
+### 4.6 EditDraft
+
+```ts
+interface EditDraft {
+  id: string;
+  project_id: string;
+  version: number;
+  status: "draft" | "ready" | "rendering" | "failed";
+  assets: Asset[];
+  clips: Clip[];
+  shots: Shot[];
+  scenes?: Scene[] | null;
+  selected_scene_id?: string | null;
+  selected_shot_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+```
+
+### 4.7 ChatTurn
 
 ```ts
 type ChatTurn =
@@ -132,14 +180,14 @@ type ChatTurn =
       id: string;
       role: "assistant";
       type: "decision";
-      decision_type: "UPDATE_PROJECT_CONTRACT" | "APPLY_PATCH_ONLY" | "ASK_USER_CLARIFICATION";
+      decision_type: "EDIT_DRAFT_PATCH" | "APPLY_PATCH_ONLY" | "ASK_USER_CLARIFICATION";
       reasoning_summary: string;
       ops: AgentOperation[];
       created_at: string;
     };
 ```
 
-### 4.6 Task
+### 4.8 Task
 
 ```ts
 interface Task {
@@ -153,20 +201,21 @@ interface Task {
 }
 ```
 
-### 4.7 WorkspaceSnapshot
+### 4.9 WorkspaceSnapshot
 
 ```ts
 interface WorkspaceSnapshot {
   project: Project;
-  assets: Asset[];
-  clips: Clip[];
-  storyboard: StoryboardScene[];
+  edit_draft: EditDraft;
   chat_turns: ChatTurn[];
   active_task: Task | null;
 }
 ```
 
-这是当前前端真正需要的一次性完整读取对象。
+说明：
+
+1. `WorkspaceSnapshot` 里的真实剪辑结构以 `edit_draft` 为准
+2. 若原型阶段 UI 仍展示 `storyboard`，应把它视为 `edit_draft.scenes` 的派生视图
 
 ## 5. 通用 Envelope
 
@@ -327,9 +376,20 @@ interface CreateProjectRequest {
       "created_at": "2026-03-07T09:00:00Z",
       "updated_at": "2026-03-07T09:00:00Z"
     },
-    "assets": [],
-    "clips": [],
-    "storyboard": [],
+    "edit_draft": {
+      "id": "draft_001",
+      "project_id": "proj_001",
+      "version": 1,
+      "status": "draft",
+      "assets": [],
+      "clips": [],
+      "shots": [],
+      "scenes": null,
+      "selected_scene_id": null,
+      "selected_shot_id": null,
+      "created_at": "2026-03-07T09:00:00Z",
+      "updated_at": "2026-03-07T09:00:00Z"
+    },
     "chat_turns": [],
     "active_task": null
   }
@@ -362,9 +422,20 @@ interface CreateProjectRequest {
       "created_at": "2026-03-07T09:00:00Z",
       "updated_at": "2026-03-07T09:10:00Z"
     },
-    "assets": [],
-    "clips": [],
-    "storyboard": [],
+    "edit_draft": {
+      "id": "draft_001",
+      "project_id": "proj_001",
+      "version": 3,
+      "status": "ready",
+      "assets": [],
+      "clips": [],
+      "shots": [],
+      "scenes": null,
+      "selected_scene_id": null,
+      "selected_shot_id": null,
+      "created_at": "2026-03-07T09:00:00Z",
+      "updated_at": "2026-03-07T09:10:00Z"
+    },
     "chat_turns": [],
     "active_task": null
   }
@@ -425,6 +496,10 @@ interface ImportAssetsRequest {
 ```ts
 interface ChatRequest {
   prompt: string;
+  target?: {
+    scene_id?: string | null;
+    shot_id?: string | null;
+  };
 }
 ```
 
@@ -447,7 +522,7 @@ interface ChatRequest {
 说明：
 
 1. 前端发出命令后立刻切 `chatState -> responding`
-2. 最终结果由 `WS` 推送：`chat turn + storyboard patch + task status`
+2. 最终结果由 `WS` 推送：`chat turn + edit draft patch + task status`
 
 ### `POST /api/v1/projects/{project_id}/export`
 
@@ -541,9 +616,20 @@ interface EventEnvelope<T = unknown> {
         "created_at": "2026-03-07T09:00:00Z",
         "updated_at": "2026-03-07T09:05:00Z"
       },
-      "assets": [],
-      "clips": [],
-      "storyboard": [],
+      "edit_draft": {
+        "id": "draft_001",
+        "project_id": "proj_001",
+        "version": 3,
+        "status": "ready",
+        "assets": [],
+        "clips": [],
+        "shots": [],
+        "scenes": null,
+        "selected_scene_id": null,
+        "selected_shot_id": null,
+        "created_at": "2026-03-07T09:00:00Z",
+        "updated_at": "2026-03-07T09:05:00Z"
+      },
       "chat_turns": [],
       "active_task": null
     }
@@ -600,15 +686,15 @@ interface ChatTurnCreatedEventData {
 }
 ```
 
-### `storyboard.updated`
+### `edit_draft.updated`
 
 用途：
 
-1. 推送最新分镜结果
+1. 推送最新剪辑草案结果
 
 ```ts
-interface StoryboardUpdatedEventData {
-  storyboard: StoryboardScene[];
+interface EditDraftUpdatedEventData {
+  edit_draft: EditDraft;
 }
 ```
 
@@ -616,7 +702,9 @@ interface StoryboardUpdatedEventData {
 
 用途：
 
-1. 推送素材和片段变化
+1. 推送素材和候选 `clip` 变化
+2. 作为增量更新优化事件使用
+3. 权威事实源仍然是最新 `edit_draft`
 
 ```ts
 interface AssetsUpdatedEventData {
@@ -694,7 +782,7 @@ interface ErrorOccurredEventData {
 ### WS 负责
 
 1. 推任务状态
-2. 推分镜更新
+2. 推剪辑草案更新
 3. 推素材更新
 4. 推 chat 消息
 5. 推导出完成
@@ -773,10 +861,10 @@ interface ErrorOccurredEventData {
    <- `task.updated` 中 `type=chat`
 4. `activeTask`
    <- `task.updated`
-5. `assets / clips`
-   <- `assets.updated`
-6. `storyboard`
-   <- `storyboard.updated`
+5. `editDraft`
+   <- `GET /api/v1/projects/{project_id}` / `workspace.snapshot` / `edit_draft.updated`
+6. `assets / clips / shots / scenes`
+   <- `editDraft`
 7. `chatTurns`
    <- `chat.turn.created`
 8. `exportResult`
@@ -803,4 +891,4 @@ interface ErrorOccurredEventData {
 
 `Core API/WS contract` 的本质是：
 
-把当前已经稳定下来的前端状态机，翻译成 `Core` 必须提供的最小命令入口、快照读取和事件流语义。
+把当前已经稳定下来的前端状态机，翻译成 `Core` 必须提供的最小命令入口、快照读取和事件流语义，并把剪辑过程稳定到 `EditDraft` 这一层，而不是退回传统 `timeline` 或停留在展示型 `storyboard`。

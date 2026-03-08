@@ -21,7 +21,8 @@
 
 1. `Ingest`：本地素材导入、切分、关键帧拼图与向量索引。
 2. `Agent`：通过单一 `POST /api/v1/chat` 处理所有自然语言交互。
-3. `Render`：基于 `EntroVideoProject Contract（契约）` 生成可预览结果。
+3. `EditDraft`：在 `Asset / Clip / Shot / Scene` 分层上形成结构化剪辑草案。
+4. `Render`：以 `EditDraft.shots` 为最终执行输入生成可预览结果。
 
 ## API 入口（当前规范）
 
@@ -44,9 +45,8 @@
 
 详细契约见 `docs/`：
 
-1. `docs/04_CONTRACTS.md`
-2. `docs/05_API_CORE_LOCAL.md`
-3. `docs/06_API_SERVER_CLOUD.md`
+1. `docs/core_api_ws_contract.md`
+2. `docs/edit_draft_schema.md`
 
 ## 快速启动
 
@@ -105,5 +105,9 @@ uvicorn main:app --host 127.0.0.1 --port 8001 --reload
 ## 当前实现状态
 
 1. 启动台主路径已接入真实项目接口；其余核心能力仍以 `Shell（壳层）` 为主。
-2. 设计层已归档到 `docs/`，按 `Feature-driven Development（按功能切片开发）` 推进。
+2. 当前剪辑结构设计以 `docs/edit_draft_schema.md` 为准：
+   - `clip` 是分析/检索单元
+   - `shot` 是最小可编辑语义单元
+   - `scene` 是可选工作分组层
+   - `render` 以 `shots` 为准，而不是以展示型 `storyboard` 为准
 3. 历史验证阶段代码和过时文档已清理。
