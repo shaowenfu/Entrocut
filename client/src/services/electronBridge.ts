@@ -8,6 +8,11 @@ export interface MediaPickResult {
   files?: File[];
 }
 
+export interface AuthDeepLinkPayload {
+  loginSessionId: string;
+  status: "authenticated";
+}
+
 export type MediaPickMode = "electron-folder" | "browser-files" | "auto";
 
 function hasValidFiles(files?: File[]): files is File[] {
@@ -116,4 +121,26 @@ export async function pickMediaByMode(mode: MediaPickMode): Promise<MediaPickRes
   }
   // auto: 保持原有 fallback 逻辑
   return pickMediaFromSystem();
+}
+
+export async function openExternalUrl(url: string): Promise<void> {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const bridge = window.electron;
+  if (bridge?.openExternalUrl) {
+    await bridge.openExternalUrl(url);
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+export function subscribeAuthDeepLink(
+  callback: (payload: AuthDeepLinkPayload) => void
+): (() => void) | null {
+  const bridge = typeof window !== "undefined" ? window.electron : undefined;
+  if (!bridge?.onAuthDeepLink) {
+    return null;
+  }
+  return bridge.onAuthDeepLink(callback);
 }

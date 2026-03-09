@@ -1,5 +1,10 @@
 export {};
 
+interface AuthDeepLinkPayload {
+  loginSessionId: string;
+  status: "authenticated";
+}
+
 declare global {
   type OpenDirectoryResult = string | null;
 
@@ -7,6 +12,8 @@ declare global {
     electron?: {
       version?: string;
       showOpenDirectory?: () => Promise<OpenDirectoryResult>;
+      openExternalUrl?: (url: string) => Promise<void>;
+      onAuthDeepLink?: (callback: (payload: AuthDeepLinkPayload) => void) => () => void;
     };
   }
 }

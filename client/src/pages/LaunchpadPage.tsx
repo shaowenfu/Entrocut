@@ -7,12 +7,14 @@ import {
   FileVideo,
   FolderUp,
   HardDrive,
+  LogOut,
   MoreVertical,
   Plus,
   Search,
   Sparkles,
 } from "lucide-react";
 import { useLaunchpadStore } from "../store/useLaunchpadStore";
+import { useAuthStore } from "../store/useAuthStore";
 import {
   isElectronEnvironment,
 } from "../services/electronBridge";
@@ -40,6 +42,12 @@ function LaunchpadPage() {
   const createEmptyProject = useLaunchpadStore((state) => state.createEmptyProject);
   const openWorkspace = useLaunchpadStore((state) => state.openWorkspace);
   const clearLastError = useLaunchpadStore((state) => state.clearLastError);
+  const authStatus = useAuthStore((state) => state.status);
+  const authUser = useAuthStore((state) => state.user);
+  const authError = useAuthStore((state) => state.lastError);
+  const startGoogleLogin = useAuthStore((state) => state.startGoogleLogin);
+  const logout = useAuthStore((state) => state.logout);
+  const clearAuthError = useAuthStore((state) => state.clearError);
 
   const isLoadingProjects = projectsLoadState === "loading";
   const isCreating = createState === "creating";
@@ -151,7 +159,34 @@ function LaunchpadPage() {
           <kbd>Ctrl+K</kbd>
         </label>
 
-        <div className="launchpad-user">ME</div>
+        <button
+          type="button"
+          className="launchpad-user"
+          onClick={() => {
+            if (authStatus === "authenticated") {
+              void logout();
+              return;
+            }
+            void startGoogleLogin();
+          }}
+          title={
+            authStatus === "authenticated"
+              ? `Sign out ${authUser?.email ?? authUser?.display_name ?? "current user"}`
+              : "Continue with Google"
+          }
+          disabled={authStatus === "authenticating"}
+        >
+          {authStatus === "authenticated" ? (
+            <>
+              {authUser?.display_name ?? authUser?.email ?? "ME"}
+              <LogOut size={14} />
+            </>
+          ) : authStatus === "authenticating" ? (
+            "Connecting..."
+          ) : (
+            "Sign In"
+          )}
+        </button>
       </header>
 
       <main className="launchpad-main">
@@ -226,6 +261,11 @@ function LaunchpadPage() {
             <p className="launchpad-error-banner" role="alert" onClick={clearLastError}>
               {lastError.code}: {lastError.message}
               {lastError.requestId ? ` (request_id=${lastError.requestId})` : ""}
+            </p>
+          ) : null}
+          {authError ? (
+            <p className="launchpad-error-banner" role="alert" onClick={clearAuthError}>
+              auth_error: {authError}
             </p>
           ) : null}
         </section>
