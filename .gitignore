@@ -12,6 +12,7 @@ Thumbs.db
 
 # Environment
 .env
+server/.env
 .env.local
 .env.*.local
 
@@ -45,6 +46,8 @@ pnpm-debug.log*
 # Runtime temp
 tmp/
 tmp_*/
+temp/
+docs/secrets/
 *.tmp
 *.temp
 core/*.db

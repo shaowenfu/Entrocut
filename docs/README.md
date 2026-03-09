@@ -8,15 +8,32 @@
    - 当前前端与本地 `Core` 之间的最小契约
    - 已按 `EditDraft schema` 修正剪辑结构相关表述
    - 包含资源模型、`HTTP API`、`WebSocket event stream` 和错误语义
-2. [EditDraft Schema](./edit_draft_schema.md)
+2. [Server Auth System Design](./server_auth_system_design.md)
+   - 当前 `server` 的登录、注册、用户管理、`OAuth`、`JWT`、桌面回调完整方案
+   - 基于 `MongoDB Atlas + Redis + FastAPI`
+   - 说明用户模型、会话模型、接口面、运行配置与分阶段实施计划
+3. [Server OpenAI-Compatible Contract](./server_openai_compatible_contract.md)
+   - 当前 `Core -> Server` 的最小云端通信契约
+   - 以 `OpenAI-compatible` 为第一原则
+   - 包含 `chat completions`、`SSE`、`usage`、`entro_metadata` 和错误语义
+4. [EditDraft Schema](./edit_draft_schema.md)
    - 当前推荐的剪辑草案结构定义
    - 说明 `Asset / Clip / Shot / Scene / EditDraft` 的分层原则与边界
+4. [Editing Agent 详细设计](./editing_agent_design_detailed.md)
+   - 汇总近期关于 `editing agent` 的高密度讨论
+   - 详细说明设计原则、关键难点、检索路线与工程取舍
+5. [Editing Agent 开发指南](./editing_agent_dev_guide.md)
+   - 面向接下来实现阶段的精简指导文档
+   - 聚焦分层、边界、优先级与近期落地路径
 
 ## 开发日记
 
 1. [2026-03-07 重建日记](./develop_diary/2026-03-07_rebuild_journal.md)
    - 记录从“清场式重构”到“最小闭环跑通”的完整推进过程
    - 包含目标、动机、做法、联调结果和反思
+2. [2026-03-09 Server 鉴权与桌面登录回流日记](./develop_diary/2026-03-09_server_auth_and_desktop_login_journal.md)
+   - 记录 `server auth phase 1`、`Google OAuth`、`JWT`、`Electron deep link` 和 `web dev fallback` 的完整落地过程
+   - 包含架构取舍、联调问题与最终修正点
 
 ## 历史归档
 
