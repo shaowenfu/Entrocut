@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     auth_google_client_id: str | None = None
     auth_google_client_secret: str | None = None
     auth_google_scope: str = "openid email profile"
+    llm_proxy_mode: str = "mock"
+    llm_default_model: str = "entro-reasoning-v1"
+    llm_upstream_base_url: str | None = None
+    llm_upstream_api_key: str | None = None
+    llm_upstream_chat_path: str = "/v1/chat/completions"
+    llm_upstream_default_model: str | None = None
 
     @property
     def allow_origins(self) -> list[str]:

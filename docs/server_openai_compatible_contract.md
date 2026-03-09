@@ -4,6 +4,25 @@
 
 用户登录、注册、用户管理、`JWT` 签发与 `OAuth` 流程，统一以 [Server Auth System Design](./server_auth_system_design.md) 为准。
 
+当前已经落地的实现细节，尤其是：
+
+1. `client -> core` 的 token sync
+2. `server` 内部统一使用 `_id`、对外映射 `id`
+3. `login_session` 一次性消费语义
+4. `client / core / server` 的职责边界
+
+统一以 [Auth Implementation Spec](./auth_implementation_spec.md) 为准。
+
+换句话说：
+
+1. 本文档定义 `Core -> Server` 的云端通信契约
+2. `Auth Implementation Spec` 定义这条契约在当前代码里的具体身份链路和工程约束
+
+阅读建议：
+
+1. 想知道“请求和响应长什么样”，先看本文档
+2. 想知道“token 从哪来、怎么同步、内部字段怎么命名”，看 `Auth Implementation Spec`
+
 核心原则只有一条：
 
 `Server API` 全面对齐 `OpenAI Chat Completions API`，不发明新的主数据格式。

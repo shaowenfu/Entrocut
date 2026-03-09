@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import json
+import time
 from datetime import timezone
 from typing import Any
 from uuid import uuid4
 from urllib.parse import urlencode
 
+import httpx
 from fastapi import Depends, FastAPI, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 
 from .auth_service import OAuthService, TokenService, UserService
 from .auth_store import AuthStore, now_utc
@@ -108,6 +111,192 @@ def get_current_user(authorization: str | None = Header(default=None)) -> dict[s
     return {"user": user, "token_payload": payload}
 
 
+def _extract_message_text(messages: list[dict[str, Any]]) -> str:
+    for message in reversed(messages):
+        if message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, str) and content.strip():
+            return content.strip()
+        if isinstance(content, list):
+            parts = [
+                part.get("text", "").strip()
+                for part in content
+                if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str)
+            ]
+            if parts:
+                return " ".join(part for part in parts if part)
+    return ""
+
+
+def _resolve_upstream_model(model: str) -> str:
+    if settings.llm_upstream_default_model:
+        return settings.llm_upstream_default_model.strip()
+    return model.strip() or settings.llm_default_model
+
+
+def _stored_user_id(user: dict[str, Any]) -> str:
+    user_id = user.get("_id")
+    if not isinstance(user_id, str) or not user_id.strip():
+        raise ServerApiError(
+            status_code=500,
+            code="SERVER_INTERNAL_ERROR",
+            message="Authenticated user document is missing _id.",
+            error_type="server_error",
+        )
+    return user_id
+
+
+def _mock_chat_content(prompt: str, user: dict[str, Any]) -> str:
+    prompt_excerpt = prompt[:120] if prompt else "Refine the current cut."
+    return (
+        f"Editing focus: {prompt_excerpt} "
+        f"Use the strongest motion clip as the opener, tighten redundant beats, and end on the clearest payoff. "
+        f"Quota status is {user.get('quota_status', 'healthy')}."
+    )
+
+
+def _build_usage(messages: list[dict[str, Any]], content: str) -> dict[str, int]:
+    prompt_tokens = max(32, sum(len(json.dumps(message, ensure_ascii=True)) for message in messages) // 4)
+    completion_tokens = max(16, len(content) // 4)
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
+
+
+async def _call_upstream_chat(payload: dict[str, Any]) -> dict[str, Any]:
+    if not settings.llm_upstream_base_url or not settings.llm_upstream_api_key:
+        raise ServerApiError(
+            status_code=503,
+            code="MODEL_PROVIDER_UNAVAILABLE",
+            message="No upstream provider is configured for server chat proxy.",
+            error_type="server_error",
+        )
+    upstream_payload = dict(payload)
+    upstream_payload["model"] = _resolve_upstream_model(str(payload.get("model") or settings.llm_default_model))
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            f"{settings.llm_upstream_base_url.rstrip('/')}{settings.llm_upstream_chat_path}",
+            json=upstream_payload,
+            headers={
+                "Authorization": f"Bearer {settings.llm_upstream_api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+    if response.status_code >= 400:
+        raise ServerApiError(
+            status_code=502,
+            code="MODEL_PROVIDER_UNAVAILABLE",
+            message="Upstream model provider returned an error.",
+            error_type="server_error",
+            details={"upstream_status": response.status_code, "upstream_body": response.text[:500]},
+        )
+    body = response.json()
+    if not isinstance(body, dict):
+        raise ServerApiError(
+            status_code=502,
+            code="MODEL_PROVIDER_UNAVAILABLE",
+            message="Upstream model provider returned an invalid response body.",
+            error_type="server_error",
+        )
+    return body
+
+
+async def _build_chat_completion_payload(
+    payload: dict[str, Any],
+    current: dict[str, Any],
+) -> dict[str, Any]:
+    messages = payload.get("messages")
+    if not isinstance(messages, list) or not messages:
+        raise ServerApiError(
+            status_code=422,
+            code="INVALID_CHAT_MESSAGES",
+            message="messages must be a non-empty array.",
+            error_type="invalid_request_error",
+        )
+
+    if settings.llm_proxy_mode == "upstream":
+        body = await _call_upstream_chat(payload)
+        usage = body.get("usage")
+        body["model"] = str(payload.get("model") or settings.llm_default_model)
+        body["entro_metadata"] = {
+            "remaining_quota": current["user"].get("remaining_quota"),
+            "quota_status": current["user"].get("quota_status", "healthy"),
+            "user_id": _stored_user_id(current["user"]),
+        }
+        if not usage:
+            body["usage"] = _build_usage(messages, json.dumps(body.get("choices", []), ensure_ascii=True))
+        return body
+
+    prompt = _extract_message_text(messages)
+    content = _mock_chat_content(prompt, current["user"])
+    usage = _build_usage(messages, content)
+    return {
+        "id": f"chatcmpl_{uuid4().hex[:24]}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": str(payload.get("model") or settings.llm_default_model),
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": content,
+                },
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": usage,
+        "entro_metadata": {
+            "remaining_quota": current["user"].get("remaining_quota"),
+            "quota_status": current["user"].get("quota_status", "healthy"),
+            "user_id": _stored_user_id(current["user"]),
+        },
+    }
+
+
+def _chunk_text(content: str, chunk_size: int = 24) -> list[str]:
+    normalized = content.strip()
+    if not normalized:
+        return []
+    return [normalized[index : index + chunk_size] for index in range(0, len(normalized), chunk_size)]
+
+
+async def _mock_streaming_chat_response(body: dict[str, Any]) -> StreamingResponse:
+    choice = body["choices"][0]
+    content = choice["message"]["content"]
+    chunks = _chunk_text(content)
+
+    async def event_stream():
+        for index, piece in enumerate(chunks):
+            delta: dict[str, Any] = {"content": piece}
+            if index == 0:
+                delta["role"] = "assistant"
+            chunk_body = {
+                "id": body["id"],
+                "object": "chat.completion.chunk",
+                "created": body["created"],
+                "model": body["model"],
+                "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
+            }
+            yield f"data: {json.dumps(chunk_body, ensure_ascii=True)}\n\n"
+        final_chunk = {
+            "id": body["id"],
+            "object": "chat.completion.chunk",
+            "created": body["created"],
+            "model": body["model"],
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            "usage": body["usage"],
+            "entro_metadata": body["entro_metadata"],
+        }
+        yield f"data: {json.dumps(final_chunk, ensure_ascii=True)}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     google_configured = bool(settings.auth_google_client_id and settings.auth_google_client_secret)
@@ -123,6 +312,9 @@ def health() -> dict[str, Any]:
             "Google OAuth is configured and ready for local testing."
             if google_configured
             else "Google OAuth is not configured yet. Set AUTH_GOOGLE_CLIENT_ID and AUTH_GOOGLE_CLIENT_SECRET.",
+            "Chat proxy runs in mock mode."
+            if settings.llm_proxy_mode == "mock"
+            else "Chat proxy forwards requests to the configured upstream provider.",
         ],
     }
 
@@ -143,6 +335,7 @@ def runtime_capabilities() -> RuntimeCapabilitiesResponse:
             "auth_refresh",
             "auth_logout",
             "me",
+            "chat_completions_proxy",
         ],
     )
 
@@ -384,13 +577,43 @@ def get_me(current: dict[str, Any] = Depends(get_current_user)) -> MeResponse:
     return MeResponse(user=user_service.user_profile(current["user"]))
 
 
+@app.post("/v1/chat/completions")
+async def chat_completions(request: Request, current: dict[str, Any] = Depends(get_current_user)):
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise ServerApiError(
+            status_code=422,
+            code="INVALID_CHAT_REQUEST",
+            message="Request body must be a JSON object.",
+            error_type="invalid_request_error",
+        )
+    if current["user"].get("status") != "active":
+        raise ServerApiError(
+            status_code=403,
+            code="USER_SUSPENDED",
+            message="The current user is suspended.",
+            error_type="auth_error",
+        )
+    body = await _build_chat_completion_payload(payload, current)
+    if payload.get("stream") is True:
+        if settings.llm_proxy_mode != "mock":
+            raise ServerApiError(
+                status_code=501,
+                code="CHAT_STREAM_NOT_SUPPORTED",
+                message="Streaming is only available in mock proxy mode for now.",
+                error_type="invalid_request_error",
+            )
+        return await _mock_streaming_chat_response(body)
+    return JSONResponse(content=body)
+
+
 @app.get("/")
 def root() -> dict[str, Any]:
     return {
         "service": "server",
         "phase": settings.rewrite_phase,
         "mode": "auth_phase1",
-        "message": "EntroCut server now provides Phase 1 auth surfaces for OAuth login, token issuance, and /me.",
+        "message": "EntroCut server now provides auth surfaces and an authenticated OpenAI-compatible chat proxy.",
         "env": {
             "mongodb_configured": bool(settings.mongodb_uri),
             "redis_configured": bool(settings.redis_url),
@@ -398,5 +621,7 @@ def root() -> dict[str, Any]:
                 settings.auth_google_client_id and settings.auth_google_client_secret
             ),
             "auth_jwt_algorithm": settings.auth_jwt_algorithm,
+            "llm_proxy_mode": settings.llm_proxy_mode,
+            "llm_upstream_configured": bool(settings.llm_upstream_base_url and settings.llm_upstream_api_key),
         },
     }

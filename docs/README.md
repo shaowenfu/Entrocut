@@ -16,13 +16,16 @@
    - 当前 `Core -> Server` 的最小云端通信契约
    - 以 `OpenAI-compatible` 为第一原则
    - 包含 `chat completions`、`SSE`、`usage`、`entro_metadata` 和错误语义
+4. [Auth Implementation Spec](./auth_implementation_spec.md)
+   - 当前已落地的 `client / core / server` 鉴权实现规范
+   - 面向工程接入，聚焦 token 生命周期、字段边界、错误语义与职责分工
 4. [EditDraft Schema](./edit_draft_schema.md)
    - 当前推荐的剪辑草案结构定义
    - 说明 `Asset / Clip / Shot / Scene / EditDraft` 的分层原则与边界
-4. [Editing Agent 详细设计](./editing_agent_design_detailed.md)
+5. [Editing Agent 详细设计](./editing_agent_design_detailed.md)
    - 汇总近期关于 `editing agent` 的高密度讨论
    - 详细说明设计原则、关键难点、检索路线与工程取舍
-5. [Editing Agent 开发指南](./editing_agent_dev_guide.md)
+6. [Editing Agent 开发指南](./editing_agent_dev_guide.md)
    - 面向接下来实现阶段的精简指导文档
    - 聚焦分层、边界、优先级与近期落地路径
 

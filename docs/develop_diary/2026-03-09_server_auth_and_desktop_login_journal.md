@@ -261,6 +261,177 @@
 
 ---
 
+## 七、我把登录态真正同步到了 Core
+
+前面的工作把登录做通了，但还有一个关键缺口：
+
+`client` 拿到 EntroCut 自己的 `access token / refresh token` 之后，不能只把它们留在前端本地存储里。
+
+因为真正要调用云端 `server` 的执行者，其实是 `core`。
+
+所以我接着补了这条链路：
+
+1. 在 `core` 增加：
+   - `POST /api/v1/auth/session`
+   - `DELETE /api/v1/auth/session`
+2. 让 `client` 在以下时机同步会话给 `core`
+   - 登录成功
+   - 刷新 token 成功
+   - 启动时恢复登录态成功
+   - 登出
+
+这里我刻意保持了职责单一：
+
+1. `client` 负责刷新 token
+2. `core` 不持有 `refresh token`
+3. `core` 只消费最新同步过来的 `access token`
+
+这个设计很重要，因为它避免了 `client` 和 `core` 双写刷新逻辑。  
+如果两边都偷偷刷新，后面一定会出现状态竞争和不可预测 bug。
+
+---
+
+## 八、我把 Server 的 Chat Proxy 接到了现有鉴权链上
+
+登录态同步给 `core` 之后，真正重要的一步才成立：
+
+让 `core` 能带着 EntroCut 自己的 `access token` 去请求 `server` 的 AI 代理接口。
+
+所以我新加了：
+
+1. `POST /v1/chat/completions`
+
+这个接口现在已经接入了统一的鉴权依赖，顺序是：
+
+1. 解析 `Authorization`
+2. 校验 `Bearer`
+3. 解码 `JWT`
+4. 校验服务端会话
+5. 查当前用户
+6. 检查用户状态
+7. 再进入真实 `chat proxy`
+
+这意味着：
+
+1. `chat proxy` 不再是公开接口
+2. 它不自己发明一套登录逻辑
+3. 它完全复用已经做好的 `current_user/current_session` 上下文
+
+当前这个 `chat proxy` 默认跑的是：
+
+1. `mock proxy mode`
+
+我故意先这样做，而不是一上来就接真实上游模型。原因是：
+
+1. 先验证“身份链路 + 契约 + 本地工作流映射”
+2. 再验证“真实上游 provider”
+
+这比两件事同时做更稳，也更容易定位问题。
+
+---
+
+## 九、我把 Core 的本地 Chat 任务流接到了 Server
+
+`core` 原本的聊天工作流只是本地生成一个简单的编辑决策。
+
+这轮我做的不是推翻它，而是把它换成：
+
+1. `core` 先用当前本地会话里的 `access token`
+2. 调用 `server /v1/chat/completions`
+3. 拿回 `OpenAI-compatible` 响应
+4. 提取其中的推理文本
+5. 再映射回当前 `EditDraft` 的 `assistant decision`
+
+这样做的好处是：
+
+1. 保住了当前前端和 `core` 的工作流契约
+2. 让“文本推理来源”先切到云端 `server`
+3. 后面接真实 `LLM provider` 时，不需要把整个 `Workspace` 工作流推倒重来
+
+换句话说，这轮不是“重写聊天功能”，而是“把聊天能力的身份和推理来源云端化”。
+
+---
+
+## 十、这轮里还踩到了一个很典型的字段边界问题
+
+在把 `chat proxy` 接通后，服务端第一次实际跑请求时，马上暴露出一个典型问题：
+
+内部用户文档用的是：
+
+1. `_id`
+
+但我在 `chat proxy` 的 `entro_metadata` 里，一开始错误地写成了：
+
+1. `current["user"]["id"]`
+
+结果直接触发 `KeyError: 'id'`。
+
+这个问题非常有代表性，因为它说明：
+
+1. 存储层模型
+2. API 层模型
+3. 业务逻辑层
+
+只要边界一松，就会开始混用字段名。
+
+所以我立刻把规范收口成：
+
+1. 服务内部统一只用 `_id`
+2. 对外响应才映射成 `id`
+
+并且顺手补了一份：
+
+1. `docs/auth_implementation_spec.md`
+
+这份文档不是愿景文档，而是当前真实代码的工程规范，专门写给后面接手的工程师。
+
+---
+
+## 十一、当前结果
+
+到这一步，链路已经不是“能登录”而已，而是完整闭环了：
+
+1. 用户通过 `Google OAuth` 登录
+2. `server` 签发 EntroCut 自己的 `JWT`
+3. `client` 成功拿到登录态
+4. `client` 把 `access token` 同步给 `core`
+5. `core` 带 `Bearer token` 调 `server /v1/chat/completions`
+6. `server` 通过统一鉴权链放行
+7. `server` 返回 `OpenAI-compatible` 结果
+8. `core` 把结果映射回本地 `EditDraft` 任务流
+9. 前端成功显示新的 `AI DECISION`
+
+你最后看到的那条：
+
+1. `Editing focus: 你好 ...`
+
+就是这条链路已经跑通的直接证据。
+
+---
+
+## 十二、我现在对这套系统的判断
+
+今天这轮做完之后，我对这套鉴权系统的判断是：
+
+它已经从“概念设计”进入“可以承接真实云能力”的状态了。
+
+当前还没完成的，不是链路结构本身，而是后续增强项：
+
+1. 把 `chat proxy` 从 `mock mode` 切到真实上游模型
+2. 把 `quota / rate limit` 接进来
+3. 补更多回归测试和文档收口
+
+但最重要的骨架已经具备：
+
+1. 身份来源清晰
+2. token 生命周期清晰
+3. `client / core / server` 边界清晰
+4. `chat proxy` 已经真正站在这条身份链路之上
+
+这意味着后续扩展是在正确结构上加能力，而不是继续修补临时方案。
+
+---
+
 ## 七、我怎么把网页调试链路做薄
 
 我并没有让这个 `fallback` 页面变成一个“半正式登录页”。

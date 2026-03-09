@@ -192,6 +192,16 @@ export interface ExportRequest {
   quality?: string;
 }
 
+interface CoreAuthSessionRequest {
+  access_token: string;
+  user_id?: string | null;
+}
+
+interface CoreAuthSessionResponse {
+  status: string;
+  user_id?: string | null;
+}
+
 const DEFAULT_CORE_BASE_URL = "http://127.0.0.1:8000";
 
 function trimTrailingSlash(url: string): string {
@@ -267,6 +277,27 @@ export async function sendChat(projectId: string, payload: ChatRequest): Promise
   return requestJson<TaskResponse>(buildCoreUrl(`/api/v1/projects/${projectId}/chat`), {
     method: "POST",
     body: payload,
+    authRequired: false,
+  });
+}
+
+export async function syncCoreAuthSession(
+  accessToken: string,
+  userId?: string | null
+): Promise<CoreAuthSessionResponse> {
+  return requestJson<CoreAuthSessionResponse>(buildCoreUrl("/api/v1/auth/session"), {
+    method: "POST",
+    body: {
+      access_token: accessToken,
+      user_id: userId ?? undefined,
+    } satisfies CoreAuthSessionRequest,
+    authRequired: false,
+  });
+}
+
+export async function clearCoreAuthSession(): Promise<CoreAuthSessionResponse> {
+  return requestJson<CoreAuthSessionResponse>(buildCoreUrl("/api/v1/auth/session"), {
+    method: "DELETE",
     authRequired: false,
   });
 }

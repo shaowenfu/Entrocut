@@ -1,12 +1,14 @@
 import { create } from "zustand";
 import {
   claimLoginSession,
+  clearCoreAuthSessionState,
   createGoogleLoginSession,
   fetchCurrentUser,
   getRefreshToken,
   logoutCurrentUser,
   refreshAccessToken,
   setRefreshToken,
+  syncCoreAuthSessionState,
   type AuthUser,
 } from "../services/authClient";
 import { openExternalUrl } from "../services/electronBridge";
@@ -50,12 +52,14 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
         await refreshAccessToken();
       }
       const user = await fetchCurrentUser();
+      await syncCoreAuthSessionState(user.id);
       set({ status: "authenticated", user, lastError: null });
     } catch (error) {
       try {
         if (refreshToken) {
           await refreshAccessToken();
           const user = await fetchCurrentUser();
+          await syncCoreAuthSessionState(user.id);
           set({ status: "authenticated", user, lastError: null });
           return;
         }
@@ -64,6 +68,7 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
       }
       setAuthToken("");
       setRefreshToken(null);
+      await clearCoreAuthSessionState();
       set({
         status: "anonymous",
         user: null,
@@ -108,6 +113,7 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
     } catch {
       setAuthToken("");
       setRefreshToken(null);
+      await clearCoreAuthSessionState();
     }
     set({
       status: "anonymous",

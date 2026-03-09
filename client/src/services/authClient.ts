@@ -1,5 +1,6 @@
 import { isElectronEnvironment } from "./electronBridge";
-import { requestJson, setAuthToken } from "./httpClient";
+import { clearCoreAuthSession, syncCoreAuthSession } from "./coreClient";
+import { getAuthToken, requestJson, setAuthToken } from "./httpClient";
 
 const SERVER_BASE_URL = (
   (import.meta.env as Record<string, string | undefined>).VITE_SERVER_BASE_URL?.trim() ||
@@ -56,6 +57,19 @@ function endpoint(path: string): string {
   return `${SERVER_BASE_URL}${path}`;
 }
 
+export async function syncCoreAuthSessionState(userId?: string | null): Promise<void> {
+  const token = getAuthToken();
+  if (!token) {
+    await clearCoreAuthSession();
+    return;
+  }
+  await syncCoreAuthSession(token, userId);
+}
+
+export async function clearCoreAuthSessionState(): Promise<void> {
+  await clearCoreAuthSession();
+}
+
 export function getRefreshToken(): string | null {
   if (typeof window === "undefined") {
     return null;
@@ -105,6 +119,7 @@ export async function claimLoginSession(loginSessionId: string): Promise<AuthUse
   }
   setAuthToken(response.result.access_token);
   setRefreshToken(response.result.refresh_token);
+  await syncCoreAuthSession(response.result.access_token, response.result.user.id);
   return response.result.user;
 }
 
@@ -127,13 +142,18 @@ export async function refreshAccessToken(): Promise<string | null> {
   });
   setAuthToken(response.access_token);
   setRefreshToken(response.refresh_token);
+  await syncCoreAuthSession(response.access_token);
   return response.access_token;
 }
 
 export async function logoutCurrentUser(): Promise<void> {
-  await requestJson(endpoint("/api/v1/auth/logout"), {
-    method: "POST",
-  });
-  setAuthToken("");
-  setRefreshToken(null);
+  try {
+    await requestJson(endpoint("/api/v1/auth/logout"), {
+      method: "POST",
+    });
+  } finally {
+    setAuthToken("");
+    setRefreshToken(null);
+    await clearCoreAuthSession();
+  }
 }

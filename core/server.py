@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
+import httpx
 from fastapi import FastAPI, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -15,6 +16,10 @@ from pydantic import BaseModel, Field
 APP_VERSION = "0.8.0-edit-draft"
 REWRITE_PHASE = "clean_room_rewrite"
 CORE_MODE = "prototype_backed"
+DEFAULT_SERVER_BASE_URL = "http://127.0.0.1:8001"
+SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", DEFAULT_SERVER_BASE_URL).rstrip("/")
+SERVER_CHAT_MODEL = os.getenv("SERVER_CHAT_MODEL", "entro-reasoning-v1").strip() or "entro-reasoning-v1"
+SERVER_CHAT_TIMEOUT_SECONDS = float(os.getenv("SERVER_CHAT_TIMEOUT_SECONDS", "30"))
 
 app = FastAPI(title="EntroCut Core In-Memory", version=APP_VERSION)
 app.add_middleware(
@@ -84,6 +89,16 @@ class RuntimeCapabilitiesResponse(BaseModel):
     phase: str
     mode: str
     retained_surfaces: list[str]
+
+
+class CoreAuthSessionRequest(BaseModel):
+    access_token: str = Field(min_length=16)
+    user_id: str | None = None
+
+
+class CoreAuthSessionResponse(BaseModel):
+    status: str = "ok"
+    user_id: str | None = None
 
 
 class MediaFileReference(BaseModel):
@@ -273,6 +288,18 @@ def _trimmed(value: str | None) -> str | None:
         return None
     trimmed = value.strip()
     return trimmed or None
+
+
+def _extract_text_content(content: Any) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str):
+                parts.append(item["text"].strip())
+        return " ".join(part for part in parts if part)
+    return ""
 
 
 def _derive_title(title: str | None, prompt: str | None, media: MediaReference | None) -> str:
@@ -671,55 +698,100 @@ class InMemoryProjectStore:
             {"task": running.model_dump(), "workflow_state": "chat_thinking"},
         )
 
-        await asyncio.sleep(0.08)
-        draft = EditDraftModel.model_validate(record["edit_draft"])
-        shots, scenes = _build_edit_plan(draft.clips, prompt)
-        scoped_target = "selected scene" if target and target.scene_id else "whole draft"
-        next_draft = _bump_draft(
-            draft,
-            shots=shots,
-            scenes=scenes,
-            selected_scene_id=scenes[0].id if scenes else None,
-            selected_shot_id=shots[0].id if shots else None,
-            status="ready",
-        )
-        assistant_turn = AssistantDecisionTurnModel(
-            id=_entity_id("turn"),
-            role="assistant",
-            type="decision",
-            decision_type="EDIT_DRAFT_PATCH",
-            reasoning_summary=f"Refocused the cut around {scoped_target}: {prompt[:80]}",
-            ops=[
-                AssistantDecisionOperationModel(
-                    id=_entity_id("op"),
-                    action="replace_edit_draft_structure",
-                    target="workspace.edit_draft",
-                    summary="Generated a new shot sequence and optional scene grouping from current clips.",
-                ),
-                AssistantDecisionOperationModel(
-                    id=_entity_id("op"),
-                    action="select_edit_target",
-                    target="workspace.edit_draft.selected_scene_id",
-                    summary="Moved the active focus to the primary scene of the new draft.",
-                ),
-            ],
-        )
-        record["edit_draft"] = next_draft.model_dump()
-        record["chat_turns"].append(assistant_turn.model_dump())
-        record["project"]["workflow_state"] = "ready"
-        record["project"]["updated_at"] = next_draft.updated_at
-        record["active_task"] = None
+        try:
+            await asyncio.sleep(0.08)
+            draft = EditDraftModel.model_validate(record["edit_draft"])
+            auth_session = await auth_session_store.snapshot()
+            access_token = auth_session.get("access_token")
+            if not access_token:
+                raise CoreApiError(
+                    status_code=401,
+                    code="AUTH_SESSION_REQUIRED",
+                    message="Sign in is required before chat can run.",
+                )
+            proxy_result = await _request_server_chat_completion(
+                access_token=access_token,
+                project_id=project_id,
+                prompt=prompt,
+                draft=draft,
+                target=target,
+            )
+            shots, scenes = _build_edit_plan(draft.clips, prompt)
+            scoped_target = "selected scene" if target and target.scene_id else "whole draft"
+            next_draft = _bump_draft(
+                draft,
+                shots=shots,
+                scenes=scenes,
+                selected_scene_id=scenes[0].id if scenes else None,
+                selected_shot_id=shots[0].id if shots else None,
+                status="ready",
+            )
+            reasoning_summary = proxy_result["content"].strip()
+            usage = proxy_result.get("usage")
+            usage_summary = (
+                f"Server proxy tokens: {usage.get('total_tokens')}"
+                if isinstance(usage, dict) and usage.get("total_tokens") is not None
+                else "Server proxy completed successfully."
+            )
+            assistant_turn = AssistantDecisionTurnModel(
+                id=_entity_id("turn"),
+                role="assistant",
+                type="decision",
+                decision_type="EDIT_DRAFT_PATCH",
+                reasoning_summary=reasoning_summary,
+                ops=[
+                    AssistantDecisionOperationModel(
+                        id=_entity_id("op"),
+                        action="replace_edit_draft_structure",
+                        target="workspace.edit_draft",
+                        summary="Generated a new shot sequence and optional scene grouping from current clips.",
+                    ),
+                    AssistantDecisionOperationModel(
+                        id=_entity_id("op"),
+                        action="sync_server_reasoning",
+                        target="server.v1.chat.completions",
+                        summary=f"Applied proxy-guided reasoning for {scoped_target}. {usage_summary}",
+                    ),
+                    AssistantDecisionOperationModel(
+                        id=_entity_id("op"),
+                        action="select_edit_target",
+                        target="workspace.edit_draft.selected_scene_id",
+                        summary="Moved the active focus to the primary scene of the new draft.",
+                    ),
+                ],
+            )
+            record["edit_draft"] = next_draft.model_dump()
+            record["chat_turns"].append(assistant_turn.model_dump())
+            record["project"]["workflow_state"] = "ready"
+            record["project"]["updated_at"] = next_draft.updated_at
+            record["active_task"] = None
 
-        await self.emit(project_id, "chat.turn.created", {"turn": assistant_turn.model_dump()})
-        await self.emit(project_id, "edit_draft.updated", {"edit_draft": next_draft.model_dump()})
-        await self.emit(project_id, "project.updated", {"project": record["project"]})
+            await self.emit(project_id, "chat.turn.created", {"turn": assistant_turn.model_dump()})
+            await self.emit(project_id, "edit_draft.updated", {"edit_draft": next_draft.model_dump()})
+            await self.emit(project_id, "project.updated", {"project": record["project"]})
 
-        succeeded = running.model_copy(update={"status": "succeeded", "message": "Chat completed", "updated_at": _now_iso()})
-        await self.emit(
-            project_id,
-            "task.updated",
-            {"task": succeeded.model_dump(), "workflow_state": "ready"},
-        )
+            succeeded = running.model_copy(update={"status": "succeeded", "message": "Chat completed", "updated_at": _now_iso()})
+            await self.emit(
+                project_id,
+                "task.updated",
+                {"task": succeeded.model_dump(), "workflow_state": "ready"},
+            )
+        except CoreApiError as exc:
+            await _mark_chat_failed(
+                project_id=project_id,
+                task=running,
+                message=exc.message,
+                code=exc.code,
+                details=exc.details,
+            )
+        except Exception as exc:
+            await _mark_chat_failed(
+                project_id=project_id,
+                task=running,
+                message="Chat orchestration failed unexpectedly.",
+                code="CHAT_ORCHESTRATION_FAILED",
+                details={"cause": str(exc)},
+            )
 
     async def queue_export(self, project_id: str, payload: ExportRequest) -> TaskModel:
         record = self.get_project_or_raise(project_id)
@@ -803,7 +875,176 @@ class InMemoryProjectStore:
         )
 
 
+class CoreAuthSessionStore:
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._session: dict[str, str | None] = {
+            "access_token": None,
+            "user_id": None,
+        }
+
+    async def set_session(self, access_token: str, user_id: str | None) -> None:
+        async with self._lock:
+            self._session = {
+                "access_token": access_token.strip(),
+                "user_id": user_id.strip() if user_id and user_id.strip() else None,
+            }
+
+    async def clear_session(self) -> None:
+        async with self._lock:
+            self._session = {"access_token": None, "user_id": None}
+
+    async def snapshot(self) -> dict[str, str | None]:
+        async with self._lock:
+            return dict(self._session)
+
+
+async def _request_server_chat_completion(
+    *,
+    access_token: str,
+    project_id: str,
+    prompt: str,
+    draft: EditDraftModel,
+    target: ChatTarget | None,
+) -> dict[str, Any]:
+    clip_context = [
+        {
+            "clip_id": clip.id,
+            "asset_id": clip.asset_id,
+            "visual_desc": clip.visual_desc,
+            "semantic_tags": clip.semantic_tags,
+        }
+        for clip in draft.clips[:6]
+    ]
+    system_context = {
+        "project_id": project_id,
+        "asset_count": len(draft.assets),
+        "clip_count": len(draft.clips),
+        "selected_scene_id": target.scene_id if target else None,
+        "selected_shot_id": target.shot_id if target else None,
+        "clips": clip_context,
+    }
+    payload = {
+        "model": SERVER_CHAT_MODEL,
+        "stream": False,
+        "temperature": 0.2,
+        "max_tokens": 400,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are the editing reasoning layer for EntroCut Core. "
+                    "Summarize the editing intent in concise English, referencing the available footage context. "
+                    f"Context: {system_context}"
+                ),
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+    }
+
+    async with httpx.AsyncClient(timeout=SERVER_CHAT_TIMEOUT_SECONDS) as client:
+        response = await client.post(
+            f"{SERVER_BASE_URL}/v1/chat/completions",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+                "X-Request-ID": _request_id(),
+            },
+        )
+
+    if response.status_code == 401:
+        raise CoreApiError(
+            status_code=401,
+            code="AUTH_SESSION_EXPIRED",
+            message="Core auth session is expired. Refresh login in client and resync token.",
+            details={"server_status": 401},
+        )
+    if response.status_code == 403:
+        raise CoreApiError(
+            status_code=403,
+            code="AUTH_SESSION_FORBIDDEN",
+            message="The current user is not allowed to call server chat proxy.",
+            details={"server_status": 403},
+        )
+    if response.status_code >= 400:
+        details: dict[str, Any] = {"server_status": response.status_code}
+        try:
+            body = response.json()
+            if isinstance(body, dict):
+                details["server_error"] = body
+        except Exception:
+            details["server_error_text"] = response.text[:400]
+        raise CoreApiError(
+            status_code=502,
+            code="SERVER_CHAT_PROXY_FAILED",
+            message="Server chat proxy rejected the request.",
+            details=details,
+        )
+
+    body = response.json()
+    choices = body.get("choices") if isinstance(body, dict) else None
+    message = choices[0].get("message") if isinstance(choices, list) and choices else None
+    content = _extract_text_content(message.get("content") if isinstance(message, dict) else None)
+    if not content:
+        raise CoreApiError(
+            status_code=502,
+            code="SERVER_CHAT_PROXY_EMPTY",
+            message="Server chat proxy returned an empty assistant message.",
+        )
+    return {
+        "content": content,
+        "usage": body.get("usage") if isinstance(body, dict) else None,
+        "entro_metadata": body.get("entro_metadata") if isinstance(body, dict) else None,
+    }
+
+
+async def _mark_chat_failed(
+    *,
+    project_id: str,
+    task: TaskModel,
+    message: str,
+    code: str,
+    details: dict[str, Any] | None = None,
+) -> None:
+    record = store.get_project_or_raise(project_id)
+    draft = EditDraftModel.model_validate(record["edit_draft"])
+    workflow_state: ProjectWorkflowState = "ready" if draft.shots else "media_ready"
+    failed_task = task.model_copy(
+        update={
+            "status": "failed",
+            "message": message,
+            "updated_at": _now_iso(),
+        }
+    )
+    record["active_task"] = None
+    record["project"]["workflow_state"] = workflow_state
+    record["project"]["updated_at"] = _now_iso()
+    await store.emit(
+        project_id,
+        "error.occurred",
+        {
+            "error": {
+                "code": code,
+                "message": message,
+                "details": details or {},
+            },
+            "workflow_state": workflow_state,
+        },
+    )
+    await store.emit(project_id, "project.updated", {"project": record["project"]})
+    await store.emit(
+        project_id,
+        "task.updated",
+        {"task": failed_task.model_dump(), "workflow_state": workflow_state},
+    )
+
+
 store = InMemoryProjectStore()
+auth_session_store = CoreAuthSessionStore()
 
 
 @app.middleware("http")
@@ -874,6 +1115,7 @@ def runtime_capabilities() -> RuntimeCapabilitiesResponse:
             "project_snapshot",
             "project_events",
             "chat",
+            "auth_session",
             "asset_import",
             "export",
             "request_id_middleware",
@@ -907,8 +1149,27 @@ async def import_assets(project_id: str, payload: ImportAssetsRequest) -> TaskRe
 
 @app.post("/api/v1/projects/{project_id}/chat", response_model=TaskResponse)
 async def chat(project_id: str, payload: ChatRequest) -> TaskResponse:
+    auth_session = await auth_session_store.snapshot()
+    if not auth_session.get("access_token"):
+        raise CoreApiError(
+            status_code=401,
+            code="AUTH_SESSION_REQUIRED",
+            message="Sign in is required before chat can run.",
+        )
     task = await store.queue_chat(project_id, payload.prompt, payload.target)
     return TaskResponse(task=task)
+
+
+@app.post("/api/v1/auth/session", response_model=CoreAuthSessionResponse)
+async def set_auth_session(payload: CoreAuthSessionRequest) -> CoreAuthSessionResponse:
+    await auth_session_store.set_session(payload.access_token, payload.user_id)
+    return CoreAuthSessionResponse(user_id=payload.user_id)
+
+
+@app.delete("/api/v1/auth/session", response_model=CoreAuthSessionResponse)
+async def clear_auth_session() -> CoreAuthSessionResponse:
+    await auth_session_store.clear_session()
+    return CoreAuthSessionResponse(user_id=None)
 
 
 @app.post("/api/v1/projects/{project_id}/export", response_model=TaskResponse)
@@ -947,6 +1208,6 @@ def root() -> dict[str, Any]:
         "message": "EntroCut core serves an in-memory EditDraft contract for Launchpad, Workspace, chat, and project events.",
         "env": {
             "core_db_path": os.getenv("CORE_DB_PATH", "not_configured"),
-            "server_base_url": os.getenv("SERVER_BASE_URL", "http://127.0.0.1:8001"),
+            "server_base_url": SERVER_BASE_URL,
         },
     }
