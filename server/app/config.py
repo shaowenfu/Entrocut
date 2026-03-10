@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     mongodb_uri: str | None = None
     mongodb_db_name: str = "entrocut_server"
     redis_url: str | None = "redis://127.0.0.1:6379/0"
+    quota_free_total_tokens: int = 200_000
+    quota_low_watermark_tokens: int = 20_000
+    rate_limit_requests_per_minute: int = 20
+    rate_limit_tokens_per_minute: int = 40_000
 
     auth_jwt_algorithm: str = "HS256"
     auth_jwt_secret: str = "entrocut-dev-secret-change-me"
@@ -42,10 +46,27 @@ class Settings(BaseSettings):
     auth_google_scope: str = "openid email profile"
     llm_proxy_mode: str = "mock"
     llm_default_model: str = "entro-reasoning-v1"
+    google_api_key: str | None = None
+    llm_gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
+    llm_gemini_chat_path: str = "/chat/completions"
+    llm_gemini_default_model: str = "gemini-2.5-flash"
     llm_upstream_base_url: str | None = None
     llm_upstream_api_key: str | None = None
     llm_upstream_chat_path: str = "/v1/chat/completions"
     llm_upstream_default_model: str | None = None
+
+    # DashScope MultiModal Embedding
+    dashscope_api_key: str | None = None
+    dashscope_multimodal_embedding_model: str = "qwen3-vl-embedding"
+    dashscope_multimodal_dimension: int = 1024
+
+    # DashVector
+    dashvector_api_key: str | None = None
+    dashvector_endpoint: str | None = None
+    dashvector_collection_name: str = "entrocut_assets"
+    dashvector_partition: str = "default"
+    dashvector_timeout_seconds: int = 10
+    dashvector_protocol: str = "grpc"
 
     @property
     def allow_origins(self) -> list[str]:

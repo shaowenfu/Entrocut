@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 import json
 import time
 from datetime import timezone
+from inspect import isawaitable
 from typing import Any
 from uuid import uuid4
 from urllib.parse import urlencode
@@ -21,7 +22,13 @@ from .errors import (
     server_api_error_handler,
     unhandled_error_handler,
 )
+from .quota_service import QuotaService, RateLimitService
+from .user_routes import build_user_router
+from .vector_service import VectorService
 from .models import (
+    AssetReference,
+    AssetRetrievalRequest,
+    AssetRetrievalResponse,
     LoginSessionCreateRequest,
     LoginSessionCreateResponse,
     LoginSessionResult,
@@ -30,7 +37,11 @@ from .models import (
     MeResponse,
     RefreshTokenRequest,
     RefreshTokenResponse,
+    RetrievalMatch,
+    RetrievalQuery,
     RuntimeCapabilitiesResponse,
+    VectorizeRequest,
+    VectorizeResponse,
 )
 
 
@@ -43,18 +54,22 @@ store = AuthStore(settings)
 oauth_service = OAuthService(settings, store)
 user_service = UserService(store)
 token_service = TokenService(settings, store)
+quota_service = QuotaService(settings, store)
+rate_limit_service = RateLimitService(settings)
+vector_service = VectorService(settings)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     store.ensure_indexes()
+    rate_limit_service.ensure_connection()
     yield
 
 
 app = FastAPI(title="EntroCut Server", version=settings.app_version, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[*settings.allow_origins, "*"],
+    allow_origins=settings.allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -108,7 +123,16 @@ def get_current_user(authorization: str | None = Header(default=None)) -> dict[s
             message="The current user is suspended.",
             error_type="auth_error",
         )
+    user = quota_service.ensure_user_quota_defaults(user)
     return {"user": user, "token_payload": payload}
+
+
+app.include_router(
+    build_user_router(
+        get_current_user_dependency=get_current_user,
+        user_service=user_service,
+    )
+)
 
 
 def _extract_message_text(messages: list[dict[str, Any]]) -> str:
@@ -129,10 +153,67 @@ def _extract_message_text(messages: list[dict[str, Any]]) -> str:
     return ""
 
 
+def _estimate_prompt_tokens(messages: list[dict[str, Any]]) -> int:
+    return max(1, sum(len(json.dumps(message, ensure_ascii=True)) for message in messages) // 4)
+
+
+def _build_entro_metadata(user: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "remaining_quota": user.get("remaining_quota"),
+        "quota_status": user.get("quota_status", "healthy"),
+        "user_id": _stored_user_id(user),
+    }
+
+
 def _resolve_upstream_model(model: str) -> str:
     if settings.llm_upstream_default_model:
         return settings.llm_upstream_default_model.strip()
     return model.strip() or settings.llm_default_model
+
+
+def _effective_llm_proxy_mode() -> str:
+    return settings.llm_proxy_mode.strip().lower()
+
+
+def _resolve_chat_provider() -> dict[str, str]:
+    proxy_mode = _effective_llm_proxy_mode()
+    if proxy_mode == "google_gemini":
+        api_key = (settings.google_api_key or "").strip()
+        if not api_key:
+            raise ServerApiError(
+                status_code=503,
+                code="MODEL_PROVIDER_UNAVAILABLE",
+                message="GOOGLE_API_KEY is required when llm_proxy_mode=google_gemini.",
+                error_type="server_error",
+            )
+        return {
+            "provider": "google_gemini",
+            "base_url": settings.llm_gemini_base_url.rstrip("/"),
+            "chat_path": settings.llm_gemini_chat_path,
+            "api_key": api_key,
+        }
+    if proxy_mode == "upstream":
+        base_url = (settings.llm_upstream_base_url or "").strip()
+        api_key = (settings.llm_upstream_api_key or "").strip()
+        if not base_url or not api_key:
+            raise ServerApiError(
+                status_code=503,
+                code="MODEL_PROVIDER_UNAVAILABLE",
+                message="No upstream provider is configured for server chat proxy.",
+                error_type="server_error",
+            )
+        return {
+            "provider": "openai_compatible_upstream",
+            "base_url": base_url.rstrip("/"),
+            "chat_path": settings.llm_upstream_chat_path,
+            "api_key": api_key,
+        }
+    raise ServerApiError(
+        status_code=503,
+        code="MODEL_PROVIDER_UNAVAILABLE",
+        message="Chat proxy provider is not configured.",
+        error_type="server_error",
+    )
 
 
 def _stored_user_id(user: dict[str, Any]) -> str:
@@ -166,24 +247,87 @@ def _build_usage(messages: list[dict[str, Any]], content: str) -> dict[str, int]
     }
 
 
+def _normalize_usage(usage: Any) -> dict[str, int] | None:
+    if not isinstance(usage, dict):
+        return None
+    prompt_tokens = usage.get("prompt_tokens")
+    completion_tokens = usage.get("completion_tokens")
+    total_tokens = usage.get("total_tokens")
+    if not all(isinstance(value, int) and value >= 0 for value in (prompt_tokens, completion_tokens)):
+        return None
+    normalized_total = prompt_tokens + completion_tokens
+    if not isinstance(total_tokens, int) or total_tokens < 0:
+        total_tokens = normalized_total
+    elif total_tokens != normalized_total:
+        total_tokens = normalized_total
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+    }
+
+
+def _extract_stream_delta_text(chunk_body: dict[str, Any]) -> str:
+    choices = chunk_body.get("choices")
+    if not isinstance(choices, list):
+        return ""
+    parts: list[str] = []
+    for choice in choices:
+        if not isinstance(choice, dict):
+            continue
+        delta = choice.get("delta")
+        if not isinstance(delta, dict):
+            continue
+        content = delta.get("content")
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            parts.extend(
+                part.get("text", "")
+                for part in content
+                if isinstance(part, dict) and isinstance(part.get("text"), str)
+            )
+    return "".join(parts)
+
+
+def _sanitize_stream_chunk(
+    chunk_body: dict[str, Any],
+    *,
+    exposed_model: str,
+) -> dict[str, Any]:
+    sanitized = dict(chunk_body)
+    sanitized["model"] = exposed_model
+    sanitized.pop("_provider_model", None)
+    return sanitized
+
+
 async def _call_upstream_chat(payload: dict[str, Any]) -> dict[str, Any]:
-    if not settings.llm_upstream_base_url or not settings.llm_upstream_api_key:
-        raise ServerApiError(
-            status_code=503,
-            code="MODEL_PROVIDER_UNAVAILABLE",
-            message="No upstream provider is configured for server chat proxy.",
-            error_type="server_error",
-        )
+    provider = _resolve_chat_provider()
     upstream_payload = dict(payload)
-    upstream_payload["model"] = _resolve_upstream_model(str(payload.get("model") or settings.llm_default_model))
+    proxy_mode = _effective_llm_proxy_mode()
+    if proxy_mode == "google_gemini":
+        upstream_payload["model"] = settings.llm_gemini_default_model.strip() or "gemini-2.5-flash"
+    else:
+        upstream_payload["model"] = _resolve_upstream_model(str(payload.get("model") or settings.llm_default_model))
+    headers = {
+        "Authorization": f"Bearer {provider['api_key']}",
+        "Content-Type": "application/json",
+    }
+    if provider["provider"] == "google_gemini":
+        headers["x-goog-api-client"] = "entrocut-server/0.1"
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
-            f"{settings.llm_upstream_base_url.rstrip('/')}{settings.llm_upstream_chat_path}",
+            f"{provider['base_url']}{provider['chat_path']}",
             json=upstream_payload,
-            headers={
-                "Authorization": f"Bearer {settings.llm_upstream_api_key}",
-                "Content-Type": "application/json",
-            },
+            headers=headers,
+        )
+    if response.status_code == 429:
+        raise ServerApiError(
+            status_code=429,
+            code="RATE_LIMITED",
+            message="Upstream model provider rate limited the request.",
+            error_type="rate_limit_error",
+            details={"upstream_status": response.status_code, "upstream_body": response.text[:500]},
         )
     if response.status_code >= 400:
         raise ServerApiError(
@@ -204,6 +348,164 @@ async def _call_upstream_chat(payload: dict[str, Any]) -> dict[str, Any]:
     return body
 
 
+def _upstream_stream_url_and_headers() -> tuple[str, dict[str, str]]:
+    provider = _resolve_chat_provider()
+    headers = {
+        "Authorization": f"Bearer {provider['api_key']}",
+        "Content-Type": "application/json",
+    }
+    if provider["provider"] == "google_gemini":
+        headers["x-goog-api-client"] = "entrocut-server/0.1"
+    return f"{provider['base_url']}{provider['chat_path']}", headers
+
+
+async def _close_upstream_response(response: Any) -> None:
+    aclose = getattr(response, "aclose", None)
+    if callable(aclose):
+        maybe_awaitable = aclose()
+        if isawaitable(maybe_awaitable):
+            await maybe_awaitable
+
+
+async def _upstream_chat_stream(
+    payload: dict[str, Any],
+    *,
+    current: dict[str, Any],
+    request_id: str,
+) -> StreamingResponse:
+    messages = payload["messages"]
+    upstream_payload = dict(payload)
+    proxy_mode = _effective_llm_proxy_mode()
+    if proxy_mode == "google_gemini":
+        upstream_payload["model"] = settings.llm_gemini_default_model.strip() or "gemini-2.5-flash"
+    else:
+        upstream_payload["model"] = _resolve_upstream_model(str(payload.get("model") or settings.llm_default_model))
+    upstream_payload["stream"] = True
+    stream_options = upstream_payload.get("stream_options")
+    if isinstance(stream_options, dict):
+        upstream_payload["stream_options"] = {**stream_options, "include_usage": True}
+    else:
+        upstream_payload["stream_options"] = {"include_usage": True}
+    upstream_url, headers = _upstream_stream_url_and_headers()
+    exposed_model = str(payload.get("model") or settings.llm_default_model)
+
+    async def event_stream():
+        aggregated_text_parts: list[str] = []
+        final_usage: dict[str, int] | None = None
+        provider_model: str | None = None
+        terminal_chunk: dict[str, Any] | None = None
+        stream_id: str | None = None
+        stream_created: int | None = None
+        response: Any = None
+        async with httpx.AsyncClient(timeout=None) as client:
+            stream_context = client.stream(
+                "POST",
+                upstream_url,
+                json=upstream_payload,
+                headers=headers,
+            )
+            try:
+                async with stream_context as response:
+                    if response.status_code == 429:
+                        raise ServerApiError(
+                            status_code=429,
+                            code="RATE_LIMITED",
+                            message="Upstream model provider rate limited the request.",
+                            error_type="rate_limit_error",
+                            details={"upstream_status": response.status_code},
+                        )
+                    if response.status_code >= 400:
+                        body = await response.aread()
+                        raise ServerApiError(
+                            status_code=502,
+                            code="MODEL_PROVIDER_UNAVAILABLE",
+                            message="Upstream model provider returned an error.",
+                            error_type="server_error",
+                            details={
+                                "upstream_status": response.status_code,
+                                "upstream_body": body.decode("utf-8", errors="ignore")[:500],
+                            },
+                        )
+                    async for raw_line in response.aiter_lines():
+                        line = raw_line.strip()
+                        if not line:
+                            continue
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if not data:
+                            continue
+                        if data == "[DONE]":
+                            break
+                        try:
+                            chunk_body = json.loads(data)
+                        except json.JSONDecodeError as exc:
+                            raise ServerApiError(
+                                status_code=502,
+                                code="MODEL_PROVIDER_UNAVAILABLE",
+                                message="Upstream model provider returned an invalid streaming chunk.",
+                                error_type="server_error",
+                                details={"request_id": request_id, "chunk_excerpt": data[:200]},
+                            ) from exc
+                        if not isinstance(chunk_body, dict):
+                            continue
+                        if isinstance(chunk_body.get("model"), str) and chunk_body["model"].strip():
+                            provider_model = chunk_body["model"].strip()
+                        if stream_id is None and isinstance(chunk_body.get("id"), str):
+                            stream_id = chunk_body["id"]
+                        if stream_created is None and isinstance(chunk_body.get("created"), int):
+                            stream_created = chunk_body["created"]
+                        normalized_usage = _normalize_usage(chunk_body.get("usage"))
+                        if normalized_usage:
+                            final_usage = normalized_usage
+                        aggregated_text = _extract_stream_delta_text(chunk_body)
+                        if aggregated_text:
+                            aggregated_text_parts.append(aggregated_text)
+                        sanitized = _sanitize_stream_chunk(chunk_body, exposed_model=exposed_model)
+                        choices = sanitized.get("choices")
+                        is_terminal = False
+                        if isinstance(choices, list):
+                            is_terminal = any(
+                                isinstance(choice, dict) and choice.get("finish_reason") is not None
+                                for choice in choices
+                            )
+                        if is_terminal:
+                            terminal_chunk = sanitized
+                            continue
+                        yield f"data: {json.dumps(sanitized, ensure_ascii=True)}\n\n"
+            finally:
+                if response is not None:
+                    await _close_upstream_response(response)
+
+        usage = final_usage or _build_usage(messages, "".join(aggregated_text_parts))
+        updated_user = quota_service.record_chat_usage(
+            user=current["user"],
+            session_id=current["token_payload"]["sid"],
+            request_id=request_id,
+            exposed_model=exposed_model,
+            provider_model=provider_model,
+            usage=usage,
+        )
+        rate_limit_service.add_completion_tokens(
+            user_id=_stored_user_id(updated_user),
+            completion_tokens=int(usage.get("completion_tokens") or 0),
+        )
+        final_chunk = terminal_chunk or {
+            "id": stream_id or f"chatcmpl_{uuid4().hex[:24]}",
+            "object": "chat.completion.chunk",
+            "created": stream_created or int(time.time()),
+            "model": exposed_model,
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        }
+        final_chunk["model"] = exposed_model
+        final_chunk["usage"] = usage
+        final_chunk["entro_metadata"] = _build_entro_metadata(updated_user)
+        yield f"data: {json.dumps(final_chunk, ensure_ascii=True)}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
 async def _build_chat_completion_payload(
     payload: dict[str, Any],
     current: dict[str, Any],
@@ -217,15 +519,16 @@ async def _build_chat_completion_payload(
             error_type="invalid_request_error",
         )
 
-    if settings.llm_proxy_mode == "upstream":
+    if _effective_llm_proxy_mode() in {"upstream", "google_gemini"}:
         body = await _call_upstream_chat(payload)
-        usage = body.get("usage")
+        provider_model = str(body.get("model")) if body.get("model") else None
+        usage = _normalize_usage(body.get("usage"))
         body["model"] = str(payload.get("model") or settings.llm_default_model)
-        body["entro_metadata"] = {
-            "remaining_quota": current["user"].get("remaining_quota"),
-            "quota_status": current["user"].get("quota_status", "healthy"),
-            "user_id": _stored_user_id(current["user"]),
-        }
+        if provider_model:
+            body["_provider_model"] = provider_model
+        if usage:
+            body["usage"] = usage
+        body["entro_metadata"] = _build_entro_metadata(current["user"])
         if not usage:
             body["usage"] = _build_usage(messages, json.dumps(body.get("choices", []), ensure_ascii=True))
         return body
@@ -249,11 +552,7 @@ async def _build_chat_completion_payload(
             }
         ],
         "usage": usage,
-        "entro_metadata": {
-            "remaining_quota": current["user"].get("remaining_quota"),
-            "quota_status": current["user"].get("quota_status", "healthy"),
-            "user_id": _stored_user_id(current["user"]),
-        },
+        "entro_metadata": _build_entro_metadata(current["user"]),
     }
 
 
@@ -313,7 +612,7 @@ def health() -> dict[str, Any]:
             if google_configured
             else "Google OAuth is not configured yet. Set AUTH_GOOGLE_CLIENT_ID and AUTH_GOOGLE_CLIENT_SECRET.",
             "Chat proxy runs in mock mode."
-            if settings.llm_proxy_mode == "mock"
+            if _effective_llm_proxy_mode() == "mock"
             else "Chat proxy forwards requests to the configured upstream provider.",
         ],
     }
@@ -335,7 +634,11 @@ def runtime_capabilities() -> RuntimeCapabilitiesResponse:
             "auth_refresh",
             "auth_logout",
             "me",
+            "user_profile",
+            "user_usage",
             "chat_completions_proxy",
+            "assets_vectorize",
+            "assets_retrieval",
         ],
     )
 
@@ -594,17 +897,90 @@ async def chat_completions(request: Request, current: dict[str, Any] = Depends(g
             message="The current user is suspended.",
             error_type="auth_error",
         )
+    messages = payload.get("messages")
+    if not isinstance(messages, list) or not messages:
+        raise ServerApiError(
+            status_code=422,
+            code="INVALID_CHAT_MESSAGES",
+            message="messages must be a non-empty array.",
+            error_type="invalid_request_error",
+        )
+    quota_service.assert_can_chat(current["user"])
+    rate_limit_service.consume_prompt_budget(
+        user_id=_stored_user_id(current["user"]),
+        prompt_tokens=_estimate_prompt_tokens(messages),
+    )
+    request_id = getattr(request.state, "request_id", None) or _request_id()
+    if payload.get("stream") is True and _effective_llm_proxy_mode() != "mock":
+        return await _upstream_chat_stream(payload, current=current, request_id=request_id)
     body = await _build_chat_completion_payload(payload, current)
+    usage = body.get("usage") if isinstance(body, dict) else None
+    updated_user = quota_service.record_chat_usage(
+        user=current["user"],
+        session_id=current["token_payload"]["sid"],
+        request_id=request_id,
+        exposed_model=str(payload.get("model") or settings.llm_default_model),
+        provider_model=str(body.get("_provider_model")) if isinstance(body, dict) and body.get("_provider_model") else None,
+        usage=usage if isinstance(usage, dict) else None,
+    )
+    if isinstance(usage, dict):
+        rate_limit_service.add_completion_tokens(
+            user_id=_stored_user_id(updated_user),
+            completion_tokens=int(usage.get("completion_tokens") or 0),
+        )
+    if isinstance(body, dict):
+        body["entro_metadata"] = _build_entro_metadata(updated_user)
+        body.pop("_provider_model", None)
     if payload.get("stream") is True:
-        if settings.llm_proxy_mode != "mock":
-            raise ServerApiError(
-                status_code=501,
-                code="CHAT_STREAM_NOT_SUPPORTED",
-                message="Streaming is only available in mock proxy mode for now.",
-                error_type="invalid_request_error",
-            )
         return await _mock_streaming_chat_response(body)
     return JSONResponse(content=body)
+
+
+@app.post("/v1/assets/vectorize", response_model=VectorizeResponse)
+def vectorize_asset(
+    payload: VectorizeRequest,
+    current: dict[str, Any] = Depends(get_current_user),
+) -> VectorizeResponse:
+    """向量化 Asset 并写入向量数据库（原子操作）。"""
+    try:
+        result = vector_service.vectorize(
+            asset_id=payload.asset_id,
+            references=payload.references,
+            metadata=payload.metadata,
+        )
+        return VectorizeResponse(
+            status="success",
+            vectors=[result],
+        )
+    except ServerApiError:
+        raise
+    except Exception as exc:
+        raise ServerApiError(
+            status_code=500,
+            code="VECTORIZE_ERROR",
+            message=f"Vectorization failed: {exc}",
+            error_type="server_error",
+        ) from exc
+
+
+@app.post("/v1/assets/retrieval", response_model=AssetRetrievalResponse)
+def assets_retrieval(
+    payload: AssetRetrievalRequest,
+    current: dict[str, Any] = Depends(get_current_user),
+) -> AssetRetrievalResponse:
+    """资产检索接口：根据查询文本返回语义匹配的资产。 """
+    result = vector_service.retrieve(
+        collection_name=payload.collection_name,
+        partition=payload.partition,
+        model=payload.model,
+        dimension=payload.dimension,
+        query_text=payload.query_text,
+        topk=payload.topk,
+        filter_str=payload.filter,
+        include_vector=payload.include_vector,
+        output_fields=payload.output_fields,
+    )
+    return AssetRetrievalResponse(**result)
 
 
 @app.get("/")
@@ -622,6 +998,12 @@ def root() -> dict[str, Any]:
             ),
             "auth_jwt_algorithm": settings.auth_jwt_algorithm,
             "llm_proxy_mode": settings.llm_proxy_mode,
-            "llm_upstream_configured": bool(settings.llm_upstream_base_url and settings.llm_upstream_api_key),
+            "quota_free_total_tokens": settings.quota_free_total_tokens,
+            "rate_limit_requests_per_minute": settings.rate_limit_requests_per_minute,
+            "rate_limit_tokens_per_minute": settings.rate_limit_tokens_per_minute,
+            "llm_upstream_configured": bool(
+                (settings.llm_upstream_base_url and settings.llm_upstream_api_key)
+                or (_effective_llm_proxy_mode() == "google_gemini" and settings.google_api_key)
+            ),
         },
     }

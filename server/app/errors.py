@@ -58,7 +58,7 @@ async def unhandled_error_handler(request: Request, exc: Exception) -> JSONRespo
         content=ErrorEnvelope(
             error={
                 "code": "SERVER_INTERNAL_ERROR",
-                "message": str(exc) or "Unhandled server error.",
+                "message": "Unhandled server error.",
                 "type": "server_error",
                 "details": {
                     "request_id": request_id,
@@ -69,3 +69,49 @@ async def unhandled_error_handler(request: Request, exc: Exception) -> JSONRespo
         ).model_dump(exclude_none=True),
     )
 
+
+# ============ Vector Error Factories ============
+
+
+def vectorize_error(message: str, *, details: dict[str, Any] | None = None) -> ServerApiError:
+    """向量化处理错误"""
+    return ServerApiError(
+        status_code=422,
+        code="VECTORIZE_ERROR",
+        message=message,
+        error_type="invalid_request_error",
+        details=details,
+    )
+
+
+def vector_embedding_error(message: str, *, details: dict[str, Any] | None = None) -> ServerApiError:
+    """Embedding API 调用失败"""
+    return ServerApiError(
+        status_code=502,
+        code="VECTOR_EMBEDDING_ERROR",
+        message=message,
+        error_type="server_error",
+        details=details,
+    )
+
+
+def vector_db_error(message: str, *, details: dict[str, Any] | None = None) -> ServerApiError:
+    """向量数据库操作失败"""
+    return ServerApiError(
+        status_code=502,
+        code="VECTOR_DB_ERROR",
+        message=message,
+        error_type="server_error",
+        details=details,
+    )
+
+
+def vector_config_error(message: str, *, details: dict[str, Any] | None = None) -> ServerApiError:
+    """向量服务配置错误"""
+    return ServerApiError(
+        status_code=503,
+        code="VECTOR_CONFIG_ERROR",
+        message=message,
+        error_type="server_error",
+        details=details,
+    )
