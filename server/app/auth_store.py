@@ -14,6 +14,7 @@ from redis import Redis
 from redis.exceptions import RedisError
 
 from .config import Settings
+from .errors import ServerApiError
 
 
 def now_utc() -> datetime:
@@ -54,6 +55,13 @@ class MongoRepository:
 
     def _db_or_none(self) -> Database[Any] | None:
         if not self._settings.mongodb_uri:
+            if not self._settings.allow_inmemory_mongo_fallback:
+                raise ServerApiError(
+                    status_code=503,
+                    code="DEPENDENCY_UNAVAILABLE",
+                    message="MongoDB fallback is disabled and MONGODB_URI is missing.",
+                    error_type="server_error",
+                )
             return None
         if self._db is None:
             self._client = MongoClient(self._settings.mongodb_uri, serverSelectionTimeoutMS=1500)
@@ -424,8 +432,12 @@ class LoginSessionStore:
     def _get_redis(self) -> Redis | None:
         if not self._settings.redis_url:
             self._redis_ready = False
+            if not self._settings.allow_inmemory_redis_fallback:
+                raise RedisError("Redis fallback is disabled and REDIS_URL is missing.")
             return None
         if self._redis_ready is False:
+            if not self._settings.allow_inmemory_redis_fallback:
+                raise RedisError("Redis is unavailable and fallback is disabled.")
             return None
         if self._redis is None:
             self._redis = redis.from_url(self._settings.redis_url, decode_responses=True)
@@ -438,6 +450,8 @@ class LoginSessionStore:
                 self._redis_ready = True
             except RedisError:
                 self._redis_ready = False
+                if not self._settings.allow_inmemory_redis_fallback:
+                    raise
                 return None
         return redis_client
 

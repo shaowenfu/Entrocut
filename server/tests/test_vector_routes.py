@@ -23,6 +23,14 @@ def client() -> TestClient:
     return TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def _configure_local_runtime(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "mongodb_uri", None)
+    monkeypatch.setattr(settings, "redis_url", None)
+    monkeypatch.setattr(settings, "allow_inmemory_mongo_fallback", True)
+    monkeypatch.setattr(settings, "allow_inmemory_redis_fallback", True)
+
+
 @pytest.fixture
 def test_user() -> dict[str, Any]:
     """创建测试用户。"""

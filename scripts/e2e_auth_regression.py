@@ -131,7 +131,12 @@ def _poll_workspace_for_assistant_turn(
     )
 
 
-def run_regression(server_base_url: str, core_base_url: str, timeout_seconds: float) -> dict[str, Any]:
+def run_regression(
+    server_base_url: str,
+    core_base_url: str,
+    timeout_seconds: float,
+    bootstrap_secret: str | None = None,
+) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "server_base_url": server_base_url,
         "core_base_url": core_base_url,
@@ -160,15 +165,46 @@ def run_regression(server_base_url: str, core_base_url: str, timeout_seconds: fl
         summary["login_session_id"] = login_session_id
 
         _print_step("注入已完成 OAuth 的 login_session 结果")
-        seeded = _seed_authenticated_login_session(login_session_id)
+        claim_response: dict[str, Any] | None = None
+        if bootstrap_secret:
+            bootstrap_response = _request(
+                client,
+                "POST",
+                f"{server_base_url}/api/v1/test/bootstrap/login-session",
+                expected_status=200,
+                headers={"X-Bootstrap-Secret": bootstrap_secret},
+                json_body={
+                    "login_session_id": login_session_id,
+                    "provider": "google",
+                },
+            ).json()
+            claim_response = _request(
+                client,
+                "GET",
+                f"{server_base_url}/api/v1/auth/login-sessions/{login_session_id}",
+                expected_status=200,
+            ).json()
+            claim_result = claim_response.get("result")
+            _assert(isinstance(claim_result, dict), "bootstrap login_session did not return token bundle")
+            seeded = SeededLoginSession(
+                login_session_id=login_session_id,
+                user_id=bootstrap_response["user"]["id"],
+                access_token=claim_result["access_token"],
+                refresh_token=claim_result["refresh_token"],
+            )
+            summary["bootstrap_mode"] = "staging_api"
+            summary["bootstrap_user"] = bootstrap_response["user"]
+        else:
+            seeded = _seed_authenticated_login_session(login_session_id)
 
         _print_step("首次 claim login_session")
-        claim_response = _request(
-            client,
-            "GET",
-            f"{server_base_url}/api/v1/auth/login-sessions/{login_session_id}",
-            expected_status=200,
-        ).json()
+        if claim_response is None:
+            claim_response = _request(
+                client,
+                "GET",
+                f"{server_base_url}/api/v1/auth/login-sessions/{login_session_id}",
+                expected_status=200,
+            ).json()
         claim_result = claim_response.get("result")
         _assert(isinstance(claim_result, dict), "first login_session claim did not return token bundle")
         access_token_1 = claim_result["access_token"]
@@ -385,6 +421,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--server-base-url", default="http://127.0.0.1:8001")
     parser.add_argument("--core-base-url", default="http://127.0.0.1:8000")
     parser.add_argument("--timeout-seconds", type=float, default=20.0)
+    parser.add_argument("--bootstrap-secret", default=None)
     return parser.parse_args()
 
 
@@ -395,6 +432,7 @@ def main() -> int:
             server_base_url=args.server_base_url.rstrip("/"),
             core_base_url=args.core_base_url.rstrip("/"),
             timeout_seconds=args.timeout_seconds,
+            bootstrap_secret=args.bootstrap_secret,
         )
     except RegressionFailure as exc:
         print(f"[e2e-auth] FAILED: {exc}", file=sys.stderr)

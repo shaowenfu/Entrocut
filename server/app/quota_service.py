@@ -36,8 +36,12 @@ class RateLimitService:
     def _get_redis(self) -> Redis | None:
         if not self._settings.redis_url:
             self._redis_ready = False
+            if not self._settings.allow_inmemory_redis_fallback:
+                raise RedisError("Redis fallback is disabled and REDIS_URL is missing.")
             return None
         if self._redis_ready is False:
+            if not self._settings.allow_inmemory_redis_fallback:
+                raise RedisError("Redis is unavailable and fallback is disabled.")
             return None
         if self._redis is None:
             self._redis = redis.from_url(self._settings.redis_url, decode_responses=True)
@@ -50,6 +54,8 @@ class RateLimitService:
                 self._redis_ready = True
             except RedisError:
                 self._redis_ready = False
+                if not self._settings.allow_inmemory_redis_fallback:
+                    raise
                 raise
         return redis_client
 

@@ -6,6 +6,7 @@ import sys
 from typing import Any
 
 from fastapi.testclient import TestClient
+import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -318,3 +319,59 @@ def test_google_gemini_chat_proxy_streams_and_injects_final_usage(monkeypatch) -
     assert final_chunk["entro_metadata"]["user_id"] == user["_id"]
     assert final_chunk["entro_metadata"]["remaining_quota"] == 4306
     assert chunks[-1] == "data: [DONE]"
+
+
+def test_google_gemini_chat_proxy_surfaces_provider_timeout(monkeypatch) -> None:
+    async def fake_post(self, url: str, json: dict[str, Any], headers: dict[str, str]) -> _DummyResponse:
+        raise httpx.ReadTimeout("provider timed out")
+
+    monkeypatch.setattr("httpx.AsyncClient.post", fake_post)
+    _configure_local_runtime(monkeypatch)
+
+    user = _create_user()
+    bundle = token_service.issue_session_bundle(user)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {bundle['access_token']}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": "entro-reasoning-v1",
+            "stream": False,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 504
+    assert response.json()["error"]["code"] == "PROVIDER_TIMEOUT"
+
+
+def test_google_gemini_chat_proxy_rejects_invalid_response_body(monkeypatch) -> None:
+    async def fake_post(self, url: str, json: dict[str, Any], headers: dict[str, str]) -> _DummyResponse:
+        return _DummyResponse(status_code=200, body=["not-a-dict"])  # type: ignore[list-item]
+
+    monkeypatch.setattr("httpx.AsyncClient.post", fake_post)
+    _configure_local_runtime(monkeypatch)
+
+    user = _create_user()
+    bundle = token_service.issue_session_bundle(user)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {bundle['access_token']}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": "entro-reasoning-v1",
+            "stream": False,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "MODEL_PROVIDER_INVALID_RESPONSE"
