@@ -42,7 +42,7 @@
       "type": "node",
       "request": "launch",
       "cwd": "${workspaceFolder}/client",
-      "runtimeExecutable": "npm",
+      "runtimeExecutable": "/home/sherwen/.nvm/versions/node/v23.11.0/bin/npm",
       "runtimeArgs": [
         "run",
         "dev",
