@@ -149,19 +149,3 @@ jobs:
             docker compose -f docker-compose.production.yml ps
             docker compose -f docker-compose.production.yml logs --tail=200
             exit 1
-
-  cleanup-ghcr:
-    runs-on: ubuntu-latest
-    needs: build-and-push
-    if: ${{ always() && needs.build-and-push.result == 'success' }}
-    permissions:
-      packages: write
-      contents: read
-    steps:
-      - name: Delete old GHCR versions
-        uses: actions/delete-package-versions@v5
-        with:
-          package-name: entrocut-server
-          package-type: container
-          owner: ${{ github.repository_owner }}
-          min-versions-to-keep: 2
