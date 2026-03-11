@@ -28,6 +28,9 @@
 6. [Editing Agent 开发指南](./editing_agent_dev_guide.md)
    - 面向接下来实现阶段的精简指导文档
    - 聚焦分层、边界、优先级与近期落地路径
+7. [Editing Agent Runtime Architecture](./editing_agent_runtime_architecture.md)
+   - 当前 `editing agent` 的方向性五层运行时架构
+   - 只定义整体骨架与层间关系，暂不展开具体实现细节
 
 ## 开发日记
 
@@ -37,6 +40,9 @@
 2. [2026-03-09 Server 鉴权与桌面登录回流日记](./develop_diary/2026-03-09_server_auth_and_desktop_login_journal.md)
    - 记录 `server auth phase 1`、`Google OAuth`、`JWT`、`Electron deep link` 和 `web dev fallback` 的完整落地过程
    - 包含架构取舍、联调问题与最终修正点
+3. [2026-03-09 Agent Runtime Notes](./develop_diary/2026-03-09_agent_runtime_notes.md)
+   - 记录从局部剪辑契约讨论切换到五层 `agent runtime` 设计的思考过程
+   - 用于后续继续补充 `planner / state / context / loop` 相关设计笔记
 
 ## 历史归档
 
