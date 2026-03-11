@@ -168,6 +168,7 @@ class TokenService:
 class UserService:
     def __init__(self, store: AuthStore) -> None:
         self._store = store
+        self._settings = store.mongo._settings
 
     def upsert_user_from_provider(self, provider: str, profile: dict[str, Any]) -> dict[str, Any]:
         provider_user_id = profile["provider_user_id"]
@@ -199,6 +200,8 @@ class UserService:
                 "status": "active",
                 "primary_provider": provider,
                 "plan": "free",
+                "quota_total": self._settings.quota_free_total_tokens,
+                "remaining_quota": self._settings.quota_free_total_tokens,
                 "quota_status": "healthy",
                 "created_at": to_iso(current_time),
                 "updated_at": to_iso(current_time),
@@ -234,6 +237,28 @@ class UserService:
             "status": user.get("status", "active"),
             "plan": user.get("plan", "free"),
             "quota_status": user.get("quota_status", "healthy"),
+            "quota_total": user.get("quota_total"),
+            "remaining_quota": user.get("remaining_quota"),
+        }
+
+    def usage_snapshot(self, user: dict[str, Any]) -> dict[str, Any]:
+        current_time = now_utc()
+        day_start = datetime(current_time.year, current_time.month, current_time.day, tzinfo=UTC)
+        month_start = datetime(current_time.year, current_time.month, 1, tzinfo=UTC)
+        today_summary = self._store.mongo.summarize_user_usage(user_id=user["_id"], period_start=day_start)
+        month_summary = self._store.mongo.summarize_user_usage(user_id=user["_id"], period_start=month_start)
+        return {
+            "remaining_quota": user.get("remaining_quota"),
+            "quota_total": user.get("quota_total"),
+            "quota_status": user.get("quota_status", "healthy"),
+            "consumed_tokens_today": today_summary["total_tokens"],
+            "consumed_tokens_this_month": month_summary["total_tokens"],
+            "request_count_today": today_summary["request_count"],
+            "request_count_this_month": month_summary["request_count"],
+            "membership_plan": user.get("plan", "free"),
+            "subscription_status": "active" if user.get("status", "active") == "active" else "inactive",
+            "rate_limit_requests_per_minute": self._settings.rate_limit_requests_per_minute,
+            "rate_limit_tokens_per_minute": self._settings.rate_limit_tokens_per_minute,
         }
 
 
@@ -402,4 +427,3 @@ class OAuthService:
 
         values = parse_qs(urlparse(url).query).get(field)
         return values[0] if values else None
-

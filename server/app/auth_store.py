@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from threading import Lock
 from typing import Any
 
-from pymongo import ASCENDING, MongoClient
+from pymongo import ASCENDING, MongoClient, ReturnDocument
 from pymongo.collection import Collection
 from pymongo.database import Database
 from pymongo.errors import PyMongoError
@@ -14,6 +14,7 @@ from redis import Redis
 from redis.exceptions import RedisError
 
 from .config import Settings
+from .errors import ServerApiError
 
 
 def now_utc() -> datetime:
@@ -36,6 +37,7 @@ class InMemoryCollectionStore:
         self.refresh_tokens: dict[str, dict[str, Any]] = {}
         self.login_sessions: dict[str, dict[str, Any]] = {}
         self.oauth_states: dict[str, str] = {}
+        self.quota_ledgers: list[dict[str, Any]] = []
         self.lock = Lock()
 
 
@@ -53,11 +55,26 @@ class MongoRepository:
 
     def _db_or_none(self) -> Database[Any] | None:
         if not self._settings.mongodb_uri:
+            if not self._settings.allow_inmemory_mongo_fallback:
+                raise ServerApiError(
+                    status_code=503,
+                    code="DEPENDENCY_UNAVAILABLE",
+                    message="MongoDB fallback is disabled and MONGODB_URI is missing.",
+                    error_type="server_error",
+                )
             return None
         if self._db is None:
             self._client = MongoClient(self._settings.mongodb_uri, serverSelectionTimeoutMS=1500)
             self._db = self._client[self._settings.mongodb_db_name]
         return self._db
+
+    def ensure_connection(self) -> None:
+        if not self._settings.mongodb_uri:
+            return
+        db = self._db_or_none()
+        if db is None:
+            return
+        db.client.admin.command("ping")
 
     def _collection(self, name: str) -> Collection[Any] | None:
         db = self._db_or_none()
@@ -73,6 +90,7 @@ class MongoRepository:
             identities = self._collection("auth_identities")
             refresh_tokens = self._collection("refresh_tokens")
             sessions = self._collection("auth_sessions")
+            quota_ledgers = self._collection("quota_ledgers")
             if users is None or identities is None or refresh_tokens is None or sessions is None:
                 self._indexes_ready = True
                 return
@@ -81,9 +99,13 @@ class MongoRepository:
             refresh_tokens.create_index([("token_hash", ASCENDING)], unique=True)
             refresh_tokens.create_index([("session_id", ASCENDING)])
             sessions.create_index([("user_id", ASCENDING)])
+            if quota_ledgers is not None:
+                quota_ledgers.create_index([("user_id", ASCENDING), ("created_at", ASCENDING)])
+                quota_ledgers.create_index([("request_id", ASCENDING)], unique=True, sparse=True)
             self._indexes_ready = True
         except PyMongoError:
-            self._indexes_ready = True
+            self._indexes_ready = False
+            raise
 
     def find_user_by_id(self, user_id: str) -> dict[str, Any] | None:
         users = self._collection("users")
@@ -118,6 +140,185 @@ class MongoRepository:
                 user.update(update_doc["$set"])
             return
         users.update_one({"_id": user_id}, update_doc)
+
+    def initialize_user_quota(self, user_id: str, quota_total: int, remaining_quota: int, quota_status: str) -> None:
+        users = self._collection("users")
+        update_fields = {
+            "quota_total": quota_total,
+            "remaining_quota": remaining_quota,
+            "quota_status": quota_status,
+            "updated_at": to_iso(now_utc()),
+        }
+        if users is None:
+            with self._fallback.lock:
+                user = self._fallback.users.get(user_id)
+                if user is not None:
+                    user.update(update_fields)
+            return
+        users.update_one(
+            {"_id": user_id},
+            {
+                "$set": update_fields,
+            },
+        )
+
+    def consume_user_quota(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        request_id: str,
+        model: str,
+        provider_model: str | None,
+        prompt_tokens: int,
+        completion_tokens: int,
+        total_tokens: int,
+        quota_total: int,
+        low_watermark_tokens: int,
+    ) -> dict[str, Any]:
+        updated_at = to_iso(now_utc())
+        if total_tokens <= 0:
+            user = self.find_user_by_id(user_id)
+            if user is None:
+                raise KeyError(user_id)
+            return user
+        if total_tokens < 0:
+            raise ValueError("total_tokens must be non-negative")
+        if total_tokens == 0:
+            user = self.find_user_by_id(user_id)
+            if user is None:
+                raise KeyError(user_id)
+            return user
+        users = self._collection("users")
+        quota_ledgers = self._collection("quota_ledgers")
+        if users is None:
+            with self._fallback.lock:
+                user = self._fallback.users[user_id]
+                current_remaining = int(user["remaining_quota"]) if user.get("remaining_quota") is not None else quota_total
+                next_remaining = max(0, current_remaining - total_tokens)
+                next_status = "exhausted" if next_remaining == 0 else ("low" if next_remaining <= low_watermark_tokens else "healthy")
+                user.update(
+                    {
+                        "quota_total": int(user["quota_total"]) if user.get("quota_total") is not None else quota_total,
+                        "remaining_quota": next_remaining,
+                        "quota_status": next_status,
+                        "updated_at": updated_at,
+                    }
+                )
+                self._fallback.quota_ledgers.append(
+                    {
+                        "_id": request_id,
+                        "request_id": request_id,
+                        "user_id": user_id,
+                        "session_id": session_id,
+                        "model": model,
+                        "provider_model": provider_model,
+                        "usage": {
+                            "prompt_tokens": prompt_tokens,
+                            "completion_tokens": completion_tokens,
+                            "total_tokens": total_tokens,
+                        },
+                        "remaining_quota": next_remaining,
+                        "created_at": updated_at,
+                    }
+                )
+                return dict(user)
+
+        user = users.find_one({"_id": user_id})
+        if user is None:
+            raise KeyError(user_id)
+        current_total = int(user["quota_total"]) if user.get("quota_total") is not None else quota_total
+        current_remaining = int(user["remaining_quota"]) if user.get("remaining_quota") is not None else current_total
+        next_remaining = max(0, current_remaining - total_tokens)
+        next_status = "exhausted" if next_remaining == 0 else ("low" if next_remaining <= low_watermark_tokens else "healthy")
+        updated_user = users.find_one_and_update(
+            {"_id": user_id},
+            {
+                "$set": {
+                    "quota_total": current_total,
+                    "remaining_quota": next_remaining,
+                    "quota_status": next_status,
+                    "updated_at": updated_at,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if quota_ledgers is not None:
+            quota_ledgers.insert_one(
+                {
+                    "_id": request_id,
+                    "request_id": request_id,
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "model": model,
+                    "provider_model": provider_model,
+                    "usage": {
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
+                        "total_tokens": total_tokens,
+                    },
+                    "remaining_quota": next_remaining,
+                    "created_at": updated_at,
+                }
+            )
+        return updated_user or users.find_one({"_id": user_id}) or user
+
+    def summarize_user_usage(
+        self,
+        *,
+        user_id: str,
+        period_start: datetime,
+    ) -> dict[str, int]:
+        period_start_iso = to_iso(period_start)
+        if period_start_iso is None:
+            raise ValueError("period_start is required")
+        quota_ledgers = self._collection("quota_ledgers")
+        if quota_ledgers is None:
+            with self._fallback.lock:
+                ledgers = [ledger for ledger in self._fallback.quota_ledgers if ledger.get("user_id") == user_id]
+            consumed_tokens = 0
+            request_count = 0
+            for ledger in ledgers:
+                created_at_raw = ledger.get("created_at")
+                created_at = from_iso(created_at_raw) if isinstance(created_at_raw, str) else None
+                if created_at is None:
+                    continue
+                if created_at < period_start:
+                    continue
+                total_tokens = int((ledger.get("usage") or {}).get("total_tokens") or 0)
+                consumed_tokens += total_tokens
+                request_count += 1
+            return {
+                "request_count": request_count,
+                "total_tokens": consumed_tokens,
+            }
+
+        summary_pipeline = [
+            {
+                "$match": {
+                    "user_id": user_id,
+                    "created_at": {"$gte": period_start_iso},
+                }
+            },
+            {
+                "$group": {
+                    "_id": None,
+                    "request_count": {"$sum": 1},
+                    "total_tokens": {"$sum": "$usage.total_tokens"},
+                }
+            },
+        ]
+        result = list(quota_ledgers.aggregate(summary_pipeline))
+        if not result:
+            return {
+                "request_count": 0,
+                "total_tokens": 0,
+            }
+        summary = result[0]
+        return {
+            "request_count": int(summary.get("request_count") or 0),
+            "total_tokens": int(summary.get("total_tokens") or 0),
+        }
 
     def find_identity(self, provider: str, provider_user_id: str) -> dict[str, Any] | None:
         identities = self._collection("auth_identities")
@@ -219,7 +420,7 @@ class LoginSessionStore:
     def __init__(self, settings: Settings, memory_store: InMemoryCollectionStore) -> None:
         self._settings = settings
         self._memory_store = memory_store
-        self._redis: Redis[str] | None = None
+        self._redis: Redis | None = None
         self._redis_ready: bool | None = None
 
     def _session_key(self, login_session_id: str) -> str:
@@ -228,22 +429,36 @@ class LoginSessionStore:
     def _state_key(self, state: str) -> str:
         return f"entrocut:server:oauth_state:{state}"
 
-    def _get_redis(self) -> Redis[str] | None:
+    def _get_redis(self) -> Redis | None:
         if not self._settings.redis_url:
             self._redis_ready = False
+            if not self._settings.allow_inmemory_redis_fallback:
+                raise RedisError("Redis fallback is disabled and REDIS_URL is missing.")
             return None
         if self._redis_ready is False:
+            if not self._settings.allow_inmemory_redis_fallback:
+                raise RedisError("Redis is unavailable and fallback is disabled.")
             return None
         if self._redis is None:
             self._redis = redis.from_url(self._settings.redis_url, decode_responses=True)
+        redis_client = self._redis
         if self._redis_ready is None:
             try:
-                self._redis.ping()
+                if redis_client is None:
+                    return None
+                redis_client.ping()
                 self._redis_ready = True
             except RedisError:
                 self._redis_ready = False
+                if not self._settings.allow_inmemory_redis_fallback:
+                    raise
                 return None
-        return self._redis
+        return redis_client
+
+    def ensure_connection(self) -> None:
+        redis_client = self._get_redis()
+        if self._settings.redis_url and redis_client is None:
+            raise RedisError("Redis is configured but unavailable.")
 
     def create(self, login_session: dict[str, Any]) -> dict[str, Any]:
         redis_client = self._get_redis()
@@ -316,4 +531,6 @@ class AuthStore:
         self.login_sessions = LoginSessionStore(settings, self.mongo._fallback)
 
     def ensure_indexes(self) -> None:
+        self.mongo.ensure_connection()
         self.mongo.ensure_indexes()
+        self.login_sessions.ensure_connection()
