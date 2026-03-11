@@ -126,9 +126,17 @@ jobs:
             DASHVECTOR_PROTOCOL=grpc
             EOF
             echo "${GHCR_PASSWORD}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+            docker rm -f entrocut-mock-server || true
+            docker rm -f entrocut-server || true
             export IMAGE_REF="${IMAGE_REF}"
             docker compose -f docker-compose.production.yml pull
             docker compose -f docker-compose.production.yml up -d
+            SERVER_IMAGE_REPO="ghcr.io/${{ github.repository_owner }}/entrocut-server"
+            docker image ls "${SERVER_IMAGE_REPO}" --format '{{.Repository}}:{{.Tag}}' \
+              | grep -v ':latest$' \
+              | awk 'NR>2' \
+              | awk '{print $1}' \
+              | xargs -r docker rmi || true
             for i in $(seq 1 30); do
               LIVE_CODE=$(curl --silent --output /dev/null --write-out "%{http_code}" http://127.0.0.1:8001/livez || true)
               READY_CODE=$(curl --silent --output /dev/null --write-out "%{http_code}" http://127.0.0.1:8001/readyz || true)
@@ -141,3 +149,19 @@ jobs:
             docker compose -f docker-compose.production.yml ps
             docker compose -f docker-compose.production.yml logs --tail=200
             exit 1
+
+  cleanup-ghcr:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: ${{ always() && needs.build-and-push.result == 'success' }}
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - name: Delete old GHCR versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: entrocut-server
+          package-type: container
+          owner: ${{ github.repository_owner }}
+          min-versions-to-keep: 2
