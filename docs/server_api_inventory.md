@@ -22,6 +22,7 @@
 | Auth | `/api/v1/auth/oauth/{provider}/callback` | `GET` | 否 | `code`, `state` | 302 跳回 `Client` 或 `deep link` | current |
 | Auth | `/api/v1/auth/login-sessions/{login_session_id}` | `GET` | 否 | `login_session_id` | 一次性领取登录结果 | current |
 | Auth | `/api/v1/auth/dev/fallback` | `GET` | 否 | `login_session_id`, `status` | 开发期网页登录回流页 | current |
+| Auth Test | `/api/v1/test/bootstrap/login-session` | `POST` | `X-Bootstrap-Secret` | `login_session_id`, `provider` | 仅 `staging` 用于注入测试登录态 | current |
 | Auth | `/api/v1/auth/refresh` | `POST` | 否 | `refresh_token` | 新 `access_token` + 新 `refresh_token` | current |
 | Auth | `/api/v1/auth/logout` | `POST` | 是 | `Authorization: Bearer <access_token>` | 登出成功 | current |
 | User | `/api/v1/me` | `GET` | 是 | `Authorization` | 当前用户资料、额度信息 | current |
@@ -249,22 +250,32 @@
 | `422` | `INVALID_CHAT_MESSAGES` | `messages` 非法 |
 | `422` | `INVALID_VECTORIZE_REQUEST` | 向量化参数非法 |
 | `429` | `RATE_LIMITED` | 触发 `RPM/TPM` 限流 |
+| `502` | `PROVIDER_TRANSPORT_ERROR` | 上游模型连接或传输失败 |
+| `502` | `MODEL_PROVIDER_INVALID_RESPONSE` | 上游模型返回非法响应 |
 | `502` | `MODEL_PROVIDER_UNAVAILABLE` | 上游模型失败 |
+| `504` | `PROVIDER_TIMEOUT` | 上游模型超时 |
 | `502` | `VECTOR_PROVIDER_UNAVAILABLE` | 向量服务失败 |
 | `503` | `DEPENDENCY_UNAVAILABLE` | `MongoDB/Redis/Vector DB` 不可用 |
 
-## 5. 当前落地范围与下一步
+## 5. 当前落地范围与上线前收尾
 
-### current（已落地）
+### current（已全部落地）
 1. `Auth phase 1`
 2. `JWT access/refresh token`
 3. `/api/v1/me`
-4. `/v1/chat/completions`
-5. `quota / rate limit`
-6. `Google OAuth`
-7. `MongoDB Atlas + Redis`
+4. `/user/profile`
+5. `/user/usage`
+6. `/v1/chat/completions`
+7. `chat proxy SSE streaming（聊天代理流式返回）`
+8. `quota / rate limit`
+9. `Google OAuth`
+10. `MongoDB Atlas + Redis`
+11. `/v1/assets/vectorize`
+12. `/v1/assets/retrieval`
+13. `DashScope + DashVector` 真实联调
 
-### next（下一步）
-1. 为 `/v1/assets/vectorize` 与 `/v1/assets/retrieval` 补真实云端联调
-2. 为 `Vector / RAG` 增加更完整的端到端回归测试
-3. 为 `quota / rate limit / provider` 增加结构化日志与告警
+### hardening（上线前收尾）
+1. `observability（可观测性）`：统一 `structured logging（结构化日志）`、`metrics（指标）`、`alerts（告警）`
+2. `dependency resilience（依赖韧性）`：收口 `MongoDB / Redis / provider / DashScope / DashVector` 的错误分级与降级策略
+3. `security hardening（安全加固）`：`.env` 密钥治理、生产 `CORS` 白名单、`dev fallback` 生产禁用、限额与限流阈值校准
+4. `deployment readiness（部署就绪）`：补启动检查、健康检查分层、运行手册与告警手册
