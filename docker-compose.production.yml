@@ -28,7 +28,7 @@ services:
 
   redis:
     container_name: entrocut-redis
-    image: redis:7-alpine
+    image: ghcr.io/shaowenfu/redis:7-alpine
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
