@@ -60,6 +60,41 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Validate required deployment configuration
+        env:
+          SERVER_BASE_URL: ${{ vars.SERVER_BASE_URL }}
+          CORS_ALLOW_ORIGINS: ${{ vars.CORS_ALLOW_ORIGINS }}
+          AUTH_JWT_SECRET: ${{ secrets.AUTH_JWT_SECRET }}
+          AUTH_GOOGLE_CLIENT_ID: ${{ secrets.AUTH_GOOGLE_CLIENT_ID }}
+          AUTH_GOOGLE_CLIENT_SECRET: ${{ secrets.AUTH_GOOGLE_CLIENT_SECRET }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          MONGODB_ATLAS_URI: ${{ secrets.MONGODB_ATLAS_URI }}
+          DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+          DASHVECTOR_API_KEY: ${{ secrets.DASHVECTOR_API_KEY }}
+          DASHVECTOR_ENDPOINT: ${{ secrets.DASHVECTOR_ENDPOINT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          required_names=(
+            SERVER_BASE_URL
+            CORS_ALLOW_ORIGINS
+            AUTH_JWT_SECRET
+            AUTH_GOOGLE_CLIENT_ID
+            AUTH_GOOGLE_CLIENT_SECRET
+            GOOGLE_API_KEY
+            MONGODB_ATLAS_URI
+            DASHSCOPE_API_KEY
+            DASHVECTOR_API_KEY
+            DASHVECTOR_ENDPOINT
+          )
+          for name in "${required_names[@]}"; do
+            value="${!name:-}"
+            if [ -z "${value}" ]; then
+              echo "Missing required deployment configuration: ${name}" >&2
+              exit 1
+            fi
+          done
+
       - name: Copy compose file to ECS
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -132,12 +167,14 @@ jobs:
             docker compose -f docker-compose.production.yml pull
             docker compose -f docker-compose.production.yml up -d
             SERVER_IMAGE_REPO="ghcr.io/${{ github.repository_owner }}/entrocut-server"
-            STALE_IMAGES=$(docker image ls "${SERVER_IMAGE_REPO}" --format '{{.Repository}}:{{.Tag}}' \
+            STALE_IMAGE_IDS=$(docker image ls "${SERVER_IMAGE_REPO}" --format '{{.ID}} {{.Repository}}:{{.Tag}}' \
               | grep -v ':latest$' \
               | sed '/^$/d' \
-              | tail -n +3 || true)
-            if [ -n "${STALE_IMAGES}" ]; then
-              echo "${STALE_IMAGES}" | xargs docker rmi || true
+              | tail -n +3 \
+              | awk '{print $1}' \
+              | sed '/^$/d' || true)
+            if [ -n "${STALE_IMAGE_IDS}" ]; then
+              echo "${STALE_IMAGE_IDS}" | xargs docker rmi || true
             fi
             for i in $(seq 1 30); do
               LIVE_CODE=$(curl --silent --output /dev/null --write-out "%{http_code}" http://127.0.0.1:8001/livez || true)
