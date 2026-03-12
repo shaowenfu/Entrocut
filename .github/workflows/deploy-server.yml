@@ -132,17 +132,24 @@ jobs:
             docker compose -f docker-compose.production.yml pull
             docker compose -f docker-compose.production.yml up -d
             SERVER_IMAGE_REPO="ghcr.io/${{ github.repository_owner }}/entrocut-server"
-            docker image ls "${SERVER_IMAGE_REPO}" --format '{{.Repository}}:{{.Tag}}' \
+            STALE_IMAGES=$(docker image ls "${SERVER_IMAGE_REPO}" --format '{{.Repository}}:{{.Tag}}' \
               | grep -v ':latest$' \
-              | awk 'NR>2' \
-              | awk '{print $1}' \
-              | xargs -r docker rmi || true
+              | sed '/^$/d' \
+              | tail -n +3 || true)
+            if [ -n "${STALE_IMAGES}" ]; then
+              echo "${STALE_IMAGES}" | xargs docker rmi || true
+            fi
             for i in $(seq 1 30); do
               LIVE_CODE=$(curl --silent --output /dev/null --write-out "%{http_code}" http://127.0.0.1:8001/livez || true)
               READY_CODE=$(curl --silent --output /dev/null --write-out "%{http_code}" http://127.0.0.1:8001/readyz || true)
               if [ "${LIVE_CODE}" = "200" ] && [ "${READY_CODE}" = "200" ]; then
                 echo "deploy_ready"
                 exit 0
+              fi
+              echo "livez=${LIVE_CODE} readyz=${READY_CODE}"
+              if [ "${READY_CODE}" != "200" ]; then
+                curl --silent http://127.0.0.1:8001/readyz || true
+                echo
               fi
               sleep 2
             done
