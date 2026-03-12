@@ -91,7 +91,7 @@ jobs:
             mkdir -p "${DEPLOY_DIR}"
             cd "${DEPLOY_DIR}"
             cat > .env.production <<EOF
-            APP_ENV=production
+            APP_ENV=staging
             SERVER_PORT=8001
             SERVER_LOG_LEVEL=info
             SERVER_BASE_URL=${{ vars.SERVER_BASE_URL }}
