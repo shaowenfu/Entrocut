@@ -72,10 +72,13 @@ def validate_runtime_settings(settings: Settings) -> None:
             message="CORS_ALLOW_ORIGINS cannot be empty in staging/production.",
             error_type="server_error",
         )
-    if any("localhost" in origin or "127.0.0.1" in origin for origin in normalized_origins):
+    contains_localhost_origin = any(
+        "localhost" in origin or "127.0.0.1" in origin for origin in normalized_origins
+    )
+    if settings.is_production and contains_localhost_origin:
         raise ServerApiError(
             status_code=503,
             code="DEPENDENCY_UNAVAILABLE",
-            message="CORS_ALLOW_ORIGINS cannot contain localhost entries in staging/production.",
+            message="CORS_ALLOW_ORIGINS cannot contain localhost entries in production.",
             error_type="server_error",
         )

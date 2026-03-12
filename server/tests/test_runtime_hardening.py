@@ -61,6 +61,40 @@ def test_validate_runtime_settings_accepts_strict_configuration() -> None:
     validate_runtime_settings(prod_settings)
 
 
+def test_validate_runtime_settings_accepts_localhost_in_staging() -> None:
+    staging_settings = Settings(
+        app_env="staging",
+        mongodb_uri="mongodb+srv://example.mongodb.net/test",
+        redis_url="redis://redis.internal:6379/0",
+        allow_inmemory_mongo_fallback=False,
+        allow_inmemory_redis_fallback=False,
+        cors_allow_origins="https://entrocut.sherwenfu.com,http://localhost:5173",
+        auth_dev_fallback_enabled=False,
+        auth_jwt_secret="super-secret-staging-key",
+    )
+
+    validate_runtime_settings(staging_settings)
+
+
+def test_validate_runtime_settings_rejects_localhost_in_production() -> None:
+    prod_settings = Settings(
+        app_env="production",
+        mongodb_uri="mongodb+srv://example.mongodb.net/test",
+        redis_url="redis://redis.internal:6379/0",
+        allow_inmemory_mongo_fallback=False,
+        allow_inmemory_redis_fallback=False,
+        cors_allow_origins="https://entrocut.sherwenfu.com,http://localhost:5173",
+        auth_dev_fallback_enabled=False,
+        auth_jwt_secret="super-secret-production-key",
+    )
+
+    with pytest.raises(ServerApiError) as exc_info:
+        validate_runtime_settings(prod_settings)
+
+    assert exc_info.value.code == "DEPENDENCY_UNAVAILABLE"
+    assert "localhost entries in production" in exc_info.value.message
+
+
 def test_readyz_reports_local_fallback_dependencies(monkeypatch) -> None:
     _configure_local_runtime(monkeypatch)
     client = TestClient(app)
