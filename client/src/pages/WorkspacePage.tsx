@@ -196,10 +196,13 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const activeTask = useWorkspaceStore((state) => state.activeTask);
   const workflowState = useWorkspaceStore((state) => state.workflowState);
   const exportResult = useWorkspaceStore((state) => state.exportResult);
+  const runtimeState = useWorkspaceStore((state) => state.runtimeState);
   const eventStreamState = useWorkspaceStore((state) => state.eventStreamState);
   const reconnectState = useWorkspaceStore((state) => state.reconnectState);
   const lastError = useWorkspaceStore((state) => state.lastError);
   const initializeWorkspace = useWorkspaceStore((state) => state.initializeWorkspace);
+  const setSelectionContext = useWorkspaceStore((state) => state.setSelectionContext);
+  const runAgentLoop = useWorkspaceStore((state) => state.runAgentLoop);
   const uploadAssets = useWorkspaceStore((state) => state.uploadAssets);
   const sendChat = useWorkspaceStore((state) => state.sendChat);
   const exportProject = useWorkspaceStore((state) => state.exportProject);
@@ -234,6 +237,11 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     workflowState === "ready" &&
     !isEditLocked &&
     !(activeTask && activeTask.status === "running");
+  const canRunAgentLoop =
+    !isEditLocked &&
+    !isLoadingWorkspace &&
+    !(activeTask && activeTask.status === "running") &&
+    Boolean(runtimeState.draft.editDraft);
 
   const reconnectingPill: EventStreamVisualState = useMemo(() => {
     if (reconnectState === "reconnecting") {
@@ -354,6 +362,17 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
       setPreviewSelection({ kind: "asset", assetId: assets[0].id });
     }
   }, [assets, clips, previewSelection, storyboard]);
+
+  useEffect(() => {
+    if (previewSelection?.kind === "scene") {
+      setSelectionContext({
+        scope: "scene",
+        selectedSceneId: previewSelection.sceneId,
+      });
+      return;
+    }
+    setSelectionContext({ scope: "global" });
+  }, [previewSelection, setSelectionContext]);
 
   useEffect(() => {
     let cancelled = false;
@@ -579,6 +598,29 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     setPromptText("");
     setIsPlaying(false);
     await sendChat(trimmed);
+  }
+
+  async function handleRunAgentLoop() {
+    if (!canRunAgentLoop) {
+      return;
+    }
+    setIsEditLocked(true);
+    setReasoningOverlay("Agent loop running...");
+    try {
+      const result = await runAgentLoop("create_retrieval_request");
+      const lastStep = result.steps[result.steps.length - 1];
+      setReasoningOverlay(
+        lastStep?.success
+          ? `Agent loop finished: ${lastStep.stopReason}`
+          : `Agent loop failed: ${lastStep?.error?.code ?? "unknown_error"}`,
+      );
+      window.setTimeout(() => setReasoningOverlay(null), 2400);
+    } catch {
+      setReasoningOverlay("Agent loop failed.");
+      window.setTimeout(() => setReasoningOverlay(null), 2400);
+    } finally {
+      setIsEditLocked(false);
+    }
   }
 
   function handleTogglePlay() {
@@ -879,7 +921,12 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
               <MessageSquare size={16} />
               <span>AI Copilot</span>
             </h2>
-            <span className="session-badge">{sessionLabel}</span>
+            <div className="topbar-actions">
+              <button type="button" onClick={() => void handleRunAgentLoop()} disabled={!canRunAgentLoop}>
+                Run Agent
+              </button>
+              <span className="session-badge">{sessionLabel}</span>
+            </div>
           </div>
 
           <div className="chat-thread">
