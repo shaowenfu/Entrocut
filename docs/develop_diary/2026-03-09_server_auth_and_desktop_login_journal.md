@@ -43,8 +43,8 @@
 
 我新增了两份关键文档：
 
-1. `docs/server_auth_system_design.md`
-2. `docs/server_openai_compatible_contract.md`
+1. `docs/server/03_server_auth_system_design.md`
+2. `docs/server/04_server_openai_compatible_contract.md`
 
 其中第一份专门负责：
 
@@ -381,7 +381,7 @@
 
 并且顺手补了一份：
 
-1. `docs/auth_implementation_spec.md`
+1. `docs/server/05_auth_implementation_spec.md`
 
 这份文档不是愿景文档，而是当前真实代码的工程规范，专门写给后面接手的工程师。
 

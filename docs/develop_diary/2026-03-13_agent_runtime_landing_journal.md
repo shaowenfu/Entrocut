@@ -67,7 +67,7 @@
 5. 系统刚刚做了什么
 6. 哪些对话结论已经被吸收
 
-我把这一步落成了 [state_layer_design.md](/home/sherwen/MyProjects/Entrocut/docs/state_layer_design.md)。
+我把这一步落成了 [03_state_layer_design.md](/home/sherwen/MyProjects/Entrocut/docs/agent_runtime/03_state_layer_design.md)。
 
 更重要的是，我没有停在文档里。我马上把它代码化成了：
 
@@ -115,7 +115,7 @@
 
 `planner 如何把“下一步决定”表达成一个系统能验证、能路由、能执行的对象。`
 
-所以我继续把这层推进成了 [planner_output_schema.md](/home/sherwen/MyProjects/Entrocut/docs/planner_output_schema.md)。
+所以我继续把这层推进成了 [14_planner_output_schema.md](/home/sherwen/MyProjects/Entrocut/docs/agent_runtime/14_planner_output_schema.md)。
 
 我最终把 `planner output` 收敛成三层：
 
@@ -170,11 +170,11 @@
 
 并分别落了字段级文档：
 
-- [read_tool_contract.md](/home/sherwen/MyProjects/Entrocut/docs/read_tool_contract.md)
-- [retrieval_request_schema.md](/home/sherwen/MyProjects/Entrocut/docs/retrieval_request_schema.md)
-- [inspect_tool_contract.md](/home/sherwen/MyProjects/Entrocut/docs/inspect_tool_contract.md)
-- [edit_draft_patch_schema.md](/home/sherwen/MyProjects/Entrocut/docs/edit_draft_patch_schema.md)
-- [preview_tool_contract.md](/home/sherwen/MyProjects/Entrocut/docs/preview_tool_contract.md)
+- [06_read_tool_contract.md](/home/sherwen/MyProjects/Entrocut/docs/agent_runtime/06_read_tool_contract.md)
+- [07_retrieval_request_schema.md](/home/sherwen/MyProjects/Entrocut/docs/agent_runtime/07_retrieval_request_schema.md)
+- [08_inspect_tool_contract.md](/home/sherwen/MyProjects/Entrocut/docs/agent_runtime/08_inspect_tool_contract.md)
+- [09_edit_draft_patch_schema.md](/home/sherwen/MyProjects/Entrocut/docs/agent_runtime/09_edit_draft_patch_schema.md)
+- [10_preview_tool_contract.md](/home/sherwen/MyProjects/Entrocut/docs/agent_runtime/10_preview_tool_contract.md)
 
 我当时特别想钉住的一点是：
 
@@ -203,12 +203,12 @@
 
 随后我先落了总设计：
 
-- [memory_context_layer_design.md](/home/sherwen/MyProjects/Entrocut/docs/memory_context_layer_design.md)
+- [11_memory_context_layer_design.md](/home/sherwen/MyProjects/Entrocut/docs/agent_runtime/11_memory_context_layer_design.md)
 
 然后把其中最关键的两个对象继续拆开：
 
-1. [action_context_packet_schema.md](/home/sherwen/MyProjects/Entrocut/docs/action_context_packet_schema.md)
-2. [context_assembler_design.md](/home/sherwen/MyProjects/Entrocut/docs/context_assembler_design.md)
+1. [12_action_context_packet_schema.md](/home/sherwen/MyProjects/Entrocut/docs/agent_runtime/12_action_context_packet_schema.md)
+2. [13_context_assembler_design.md](/home/sherwen/MyProjects/Entrocut/docs/agent_runtime/13_context_assembler_design.md)
 
 我对这部分最在意的不是“字段有多少”，而是两个原则：
 
@@ -263,7 +263,7 @@
 
 于是我把 `Execution Loop` 继续收束成了：
 
-- [execution_loop_design.md](/home/sherwen/MyProjects/Entrocut/docs/execution_loop_design.md)
+- [15_execution_loop_design.md](/home/sherwen/MyProjects/Entrocut/docs/agent_runtime/15_execution_loop_design.md)
 
 我最终把它定成了 7 个阶段：
 

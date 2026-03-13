@@ -81,7 +81,7 @@
 
 我先新建并固定了：
 
-1. `docs/edit_draft_schema.md`
+1. `docs/editing/01_edit_draft_schema.md`
 
 这份文档是今天所有改动的基准线。  
 我在里面明确写清了：
@@ -98,7 +98,7 @@
 2. `EntroCut_architecture.md`
 3. `EntroCut_algorithm.md`
 4. `docs/README.md`
-5. `docs/core_api_ws_contract.md`
+5. `docs/contracts/01_core_api_ws_contract.md`
 
 我刻意没有去改历史开发日记和归档文档，因为那些文件保留的是当时的判断语境，不应该被事后重写。
 

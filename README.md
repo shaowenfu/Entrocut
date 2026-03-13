@@ -45,8 +45,8 @@
 
 详细契约见 `docs/`：
 
-1. `docs/core_api_ws_contract.md`
-2. `docs/edit_draft_schema.md`
+1. `docs/contracts/01_core_api_ws_contract.md`
+2. `docs/editing/01_edit_draft_schema.md`
 
 ## 快速启动
 
@@ -105,7 +105,7 @@ uvicorn main:app --host 127.0.0.1 --port 8001 --reload
 ## 当前实现状态
 
 1. 启动台主路径已接入真实项目接口；其余核心能力仍以 `Shell（壳层）` 为主。
-2. 当前剪辑结构设计以 `docs/edit_draft_schema.md` 为准：
+2. 当前剪辑结构设计以 `docs/editing/01_edit_draft_schema.md` 为准：
    - `clip` 是分析/检索单元
    - `shot` 是最小可编辑语义单元
    - `scene` 是可选工作分组层

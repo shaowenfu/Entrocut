@@ -1,6 +1,6 @@
 # Server API Inventory（服务端接口清单）
 
-本文档基于 [server_module_design.md](/home/sherwen/MyProjects/Entrocut_server/docs/server_module_design.md) 收口 `Server` 的完整接口边界。目标是把 `Server` 明确为一个以 `Auth（鉴权）`、`AI Model Proxy & Gateway（模型中转站）`、`Quota / Rate Limit（额度与限流）`、`Vector / RAG（向量与检索）` 为核心的云端服务。
+本文档基于 [01_server_module_design.md](./01_server_module_design.md) 收口 `Server` 的完整接口边界。目标是把 `Server` 明确为一个以 `Auth（鉴权）`、`AI Model Proxy & Gateway（模型中转站）`、`Quota / Rate Limit（额度与限流）`、`Vector / RAG（向量与检索）` 为核心的云端服务。
 
 ## 1. 设计原则
 

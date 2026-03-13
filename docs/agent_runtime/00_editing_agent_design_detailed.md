@@ -815,14 +815,14 @@
 
 建议紧接着补齐以下文档：
 
-1. `editing_agent_architecture.md`
-   - 总体 `agent loop`
-2. `retrieval_request_schema.md`
+1. `02_editing_agent_runtime_architecture.md`
+   - 总体 `agent runtime`
+2. `07_retrieval_request_schema.md`
    - 检索请求结构
-3. `edit_draft_patch_schema.md`
+3. `09_edit_draft_patch_schema.md`
    - 草案补丁结构
-4. `selection_context_schema.md`
-   - 局部编辑上下文结构
+4. `03_state_layer_design.md`
+   - 包含局部编辑作用域与运行时状态边界
 
 建议紧接着补齐以下实现：
 

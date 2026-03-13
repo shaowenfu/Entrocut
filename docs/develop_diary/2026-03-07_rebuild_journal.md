@@ -210,7 +210,7 @@
 
 ## 七、我为什么要先写 Core API/WS contract
 
-当 `Launchpad` 和 `Workspace` 的状态模型稳定下来以后，我开始写 `docs/core_api_ws_contract.md`。
+当 `Launchpad` 和 `Workspace` 的状态模型稳定下来以后，我开始写 `docs/contracts/01_core_api_ws_contract.md`。
 
 这一步我非常确定不能省略。
 

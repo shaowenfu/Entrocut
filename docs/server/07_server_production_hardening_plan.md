@@ -1,6 +1,6 @@
 # Server 上线前收尾方案
 
-本文档面向 [server_module_design.md](/home/sherwen/MyProjects/Entrocut_server/docs/server_module_design.md) 的最终收尾阶段。目标不是继续扩接口，而是把现有 `server` 从“功能已跑通”推进到“适合云端联调、具备上线前置条件”的状态。
+本文档面向 [01_server_module_design.md](./01_server_module_design.md) 的最终收尾阶段。目标不是继续扩接口，而是把现有 `server` 从“功能已跑通”推进到“适合云端联调、具备上线前置条件”的状态。
 
 ## 1. 当前现状
 

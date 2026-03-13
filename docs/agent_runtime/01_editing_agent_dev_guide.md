@@ -4,7 +4,7 @@
 
 如果要看设计推导、取舍和讨论细节，请看：
 
-- [Editing Agent 详细设计](./editing_agent_design_detailed.md)
+- [Editing Agent 详细设计](./00_editing_agent_design_detailed.md)
 
 ---
 

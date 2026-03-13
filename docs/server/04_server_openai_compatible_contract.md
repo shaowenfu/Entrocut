@@ -2,7 +2,7 @@
 
 本文档定义当前重构阶段 `Core -> Server` 的最小云端通信契约。
 
-用户登录、注册、用户管理、`JWT` 签发与 `OAuth` 流程，统一以 [Server Auth System Design](./server_auth_system_design.md) 为准。
+用户登录、注册、用户管理、`JWT` 签发与 `OAuth` 流程，统一以 [Server Auth System Design](./03_server_auth_system_design.md) 为准。
 
 当前已经落地的实现细节，尤其是：
 
@@ -11,7 +11,7 @@
 3. `login_session` 一次性消费语义
 4. `client / core / server` 的职责边界
 
-统一以 [Auth Implementation Spec](./auth_implementation_spec.md) 为准。
+统一以 [Auth Implementation Spec](./05_auth_implementation_spec.md) 为准。
 
 换句话说：
 

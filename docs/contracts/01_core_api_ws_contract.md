@@ -14,7 +14,7 @@
 2. `Workspace（工作台）` 状态机
 3. 最小 `Chat-to-Cut` 本地闭环
 
-本文档中涉及剪辑结构的部分，以 [EditDraft Schema](./edit_draft_schema.md) 为准。
+本文档中涉及剪辑结构的部分，以 [EditDraft Schema](../editing/01_edit_draft_schema.md) 为准。
 
 因此：
 

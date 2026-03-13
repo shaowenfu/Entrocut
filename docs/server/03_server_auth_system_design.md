@@ -4,10 +4,10 @@
 
 目标不是做一个“大而全用户中心”，而是先搭一套小而完整、可扩展、适合桌面应用的鉴权系统，为后续 `chat proxy`、`embedding proxy`、`quota`、`project sync` 提供统一底座。
 
-本文档与 [Server OpenAI-Compatible Contract](./server_openai_compatible_contract.md) 配套：
+本文档与 [Server OpenAI-Compatible Contract](./04_server_openai_compatible_contract.md) 配套：
 
 1. 本文档定义“用户怎么登录、token 怎么来、server 怎么认人”
-2. `server_openai_compatible_contract.md` 定义“拿到 token 之后，Core 怎么调用受保护的 AI 接口”
+2. `04_server_openai_compatible_contract.md` 定义“拿到 token 之后，Core 怎么调用受保护的 AI 接口”
 
 ## 1. 一句话结论
 

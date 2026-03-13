@@ -6,9 +6,9 @@
 
 配套文档：
 
-1. [Server Auth System Design](./server_auth_system_design.md)
-2. [Server OpenAI-Compatible Contract](./server_openai_compatible_contract.md)
-3. [Core API / WS Contract](./core_api_ws_contract.md)
+1. [Server Auth System Design](./03_server_auth_system_design.md)
+2. [Server OpenAI-Compatible Contract](./04_server_openai_compatible_contract.md)
+3. [Core API / WS Contract](../contracts/01_core_api_ws_contract.md)
 
 ## 1. 一句话结论
 
@@ -434,4 +434,3 @@ X-Request-ID: req_xxxxxxxxxxxx
 1. 登录入口在 `client`
 2. 身份真相在 `server`
 3. 执行凭证同步到 `core`
-
