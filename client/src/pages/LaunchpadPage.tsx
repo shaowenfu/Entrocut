@@ -6,6 +6,7 @@ import {
   Cloud,
   FileVideo,
   FolderUp,
+  Github,
   HardDrive,
   LogOut,
   MoreVertical,
@@ -46,6 +47,7 @@ function LaunchpadPage() {
   const authUser = useAuthStore((state) => state.user);
   const authError = useAuthStore((state) => state.lastError);
   const startGoogleLogin = useAuthStore((state) => state.startGoogleLogin);
+  const startGithubLogin = useAuthStore((state) => state.startGithubLogin);
   const logout = useAuthStore((state) => state.logout);
   const clearAuthError = useAuthStore((state) => state.clearError);
 
@@ -159,34 +161,46 @@ function LaunchpadPage() {
           <kbd>Ctrl+K</kbd>
         </label>
 
-        <button
-          type="button"
-          className="launchpad-user"
-          onClick={() => {
-            if (authStatus === "authenticated") {
+        {authStatus === "authenticated" ? (
+          <button
+            type="button"
+            className="launchpad-user"
+            onClick={() => {
               void logout();
-              return;
-            }
-            void startGoogleLogin();
-          }}
-          title={
-            authStatus === "authenticated"
-              ? `Sign out ${authUser?.email ?? authUser?.display_name ?? "current user"}`
-              : "Continue with Google"
-          }
-          disabled={authStatus === "authenticating"}
-        >
-          {authStatus === "authenticated" ? (
-            <>
-              {authUser?.display_name ?? authUser?.email ?? "ME"}
-              <LogOut size={14} />
-            </>
-          ) : authStatus === "authenticating" ? (
-            "Connecting..."
-          ) : (
-            "Sign In"
-          )}
-        </button>
+            }}
+            title={`Sign out ${authUser?.email ?? authUser?.display_name ?? "current user"}`}
+            disabled={authStatus === "authenticating"}
+          >
+            {authUser?.display_name ?? authUser?.email ?? "ME"}
+            <LogOut size={14} />
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="launchpad-user"
+              onClick={() => {
+                void startGoogleLogin();
+              }}
+              title="Continue with Google"
+              disabled={authStatus === "authenticating"}
+            >
+              {authStatus === "authenticating" ? "Connecting..." : "Continue with Google"}
+            </button>
+            <button
+              type="button"
+              className="launchpad-user"
+              onClick={() => {
+                void startGithubLogin();
+              }}
+              title="Continue with GitHub"
+              disabled={authStatus === "authenticating"}
+            >
+              <Github size={14} />
+              {authStatus === "authenticating" ? "Connecting..." : "Continue with GitHub"}
+            </button>
+          </>
+        )}
       </header>
 
       <main className="launchpad-main">

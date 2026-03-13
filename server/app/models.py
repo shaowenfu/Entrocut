@@ -14,7 +14,7 @@ class RuntimeCapabilitiesResponse(BaseModel):
 
 
 class LoginSessionCreateRequest(BaseModel):
-    provider: Literal["google"] = "google"
+    provider: Literal["google", "github"] = "google"
     client_redirect_uri: str | None = None
 
 
@@ -61,7 +61,7 @@ class LoginSessionStatusResponse(BaseModel):
 
 class StagingBootstrapLoginSessionRequest(BaseModel):
     login_session_id: str = Field(min_length=8)
-    provider: Literal["google"] = "google"
+    provider: Literal["google", "github"] = "google"
     email: str | None = None
     display_name: str | None = None
 

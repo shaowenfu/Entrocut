@@ -49,6 +49,8 @@ class Settings(BaseSettings):
 
     auth_google_client_id: str | None = None
     auth_google_client_secret: str | None = None
+    auth_github_client_id: str | None = None
+    auth_github_client_secret: str | None = None
     auth_google_scope: str = "openid email profile"
     llm_proxy_mode: str = "mock"
     llm_default_model: str = "entro-reasoning-v1"

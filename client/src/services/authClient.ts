@@ -103,6 +103,20 @@ export async function createGoogleLoginSession(): Promise<LoginSessionCreateResp
   });
 }
 
+export async function createGithubLoginSession(): Promise<LoginSessionCreateResponse> {
+  const clientRedirectUri = isElectronEnvironment()
+    ? undefined
+    : endpoint("/api/v1/auth/dev/fallback");
+  return requestJson<LoginSessionCreateResponse>(endpoint("/api/v1/auth/login-sessions"), {
+    method: "POST",
+    authRequired: false,
+    body: {
+      provider: "github",
+      client_redirect_uri: clientRedirectUri,
+    },
+  });
+}
+
 export async function claimLoginSession(loginSessionId: string): Promise<AuthUser> {
   const response = await requestJson<LoginSessionClaimResponse>(
     endpoint(`/api/v1/auth/login-sessions/${encodeURIComponent(loginSessionId)}`),

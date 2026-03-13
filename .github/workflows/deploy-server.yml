@@ -67,6 +67,8 @@ jobs:
           AUTH_JWT_SECRET: ${{ secrets.AUTH_JWT_SECRET }}
           AUTH_GOOGLE_CLIENT_ID: ${{ secrets.AUTH_GOOGLE_CLIENT_ID }}
           AUTH_GOOGLE_CLIENT_SECRET: ${{ secrets.AUTH_GOOGLE_CLIENT_SECRET }}
+          AUTH_GITHUB_CLIENT_ID: ${{ secrets.AUTH_GITHUB_CLIENT_ID }}
+          AUTH_GITHUB_CLIENT_SECRET: ${{ secrets.AUTH_GITHUB_CLIENT_SECRET }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           MONGODB_ATLAS_URI: ${{ secrets.MONGODB_ATLAS_URI }}
           DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
@@ -81,6 +83,8 @@ jobs:
             AUTH_JWT_SECRET
             AUTH_GOOGLE_CLIENT_ID
             AUTH_GOOGLE_CLIENT_SECRET
+            AUTH_GITHUB_CLIENT_ID
+            AUTH_GITHUB_CLIENT_SECRET
             GOOGLE_API_KEY
             MONGODB_ATLAS_URI
             DASHSCOPE_API_KEY
@@ -146,6 +150,8 @@ jobs:
             AUTH_DEV_FALLBACK_ENABLED=false
             AUTH_GOOGLE_CLIENT_ID=${{ secrets.AUTH_GOOGLE_CLIENT_ID }}
             AUTH_GOOGLE_CLIENT_SECRET=${{ secrets.AUTH_GOOGLE_CLIENT_SECRET }}
+            AUTH_GITHUB_CLIENT_ID=${{ secrets.AUTH_GITHUB_CLIENT_ID }}
+            AUTH_GITHUB_CLIENT_SECRET=${{ secrets.AUTH_GITHUB_CLIENT_SECRET }}
             AUTH_GOOGLE_SCOPE=openid email profile
             CORS_ALLOW_ORIGINS=${{ vars.CORS_ALLOW_ORIGINS }}
             LLM_PROXY_MODE=google_gemini
