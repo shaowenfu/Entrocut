@@ -20,6 +20,7 @@ DEFAULT_SERVER_BASE_URL = "http://127.0.0.1:8001"
 SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", DEFAULT_SERVER_BASE_URL).rstrip("/")
 SERVER_CHAT_MODEL = os.getenv("SERVER_CHAT_MODEL", "entro-reasoning-v1").strip() or "entro-reasoning-v1"
 SERVER_CHAT_TIMEOUT_SECONDS = float(os.getenv("SERVER_CHAT_TIMEOUT_SECONDS", "30"))
+DEFAULT_BYOK_BASE_URL = "https://api.openai.com"
 
 app = FastAPI(title="EntroCut Core In-Memory", version=APP_VERSION)
 app.add_middleware(
@@ -252,6 +253,7 @@ class ChatTarget(BaseModel):
 class ChatRequest(BaseModel):
     prompt: str
     target: ChatTarget | None = None
+    model: str | None = None
 
 
 class ExportRequest(BaseModel):
@@ -633,7 +635,7 @@ class InMemoryProjectStore:
             {"task": succeeded.model_dump(), "workflow_state": next_workflow_state},
         )
 
-    async def queue_chat(self, project_id: str, prompt: str, target: ChatTarget | None) -> TaskModel:
+    async def queue_chat(self, project_id: str, prompt: str, target: ChatTarget | None, model: str | None, routing_mode: str, byok_key: str | None, byok_base_url: str | None) -> TaskModel:
         normalized_prompt = _trimmed(prompt)
         if normalized_prompt is None:
             raise CoreApiError(
@@ -682,10 +684,10 @@ class InMemoryProjectStore:
             "task.updated",
             {"task": task.model_dump(), "workflow_state": "chat_thinking"},
         )
-        asyncio.create_task(self._run_chat(project_id, normalized_prompt, target, task))
+        asyncio.create_task(self._run_chat(project_id, normalized_prompt, target, task, model, routing_mode, byok_key, byok_base_url))
         return task
 
-    async def _run_chat(self, project_id: str, prompt: str, target: ChatTarget | None, task: TaskModel) -> None:
+    async def _run_chat(self, project_id: str, prompt: str, target: ChatTarget | None, task: TaskModel, model: str | None, routing_mode: str, byok_key: str | None, byok_base_url: str | None) -> None:
         record = self.get_project_or_raise(project_id)
         await asyncio.sleep(0.05)
         running = task.model_copy(
@@ -715,6 +717,10 @@ class InMemoryProjectStore:
                 prompt=prompt,
                 draft=draft,
                 target=target,
+                model=model,
+                routing_mode=routing_mode,
+                byok_key=byok_key,
+                byok_base_url=byok_base_url,
             )
             shots, scenes = _build_edit_plan(draft.clips, prompt)
             scoped_target = "selected scene" if target and target.scene_id else "whole draft"
@@ -906,6 +912,10 @@ async def _request_server_chat_completion(
     prompt: str,
     draft: EditDraftModel,
     target: ChatTarget | None,
+    model: str | None,
+    routing_mode: str,
+    byok_key: str | None,
+    byok_base_url: str | None,
 ) -> dict[str, Any]:
     clip_context = [
         {
@@ -925,7 +935,7 @@ async def _request_server_chat_completion(
         "clips": clip_context,
     }
     payload = {
-        "model": SERVER_CHAT_MODEL,
+        "model": model.strip() if isinstance(model, str) and model.strip() else SERVER_CHAT_MODEL,
         "stream": False,
         "temperature": 0.2,
         "max_tokens": 400,
@@ -945,16 +955,27 @@ async def _request_server_chat_completion(
         ],
     }
 
+    request_headers: dict[str, str] = {
+        "Content-Type": "application/json",
+        "X-Request-ID": _request_id(),
+    }
+    if routing_mode == "BYOK":
+        normalized_key = (byok_key or "").strip()
+        if not normalized_key:
+            raise CoreApiError(
+                status_code=422,
+                code="BYOK_KEY_REQUIRED",
+                message="X-BYOK-Key is required when X-Routing-Mode is BYOK.",
+            )
+        base_url = (byok_base_url or DEFAULT_BYOK_BASE_URL).rstrip("/")
+        endpoint_url = f"{base_url}/v1/chat/completions"
+        request_headers["Authorization"] = f"Bearer {normalized_key}"
+    else:
+        endpoint_url = f"{SERVER_BASE_URL}/v1/chat/completions"
+        request_headers["Authorization"] = f"Bearer {access_token}"
+
     async with httpx.AsyncClient(timeout=SERVER_CHAT_TIMEOUT_SECONDS) as client:
-        response = await client.post(
-            f"{SERVER_BASE_URL}/v1/chat/completions",
-            json=payload,
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/json",
-                "X-Request-ID": _request_id(),
-            },
-        )
+        response = await client.post(endpoint_url, json=payload, headers=request_headers)
 
     if response.status_code == 401:
         raise CoreApiError(
@@ -1148,7 +1169,7 @@ async def import_assets(project_id: str, payload: ImportAssetsRequest) -> TaskRe
 
 
 @app.post("/api/v1/projects/{project_id}/chat", response_model=TaskResponse)
-async def chat(project_id: str, payload: ChatRequest) -> TaskResponse:
+async def chat(project_id: str, payload: ChatRequest, request: Request) -> TaskResponse:
     auth_session = await auth_session_store.snapshot()
     if not auth_session.get("access_token"):
         raise CoreApiError(
@@ -1156,7 +1177,17 @@ async def chat(project_id: str, payload: ChatRequest) -> TaskResponse:
             code="AUTH_SESSION_REQUIRED",
             message="Sign in is required before chat can run.",
         )
-    task = await store.queue_chat(project_id, payload.prompt, payload.target)
+    routing_mode = (request.headers.get("X-Routing-Mode") or "Platform").strip()
+    normalized_mode = "BYOK" if routing_mode.upper() == "BYOK" else "Platform"
+    task = await store.queue_chat(
+        project_id,
+        payload.prompt,
+        payload.target,
+        payload.model,
+        normalized_mode,
+        request.headers.get("X-BYOK-Key"),
+        request.headers.get("X-BYOK-BaseURL"),
+    )
     return TaskResponse(task=task)
 
 

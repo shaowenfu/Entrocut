@@ -181,10 +181,17 @@ export interface ImportAssetsRequest {
 
 export interface ChatRequest {
   prompt: string;
+  model?: string;
   target?: {
     scene_id?: string | null;
     shot_id?: string | null;
   };
+}
+
+export interface ChatRoutingOptions {
+  mode: "Platform" | "BYOK";
+  byokKey?: string;
+  byokBaseUrl?: string;
 }
 
 export interface ExportRequest {
@@ -273,10 +280,24 @@ export async function importAssets(projectId: string, payload: ImportAssetsReque
   });
 }
 
-export async function sendChat(projectId: string, payload: ChatRequest): Promise<TaskResponse> {
+export async function sendChat(
+  projectId: string,
+  payload: ChatRequest,
+  routing: ChatRoutingOptions
+): Promise<TaskResponse> {
+  const headers: Record<string, string> = {
+    "X-Routing-Mode": routing.mode,
+  };
+  if (routing.mode === "BYOK" && routing.byokKey) {
+    headers["X-BYOK-Key"] = routing.byokKey;
+  }
+  if (routing.mode === "BYOK" && routing.byokBaseUrl) {
+    headers["X-BYOK-BaseURL"] = routing.byokBaseUrl;
+  }
   return requestJson<TaskResponse>(buildCoreUrl(`/api/v1/projects/${projectId}/chat`), {
     method: "POST",
     body: payload,
+    headers,
     authRequired: false,
   });
 }

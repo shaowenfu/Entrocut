@@ -33,6 +33,7 @@ import {
   type AssistantDecisionTurn,
   type ChatTurn,
 } from "../store/useWorkspaceStore";
+import { useAuthStore } from "../store/useAuthStore";
 
 type WorkspacePageProps = {
   workspaceId: string;
@@ -56,6 +57,7 @@ const SUGGESTION_CHIPS = [
   "Make pacing slightly slower",
 ];
 const HEALTH_POLL_INTERVAL_MS = 10000;
+
 
 function isDecisionTurn(turn: ChatTurn): turn is AssistantDecisionTurn {
   return turn.role === "assistant";
@@ -191,6 +193,9 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const clips = useWorkspaceStore((state) => state.clips);
   const storyboard = useWorkspaceStore((state) => state.storyboard);
   const chatTurns = useWorkspaceStore((state) => state.chatTurns);
+  const authUser = useAuthStore((state) => state.user);
+  const modelPrefs = useAuthStore((state) => state.modelPrefs);
+  const setModelPrefs = useAuthStore((state) => state.setModelPrefs);
   const loadState = useWorkspaceStore((state) => state.loadState);
   const chatState = useWorkspaceStore((state) => state.chatState);
   const activeTask = useWorkspaceStore((state) => state.activeTask);
@@ -718,6 +723,37 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
             {isExporting ? <span className="lock-pill">EXPORTING</span> : null}
             {isEditLocked && !isExporting ? <span className="lock-pill">EDIT LOCKED</span> : null}
           </div>
+          <div className="health-pill" style={{ gap: 8 }}>
+            <span>⚡ {Math.floor((authUser?.credits_balance ?? 0) / 1000)}k Credits</span>
+          </div>
+          <label className="health-pill" style={{ gap: 6 }}>
+            <span>Model</span>
+            <select
+              value={modelPrefs.selectedModel}
+              onChange={(event) => {
+                const model = event.target.value;
+                setModelPrefs({
+                  selectedModel: model,
+                  routingMode: model.startsWith("byok:") ? "BYOK" : "Platform",
+                });
+              }}
+            >
+              <option value="gpt-4o-mini">gpt-4o-mini (0.018 Credits/1K in)</option>
+              <option value="gpt-4o">gpt-4o (0.6 Credits/1K in)</option>
+              <option value="byok:gpt-4o-mini">BYOK gpt-4o-mini</option>
+              <option value="byok:gpt-4o">BYOK gpt-4o</option>
+            </select>
+          </label>
+          {modelPrefs.routingMode === "BYOK" ? (
+            <input
+              className="chat-input"
+              style={{ maxWidth: 220, padding: "6px 10px" }}
+              type="password"
+              placeholder="BYOK API Key"
+              value={modelPrefs.byokKey}
+              onChange={(event) => setModelPrefs({ byokKey: event.target.value })}
+            />
+          ) : null}
           <button className="icon-btn topbar-icon-btn" type="button" aria-label="settings">
             <Settings size={18} />
           </button>

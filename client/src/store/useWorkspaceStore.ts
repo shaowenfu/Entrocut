@@ -22,6 +22,7 @@ import {
   type TaskType,
 } from "../services/coreClient";
 import { registerProjectMediaSources } from "../services/localMediaRegistry";
+import { useAuthStore } from "./useAuthStore";
 
 export interface WorkspaceAssetItem {
   id: string;
@@ -1038,7 +1039,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }
 
       try {
-        const response = await sendChatRequest(workspaceId, { prompt: trimmedPrompt });
+        const { modelPrefs } = useAuthStore.getState();
+        const response = await sendChatRequest(
+          workspaceId,
+          { prompt: trimmedPrompt, model: modelPrefs.selectedModel.replace(/^byok:/, "") },
+          {
+            mode: modelPrefs.routingMode,
+            byokKey: modelPrefs.byokKey,
+            byokBaseUrl: modelPrefs.byokBaseUrl,
+          }
+        );
         dispatch({
           type: "CHAT_REQUEST_ACCEPTED",
           task: mapTask(response.task)!,

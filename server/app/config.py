@@ -6,6 +6,12 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+RATE_CARDS: dict[str, dict[str, int]] = {
+    "gpt-4o": {"prompt_per_1m": 600_000, "completion_per_1m": 1_800_000},
+    "gpt-4o-mini": {"prompt_per_1m": 18_000, "completion_per_1m": 72_000},
+}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=(".env", "server/.env"),

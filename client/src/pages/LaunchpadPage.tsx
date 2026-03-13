@@ -178,7 +178,7 @@ function LaunchpadPage() {
         >
           {authStatus === "authenticated" ? (
             <>
-              {authUser?.display_name ?? authUser?.email ?? "ME"}
+              {authUser?.display_name ?? authUser?.email ?? "ME"} · ⚡ {Math.floor((authUser?.credits_balance ?? 0) / 1000)}k
               <LogOut size={14} />
             </>
           ) : authStatus === "authenticating" ? (
