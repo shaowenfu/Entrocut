@@ -1,0 +1,679 @@
+/**
+ * LaunchpadPage Styles
+ * 使用设计令牌系统重构
+ *
+ * 改进要点：
+ * 1. 移除 "早上好" 问候语，改为更有价值的标题
+ * 2. 增大拖放区目标区域（280px）和图标（64px）
+ * 3. 改进项目网格布局和间距
+ * 4. 应用设计令牌统一间距
+ */
+
+/* ============================================
+ * ROOT
+ * ============================================ */
+
+.launchpad-root {
+  min-height: 100vh;
+  width: 100vw;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(circle at 84% -10%, rgba(102, 85, 221, 0.22) 0%, transparent 34%),
+    radial-gradient(circle at 8% -20%, rgba(69, 163, 219, 0.18) 0%, transparent 35%),
+    var(--color-bg-base);
+}
+
+/* ============================================
+ * TOPBAR
+ * ============================================ */
+
+.launchpad-topbar {
+  height: 64px;
+  display: grid;
+  grid-template-columns: auto minmax(300px, 540px) auto;
+  align-items: center;
+  gap: var(--space-5);
+  padding: 0 var(--space-7);
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: rgba(8, 8, 12, 0.88);
+  backdrop-filter: blur(14px);
+}
+
+.launchpad-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-family: "Sora", "MiSans", sans-serif;
+  font-size: var(--text-lg);
+  letter-spacing: var(--tracking-tight);
+}
+
+.launchpad-search {
+  width: 100%;
+  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-hover);
+  color: var(--color-text-muted);
+  border-radius: var(--radius-md);
+  height: var(--button-height-md);
+  padding: 0 var(--space-3);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  justify-content: flex-start;
+  cursor: text;
+  transition: background var(--transition-normal), border-color var(--transition-normal);
+}
+
+.launchpad-search:hover {
+  background: var(--color-bg-active);
+  border-color: var(--color-border-strong);
+}
+
+.launchpad-search:focus-within {
+  border-color: var(--color-primary-border);
+  box-shadow: 0 0 0 3px rgba(109, 99, 255, 0.12);
+}
+
+.launchpad-search input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  outline: none;
+  color: var(--color-text-primary);
+  font-size: var(--text-sm);
+}
+
+.launchpad-search input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.launchpad-search kbd {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  color: var(--color-text-secondary);
+  background: rgba(0, 0, 0, 0.34);
+  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+}
+
+.launchpad-user {
+  justify-self: end;
+  height: var(--button-height-md);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border-default);
+  background: var(--gradient-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: var(--font-semibold);
+  color: #ffffff;
+  cursor: pointer;
+  transition: filter var(--transition-normal), border-color var(--transition-normal);
+}
+
+.launchpad-user:hover {
+  filter: brightness(1.1);
+}
+
+.launchpad-user:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ============================================
+ * MAIN LAYOUT
+ * ============================================ */
+
+.launchpad-main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(420px, 44%) 1fr;
+  min-height: 0;
+}
+
+.intent-zone,
+.recent-zone {
+  min-height: 0;
+  padding: var(--space-7) var(--space-5);
+}
+
+.intent-zone {
+  border-right: 1px solid var(--color-border-subtle);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+/* ============================================
+ * INTENT HEADING
+ * 改进：移除问候语，使用更有价值的标题
+ * ============================================ */
+
+.intent-heading {
+  margin-bottom: var(--space-6);
+}
+
+.intent-heading h1 {
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-family: "Sora", "MiSans", sans-serif;
+  font-weight: var(--font-semibold);
+  letter-spacing: var(--tracking-tight);
+  background: linear-gradient(110deg, var(--color-text-primary), var(--color-accent));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.intent-heading p {
+  margin: var(--space-3) 0 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-base);
+  max-width: 560px;
+  line-height: var(--leading-relaxed);
+}
+
+/* ============================================
+ * DROP ZONE
+ * 改进：增大目标区域（280px）和图标（64px）
+ * ============================================ */
+
+.intent-drop-shell {
+  border-radius: var(--radius-2xl);
+  padding: 1px;
+  background: var(--color-border-subtle);
+  transition: transform var(--transition-slow), box-shadow var(--transition-slow), background var(--transition-slow);
+}
+
+.intent-drop-shell.is-hovering {
+  transform: translateY(-4px) scale(1.01);
+  background: var(--gradient-glow);
+  box-shadow: var(--shadow-glow), 0 20px 50px rgba(57, 79, 210, 0.32);
+}
+
+.intent-drop-surface {
+  border-radius: calc(var(--radius-2xl) - 1px) calc(var(--radius-2xl) - 1px) 0 0;
+  border-bottom: 1px dashed var(--color-border-subtle);
+  height: var(--drop-zone-height);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  cursor: pointer;
+  background: var(--color-bg-panel);
+  transition: background var(--transition-normal);
+}
+
+.intent-drop-surface:hover {
+  background: var(--color-bg-panel-soft);
+}
+
+.intent-drop-surface.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.intent-drop-icon {
+  width: 80px;
+  height: 80px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-hover);
+  color: var(--color-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: var(--space-4);
+  transition: transform var(--transition-normal), border-color var(--transition-normal);
+}
+
+.intent-drop-shell.is-hovering .intent-drop-icon {
+  transform: scale(1.08);
+  border-color: var(--color-primary-border);
+}
+
+.intent-drop-icon svg {
+  width: var(--drop-zone-icon-size);
+  height: var(--drop-zone-icon-size);
+}
+
+.intent-drop-surface h3 {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: var(--font-semibold);
+  color: var(--color-text-primary);
+}
+
+.intent-drop-surface p {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* ============================================
+ * INPUT ROW
+ * ============================================ */
+
+.intent-input-row {
+  height: 70px;
+  border-radius: 0 0 calc(var(--radius-2xl) - 1px) calc(var(--radius-2xl) - 1px);
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-4);
+  color: var(--color-text-muted);
+}
+
+.intent-input-row input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  outline: none;
+  font-size: var(--text-sm);
+}
+
+.intent-input-row input::placeholder {
+  color: var(--color-text-faint);
+}
+
+.intent-input-row button {
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-hover);
+  color: var(--color-text-muted);
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--transition-normal);
+}
+
+.intent-input-row button:hover:not(:disabled) {
+  background: var(--color-bg-active);
+  border-color: var(--color-border-strong);
+  color: var(--color-text-secondary);
+}
+
+.intent-input-row button.is-active {
+  border-color: var(--color-primary-border);
+  background: var(--color-primary-subtle);
+  color: var(--color-primary-hover);
+}
+
+.intent-input-row button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ============================================
+ * ACTIONS
+ * ============================================ */
+
+.intent-actions {
+  margin-top: var(--space-5);
+  display: flex;
+  gap: var(--space-3);
+}
+
+.intent-actions button {
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-hover);
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-md);
+  height: var(--button-height-md);
+  padding: 0 var(--space-4);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-weight: var(--font-medium);
+  transition: all var(--transition-normal);
+}
+
+.intent-actions button:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  background: var(--color-bg-active);
+  color: var(--color-text-primary);
+}
+
+.intent-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.intent-actions button svg {
+  flex-shrink: 0;
+}
+
+/* ============================================
+ * ERROR BANNER
+ * ============================================ */
+
+.launchpad-error-banner {
+  margin: var(--space-4) 0 0;
+  border: 1px solid var(--color-error-border);
+  background: var(--color-error-subtle);
+  color: #f8c4c4;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  transition: background var(--transition-normal);
+}
+
+.launchpad-error-banner:hover {
+  background: rgba(241, 91, 91, 0.18);
+}
+
+/* ============================================
+ * RECENT ZONE
+ * ============================================ */
+
+.recent-zone {
+  position: relative;
+  overflow: auto;
+}
+
+.recent-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-5);
+}
+
+.recent-head h2 {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-lg);
+  font-weight: var(--font-semibold);
+  color: var(--color-text-primary);
+}
+
+.recent-head h2 svg {
+  color: var(--color-text-muted);
+}
+
+.recent-head button {
+  border: 0;
+  background: transparent;
+  color: var(--color-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--font-semibold);
+  cursor: pointer;
+  transition: color var(--transition-normal);
+}
+
+.recent-head button:hover {
+  color: var(--color-primary-hover);
+}
+
+/* ============================================
+ * RECENT GRID
+ * 改进：增大间距到 20px
+ * ============================================ */
+
+.recent-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-5);
+}
+
+/* ============================================
+ * RECENT CARD
+ * ============================================ */
+
+.recent-card,
+.archive-card {
+  border: 1px solid var(--color-border-subtle);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: var(--radius-xl);
+}
+
+.recent-card {
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform var(--transition-normal), border-color var(--transition-normal), background var(--transition-normal), box-shadow var(--transition-normal);
+}
+
+.recent-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--color-primary-border);
+  background: var(--color-bg-hover);
+  box-shadow: var(--shadow-md);
+}
+
+.recent-card:active {
+  transform: translateY(-1px);
+}
+
+.recent-thumb {
+  height: 140px;
+  padding: var(--space-3);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.recent-thumb::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.72));
+  pointer-events: none;
+}
+
+/* Thumbnail backgrounds */
+.launch-thumb-cyan {
+  background: linear-gradient(145deg, #085277, #11295f);
+}
+
+.launch-thumb-indigo {
+  background: linear-gradient(145deg, #362d7f, #321d5c);
+}
+
+.launch-thumb-zinc {
+  background: linear-gradient(145deg, #2f2f36, #191a20);
+}
+
+.launch-thumb-rose {
+  background: linear-gradient(145deg, #6e2e4d, #5d2d1e);
+}
+
+.recent-thumb-top,
+.recent-thumb h3 {
+  position: relative;
+  z-index: 1;
+}
+
+.recent-thumb-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.storage-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.36);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  padding: var(--space-1) var(--space-2);
+  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+}
+
+.recent-thumb button {
+  border: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--color-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-normal), background var(--transition-normal);
+}
+
+.recent-card:hover .recent-thumb button {
+  opacity: 1;
+}
+
+.recent-thumb button:hover {
+  background: rgba(0, 0, 0, 0.48);
+}
+
+.recent-thumb h3 {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: var(--font-semibold);
+  color: #ffffff;
+  text-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+}
+
+/* ============================================
+ * RECENT META
+ * 改进：简化信息架构
+ * ============================================ */
+
+.recent-meta {
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  background: var(--color-bg-panel);
+}
+
+.recent-meta-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.ai-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-info);
+  border: 1px solid var(--color-info-border);
+  background: var(--color-info-subtle);
+  border-radius: var(--radius-full);
+  padding: var(--space-1) var(--space-2);
+}
+
+.recent-meta p {
+  margin: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.recent-meta p svg {
+  color: var(--color-primary);
+  margin-top: 1px;
+  flex-shrink: 0;
+}
+
+.recent-meta p em {
+  font-style: normal;
+  color: var(--color-text-faint);
+  margin-right: var(--space-2);
+}
+
+/* ============================================
+ * ARCHIVE CARD
+ * ============================================ */
+
+.archive-card {
+  min-height: 230px;
+  border-style: dashed;
+  color: var(--color-text-faint);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  cursor: pointer;
+  transition: all var(--transition-normal);
+}
+
+.archive-card:hover {
+  color: var(--color-text-secondary);
+  border-color: var(--color-primary-border);
+  background: var(--color-bg-hover);
+}
+
+/* ============================================
+ * RESPONSIVE
+ * ============================================ */
+
+@media (max-width: 1600px) {
+  .recent-grid {
+    gap: var(--space-4);
+  }
+}
+
+@media (max-width: 1200px) {
+  .launchpad-main {
+    grid-template-columns: 1fr;
+  }
+
+  .intent-zone {
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border-subtle);
+  }
+
+  .recent-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .launchpad-topbar {
+    grid-template-columns: 1fr auto;
+    gap: var(--space-3);
+    padding: 0 var(--space-4);
+  }
+
+  .launchpad-search {
+    display: none;
+  }
+
+  .intent-zone,
+  .recent-zone {
+    padding: var(--space-5) var(--space-4);
+  }
+
+  .intent-heading h1 {
+    font-size: var(--text-xl);
+  }
+
+  .intent-drop-icon {
+    width: 60px;
+    height: 60px;
+  }
+}

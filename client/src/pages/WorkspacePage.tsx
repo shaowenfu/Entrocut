@@ -19,6 +19,7 @@ import {
   Upload,
   Wand2,
 } from "lucide-react";
+import { BrandIcon } from "../components/icons/BrandIcon";
 import {
   createInitialHealthSnapshot,
   probeServiceHealth,
@@ -678,9 +679,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
             </button>
           ) : null}
           <div className="brand">
-            <span className="brand-icon-shell">
-              <Sparkles size={14} />
-            </span>
+            <BrandIcon size={20} />
             <h1>EntroCut</h1>
           </div>
           <div className="topbar-divider" />

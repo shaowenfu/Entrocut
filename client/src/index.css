@@ -1,17 +1,23 @@
+/* Google Fonts */
 @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Sora:wght@600;700&display=swap");
 
+/* Design Tokens - 必须首先导入 */
+@import "./styles/tokens.css";
+
+/* Legacy Variables - 逐步迁移到 tokens.css */
 :root {
-  --bg-base: #04050a;
-  --bg-panel: #09090b;
-  --bg-panel-soft: #0f1117;
-  --line-subtle: rgba(255, 255, 255, 0.08);
-  --line-strong: rgba(255, 255, 255, 0.14);
-  --accent-indigo: #6d63ff;
+  /* 保留旧变量以兼容现有代码，但引用设计令牌 */
+  --bg-base: var(--color-bg-base);
+  --bg-panel: var(--color-bg-panel);
+  --bg-panel-soft: var(--color-bg-panel-soft);
+  --line-subtle: var(--color-border-subtle);
+  --line-strong: var(--color-border-strong);
+  --accent-indigo: var(--color-primary);
   --accent-purple: #9a63ff;
-  --accent-cyan: #4ad3f5;
-  --text-primary: #edf0ff;
-  --text-muted: #8e94aa;
-  --text-faint: #6b7188;
+  --accent-cyan: var(--color-accent);
+  --text-primary: var(--color-text-primary);
+  --text-muted: var(--color-text-muted);
+  --text-faint: var(--color-text-faint);
   --shadow-panel: 0 22px 48px rgba(0, 0, 0, 0.42);
   --shadow-accent: 0 0 22px rgba(109, 99, 255, 0.22);
 }
@@ -36,7 +42,7 @@ body {
   background:
     radial-gradient(circle at 8% 2%, rgba(76, 82, 142, 0.36) 0%, transparent 42%),
     radial-gradient(circle at 92% 0%, rgba(96, 58, 155, 0.22) 0%, transparent 36%),
-    var(--bg-base);
+    #020204;
 }
 
 button,
@@ -952,7 +958,7 @@ textarea {
 }
 
 .scrubber {
-  height: 40px;
+  height: 48px;
   margin-top: 8px;
   display: flex;
   align-items: center;
@@ -997,8 +1003,8 @@ textarea {
 }
 
 .storyboard-panel {
-  height: 30%;
-  min-height: 190px;
+  height: 35%;
+  min-height: 200px;
   border-top: 1px solid var(--line-subtle);
   background: rgba(255, 255, 255, 0.01);
   padding: 14px 16px;
@@ -1330,16 +1336,20 @@ textarea {
 
 .intent-heading h1 {
   margin: 0;
-  font-size: 44px;
+  font-size: 32px;
   font-family: "Sora", "MiSans", sans-serif;
   font-weight: 600;
   letter-spacing: 0.01em;
+  background: linear-gradient(110deg, var(--color-text-primary), var(--color-accent));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .intent-heading p {
   margin: 10px 0 0;
   color: #8e95aa;
-  font-size: 14px;
+  font-size: 15px;
   max-width: 560px;
   line-height: 1.55;
 }
@@ -1361,7 +1371,7 @@ textarea {
 .intent-drop-surface {
   border-radius: 23px 23px 0 0;
   border-bottom: 1px dashed rgba(255, 255, 255, 0.12);
-  height: 228px;
+  height: 280px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1381,8 +1391,8 @@ textarea {
 }
 
 .intent-drop-icon {
-  width: 60px;
-  height: 60px;
+  width: 80px;
+  height: 80px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.03);
@@ -1890,4 +1900,18 @@ textarea {
 
 .chat-limitation-notice svg {
   flex-shrink: 0;
+}
+
+/* ============================================
+ * WORKSPACE OVERRIDE STYLES
+ * 使用设计令牌的覆盖样式
+ * ============================================ */
+
+/* Workspace 特定覆盖样式 */
+.media-column {
+  width: 320px !important;
+}
+
+.copilot-column {
+  width: 440px !important;
 }

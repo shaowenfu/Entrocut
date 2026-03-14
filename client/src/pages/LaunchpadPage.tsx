@@ -13,11 +13,13 @@ import {
   Search,
   Sparkles,
 } from "lucide-react";
+import { BrandIcon } from "../components/icons/BrandIcon";
 import { useLaunchpadStore } from "../store/useLaunchpadStore";
 import { useAuthStore } from "../store/useAuthStore";
 import {
   isElectronEnvironment,
 } from "../services/electronBridge";
+import "../styles/launchpad.css";
 
 const PROMPT_HINTS = [
   "A fast-paced recap of my Tokyo trip",
@@ -142,9 +144,7 @@ function LaunchpadPage() {
     <div className="launchpad-root">
       <header className="launchpad-topbar">
         <div className="launchpad-brand">
-          <span className="launchpad-brand-icon">
-            <Sparkles size={15} />
-          </span>
+          <BrandIcon size={22} />
           <span>EntroCut</span>
         </div>
 
@@ -192,8 +192,8 @@ function LaunchpadPage() {
       <main className="launchpad-main">
         <section className="intent-zone">
           <div className="intent-heading">
-            <h1>早上好。</h1>
-            <p>描述你的想法，或直接拖入素材文件夹/视频文件来唤醒 AI Copilot。</p>
+            <h1>创建你的视频项目</h1>
+            <p>描述你的想法，或直接拖入素材文件夹/视频文件来唤醒 AI Copilot 进行智能剪辑。</p>
           </div>
 
           <div className={`intent-drop-shell ${isDropHovering ? "is-hovering" : ""}`}>
@@ -213,7 +213,7 @@ function LaunchpadPage() {
               onDrop={handleDrop}
             >
               <div className="intent-drop-icon">
-                <FolderUp size={22} />
+                <FolderUp size={64} />
               </div>
               <h3>{dropZoneText.title}</h3>
               <p>{dropZoneText.subtitle}</p>
@@ -242,7 +242,7 @@ function LaunchpadPage() {
                 aria-label="create workspace"
                 disabled={isCreating || isImporting}
               >
-                <Plus size={16} />
+                <Plus size={18} />
               </button>
             </div>
           </div>
