@@ -1116,8 +1116,8 @@ async def oauth_callback(provider: str, request: Request) -> RedirectResponse:
     redirect_uri = login_session["client_redirect_uri"] or settings.default_client_redirect_uri
     redirect_query = urlencode(
         {
-            "login_session_id": login_session["login_session_id"],
-            "status": "authenticated",
+            "auth_login_session_id": login_session["login_session_id"],
+            "auth_status": "authenticated",
         }
     )
     separator = "&" if "?" in redirect_uri else "?"
