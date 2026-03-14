@@ -68,41 +68,28 @@
 
 ## 4. 检索策略
 
-### 4.1 三层索引
+### 4.1 phase 1 召回表示
 
-1. `Asset-level coarse index`
-   - ASR
-   - OCR
-   - 稀疏帧 caption
-   - 基础 tag
-   - 时间采样帧 embedding
-2. `Segment-level candidate index`
-   - 文本 embedding
-   - 图像 embedding
-   - 结构化 tag / metadata
-3. `Candidate deep understanding`
-   - 只对候选片段做更贵理解
-   - 必须缓存
+1. 每个候选 `clip` 生成一个多模态融合 `embedding`
+2. phase 1 只用这个 `embedding` 做主召回
+3. `metadata` 只保留身份、来源与时长边界，不参与默认排序
+4. 对候选的深理解延后给 `inspect`
 
 ### 4.2 检索流程
 
 1. `planner` 生成 `retrieval hypothesis`
-2. 输出：
-   - `semantic query`
-   - `retrieval constraints`
-3. 执行：
-   - `hard filter`
-   - `broad recall`
-   - `rerank`
-   - `sufficiency check`
-4. 不够就扩召或换假设
+2. 每个假设生成一个自然语言 `semantic query`
+3. 对每个 `query` 执行一次 `embedding recall`
+4. 合并、去重，得到候选池
+5. 将候选交给 `inspect`
+6. 不够就扩展假设或改写 `query`
 
 ### 4.3 检索原则
 
-1. 主系统用多路检索，不只用纯向量
-2. 融合必须分阶段，不能一开始乱加权
-3. 先保证召回，再做重排
-4. 先用便宜信号，后用昂贵理解
+1. phase 1 主系统只用纯多模态 `embedding` 召回
+2. 不把 `ASR/OCR / tags / shot stats` 混进默认召回主链
+3. `retrieve` 只解决“找得到”，`inspect` 才解决“选得准”
+4. 抽象意图必须先被改写成可观测代理，再进入召回
 
 ---
 

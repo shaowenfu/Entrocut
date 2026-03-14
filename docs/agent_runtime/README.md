@@ -19,13 +19,14 @@
 7. [06_read_tool_contract.md](./06_read_tool_contract.md)
 8. [07_retrieval_request_schema.md](./07_retrieval_request_schema.md)
 9. [08_inspect_tool_contract.md](./08_inspect_tool_contract.md)
-10. [09_edit_draft_patch_schema.md](./09_edit_draft_patch_schema.md)
-11. [10_preview_tool_contract.md](./10_preview_tool_contract.md)
-12. [11_memory_context_layer_design.md](./11_memory_context_layer_design.md)
-13. [12_action_context_packet_schema.md](./12_action_context_packet_schema.md)
-14. [13_context_assembler_design.md](./13_context_assembler_design.md)
-15. [14_planner_output_schema.md](./14_planner_output_schema.md)
-16. [15_execution_loop_design.md](./15_execution_loop_design.md)
+10. [08a_inspect_query_prompt_contract.md](./08a_inspect_query_prompt_contract.md)
+11. [09_edit_draft_patch_schema.md](./09_edit_draft_patch_schema.md)
+12. [10_preview_tool_contract.md](./10_preview_tool_contract.md)
+13. [11_memory_context_layer_design.md](./11_memory_context_layer_design.md)
+14. [12_action_context_packet_schema.md](./12_action_context_packet_schema.md)
+15. [13_context_assembler_design.md](./13_context_assembler_design.md)
+16. [14_planner_output_schema.md](./14_planner_output_schema.md)
+17. [15_execution_loop_design.md](./15_execution_loop_design.md)
 
 ## 阅读建议
 

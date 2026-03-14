@@ -41,6 +41,8 @@ MVP **不包含**：复杂的时间线拖拽、关键帧动画、多用户协作
         - `shot` 是最小可编辑语义单元
         - `scene` 是可选工作分组层
         - `render` 以有序 `shots` 为最终执行输入
+        - 把脚手架收缩到基础设施层，把决策自由留给模型；系统负责提供目标、上下文、工具、状态与错误语义，不试图用固定流程“教 AI 怎么剪”
+        - `retrieve / inspect / patch / preview` 是供模型自主组合的能力边界，不是预先写死的工作流；何时搜索、何时深看、何时开始编排，应由模型基于当前目标与上下文自主决策
 3. **FFmpeg Wrapper**: 提供无头视频处理能力。
     - *接口*: `render_preview(edit_draft_json) -> stream_url`。
 4. 调用底层视频、图像、音频处理库包装而成的供智能剪辑agent使用的工具和技能。
@@ -53,13 +55,14 @@ MVP **不包含**：复杂的时间线拖拽、关键帧动画、多用户协作
             3. notification：通知信息。
     2. 云端向量化与索引构建：**目标**：建立支持自然语言检索的语义索引库，并实现严格的用户数据隔离。
         1. **语义检索 (Semantic Retrieval)**
-            - **输入**：自然语言指令（如：“画面中有红色的耐克运动鞋”）。
+            - **输入**：由 `agent` 基于当前编排缺口生成的 `retrieval hypothesis（检索假设）` 与自然语言 `query`，而不是机械复用用户原话。
+            - **phase 1 原则**：只使用候选 `clip` 的多模态融合 `embedding` 做主召回，不引入 `ASR/OCR` 等辅助通道参与排序，避免噪声污染主语义空间。
             - **过滤机制**：在查询时强制附加 `filter="user_id = 'current_user'"` 条件，确保用户只能检索到自己的私有数据。
-            - **召回**：DashVector 返回语义最匹配的 Top-N 个候选 `clip`（包含`file_path`和`time_range`）。
+            - **召回**：DashVector 返回语义最匹配的 Top-N 个候选 `clip`（包含`file_path`和`time_range`）。`retrieve` 只负责高召回初筛，不负责最终选材。
         2. **深度结构化理解 (Deep Understanding)**
             - **触发条件**：仅针对检索召回的 Top-N 个候选 `clip` 进行二次精细分析。
             - **模型**：**阿里云 Qwen3-VL-Flash**。
             - **输入**：
                 - 候选 `clip` 的 n 张关键帧图片（再次从本地读取或使用缓存）。
                 - **Schema指令**：要求模型严格按照预定义的 JSON 格式输出。
-            - **作用**：此 JSON 数据用于后续的 `EditDraft planning（草案规划）`、`shot` 级别选择与复杂业务逻辑判断的上下文工程。
+            - **作用**：此 JSON 数据用于后续的 `inspect（候选精判）`、`EditDraft planning（草案规划）` 与 `shot` 级别选择；精确判断放在 `inspect`，而不是压给 `retrieve`。

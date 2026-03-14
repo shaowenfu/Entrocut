@@ -2,6 +2,10 @@
 
 本文档定义 `inspect` 工具的字段级契约。
 
+若要看 `inspect` 面向 `VLM（多模态大模型）` 的内部提问与返回设计，请继续阅读：
+
+- [08a_inspect_query_prompt_contract.md](./08a_inspect_query_prompt_contract.md)
+
 它的作用是：
 
 `对少量候选做比较、消歧、重排，必要时触发更深视觉判断。`
