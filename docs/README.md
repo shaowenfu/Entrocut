@@ -48,6 +48,7 @@
 3. [2026-03-09 Server 鉴权与桌面登录回流日记](./develop_diary/2026-03-09_server_auth_and_desktop_login_journal.md)
 4. [2026-03-09 Agent Runtime Notes](./develop_diary/2026-03-09_agent_runtime_notes.md)
 5. [2026-03-13 Agent Runtime 落地开发日志](./develop_diary/2026-03-13_agent_runtime_landing_journal.md)
+6. [2026-03-24 项目回顾与阶段性暂停日志](./develop_diary/2026-03-24_project_recap_and_pause_journal.md)
 
 ### 6. Reference / Archive / Secrets
 

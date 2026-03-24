@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,7 +12,7 @@ import httpx
 from fastapi import FastAPI, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 APP_VERSION = "0.8.0-edit-draft"
 REWRITE_PHASE = "clean_room_rewrite"
@@ -20,6 +21,7 @@ DEFAULT_SERVER_BASE_URL = "http://127.0.0.1:8001"
 SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", DEFAULT_SERVER_BASE_URL).rstrip("/")
 SERVER_CHAT_MODEL = os.getenv("SERVER_CHAT_MODEL", "entro-reasoning-v1").strip() or "entro-reasoning-v1"
 SERVER_CHAT_TIMEOUT_SECONDS = float(os.getenv("SERVER_CHAT_TIMEOUT_SECONDS", "30"))
+AGENT_LOOP_MAX_ITERATIONS = int(os.getenv("AGENT_LOOP_MAX_ITERATIONS", "3"))
 
 app = FastAPI(title="EntroCut Core In-Memory", version=APP_VERSION)
 app.add_middleware(
@@ -254,6 +256,19 @@ class ChatRequest(BaseModel):
     target: ChatTarget | None = None
 
 
+PlannerDecisionStatus = Literal["final", "requires_tool"]
+PlannerDraftStrategy = Literal["placeholder_first_cut", "no_change"]
+
+
+class PlannerDecisionModel(BaseModel):
+    status: PlannerDecisionStatus
+    reasoning_summary: str
+    assistant_reply: str
+    tool_name: str | None = None
+    tool_input_summary: str | None = None
+    draft_strategy: PlannerDraftStrategy = "placeholder_first_cut"
+
+
 class ExportRequest(BaseModel):
     format: str | None = None
     quality: str | None = None
@@ -437,6 +452,297 @@ def _build_edit_plan(clips: list[ClipModel], prompt: str) -> tuple[list[ShotMode
         )
 
     return shots, scenes
+
+
+def _draft_summary(draft: EditDraftModel) -> dict[str, Any]:
+    return {
+        "draft_id": draft.id,
+        "draft_version": draft.version,
+        "asset_count": len(draft.assets),
+        "clip_count": len(draft.clips),
+        "shot_count": len(draft.shots),
+        "scene_count": len(draft.scenes or []),
+        "selected_scene_id": draft.selected_scene_id,
+        "selected_shot_id": draft.selected_shot_id,
+        "clip_excerpt": [
+            {
+                "clip_id": clip.id,
+                "asset_id": clip.asset_id,
+                "visual_desc": clip.visual_desc,
+                "semantic_tags": clip.semantic_tags,
+            }
+            for clip in draft.clips[:6]
+        ],
+    }
+
+
+def _chat_history_summary(record: dict[str, Any], *, max_turns: int = 6) -> list[str]:
+    lines: list[str] = []
+    for turn in record["chat_turns"][-max_turns:]:
+        if turn.get("role") == "user":
+            lines.append(f"user: {str(turn.get('content', '')).strip()[:160]}")
+            continue
+        if turn.get("role") == "assistant":
+            lines.append(f"assistant: {str(turn.get('reasoning_summary', '')).strip()[:160]}")
+    return lines
+
+
+def _extract_first_json_object(text: str) -> str | None:
+    depth = 0
+    start_index: int | None = None
+    for index, char in enumerate(text):
+        if char == "{":
+            if start_index is None:
+                start_index = index
+            depth += 1
+        elif char == "}":
+            if start_index is None:
+                continue
+            depth -= 1
+            if depth == 0:
+                return text[start_index : index + 1]
+    return None
+
+
+async def _emit_agent_progress(
+    project_id: str,
+    *,
+    phase: str,
+    summary: str,
+    details: dict[str, Any] | None = None,
+) -> None:
+    await store.emit(
+        project_id,
+        "agent.step.updated",
+        {
+            "phase": phase,
+            "summary": summary,
+            "details": details or {},
+        },
+    )
+
+
+def _build_planner_messages(
+    *,
+    record: dict[str, Any],
+    project_id: str,
+    prompt: str,
+    draft: EditDraftModel,
+    target: ChatTarget | None,
+    iteration: int,
+) -> list[dict[str, Any]]:
+    planner_context = {
+        "project_id": project_id,
+        "iteration": iteration,
+        "user_input": prompt,
+        "target": target.model_dump() if target else None,
+        "workspace_snapshot": {
+            "project": record["project"],
+            "draft": _draft_summary(draft),
+        },
+        "chat_history_summary": _chat_history_summary(record),
+        "prototype_constraints": {
+            "planner_loop": "implemented",
+            "tool_execution": "todo_not_implemented",
+            "allowed_draft_strategy": ["placeholder_first_cut", "no_change"],
+        },
+    }
+    system_prompt = (
+        "You are the planning layer for EntroCut Core.\n"
+        "Decide the next agent step using the provided context.\n"
+        "Return exactly one JSON object with these fields:\n"
+        "- status: \"final\" | \"requires_tool\"\n"
+        "- reasoning_summary: short English planning summary\n"
+        "- assistant_reply: concise Chinese reply for the user\n"
+        "- tool_name: string or null\n"
+        "- tool_input_summary: string or null\n"
+        "- draft_strategy: \"placeholder_first_cut\" | \"no_change\"\n"
+        "Current prototype rule: tool execution is not implemented yet, so prefer status=\"final\" unless a tool is truly mandatory.\n"
+        "Do not return markdown, code fences, or extra prose."
+    )
+    return [
+        {"role": "system", "content": system_prompt},
+        {
+            "role": "user",
+            "content": json.dumps(planner_context, ensure_ascii=False),
+        },
+    ]
+
+
+async def _request_server_planner_decision(
+    *,
+    access_token: str,
+    record: dict[str, Any],
+    project_id: str,
+    prompt: str,
+    draft: EditDraftModel,
+    target: ChatTarget | None,
+    iteration: int,
+) -> PlannerDecisionModel:
+    payload = {
+        "model": SERVER_CHAT_MODEL,
+        "stream": False,
+        "temperature": 0.1,
+        "max_tokens": 600,
+        "messages": _build_planner_messages(
+            record=record,
+            project_id=project_id,
+            prompt=prompt,
+            draft=draft,
+            target=target,
+            iteration=iteration,
+        ),
+    }
+
+    async with httpx.AsyncClient(timeout=SERVER_CHAT_TIMEOUT_SECONDS) as client:
+        response = await client.post(
+            f"{SERVER_BASE_URL}/v1/chat/completions",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+                "X-Request-ID": _request_id(),
+            },
+        )
+
+    if response.status_code == 401:
+        raise CoreApiError(
+            status_code=401,
+            code="AUTH_SESSION_EXPIRED",
+            message="Core auth session is expired. Refresh login in client and resync token.",
+            details={"server_status": 401},
+        )
+    if response.status_code == 403:
+        raise CoreApiError(
+            status_code=403,
+            code="AUTH_SESSION_FORBIDDEN",
+            message="The current user is not allowed to call server planner proxy.",
+            details={"server_status": 403},
+        )
+    if response.status_code >= 400:
+        details: dict[str, Any] = {"server_status": response.status_code}
+        try:
+            body = response.json()
+            if isinstance(body, dict):
+                details["server_error"] = body
+        except Exception:
+            details["server_error_text"] = response.text[:400]
+        raise CoreApiError(
+            status_code=502,
+            code="SERVER_PLANNER_PROXY_FAILED",
+            message="Server planner proxy rejected the request.",
+            details=details,
+        )
+
+    body = response.json()
+    choices = body.get("choices") if isinstance(body, dict) else None
+    message = choices[0].get("message") if isinstance(choices, list) and choices else None
+    content = _extract_text_content(message.get("content") if isinstance(message, dict) else None)
+    if not content:
+        raise CoreApiError(
+            status_code=502,
+            code="SERVER_PLANNER_PROXY_EMPTY",
+            message="Server planner proxy returned an empty assistant message.",
+        )
+    json_payload = _extract_first_json_object(content)
+    if not json_payload:
+        raise CoreApiError(
+            status_code=502,
+            code="PLANNER_DECISION_INVALID",
+            message="Planner response did not contain a JSON decision object.",
+            details={"raw_content": content[:400]},
+        )
+    try:
+        parsed = json.loads(json_payload)
+    except json.JSONDecodeError as exc:
+        raise CoreApiError(
+            status_code=502,
+            code="PLANNER_DECISION_INVALID",
+            message="Planner response returned malformed JSON.",
+            details={"raw_content": json_payload[:400]},
+        ) from exc
+    try:
+        return PlannerDecisionModel.model_validate(parsed)
+    except ValidationError as exc:
+        raise CoreApiError(
+            status_code=502,
+            code="PLANNER_DECISION_INVALID",
+            message="Planner response failed schema validation.",
+            details={"validation_errors": exc.errors()},
+        ) from exc
+
+
+async def _run_chat_agent_loop(
+    *,
+    record: dict[str, Any],
+    project_id: str,
+    access_token: str,
+    prompt: str,
+    draft: EditDraftModel,
+    target: ChatTarget | None,
+) -> PlannerDecisionModel:
+    await _emit_agent_progress(
+        project_id,
+        phase="loop_started",
+        summary="Agent loop started.",
+        details={"max_iterations": AGENT_LOOP_MAX_ITERATIONS},
+    )
+    current_draft = draft
+    for iteration in range(1, AGENT_LOOP_MAX_ITERATIONS + 1):
+        await _emit_agent_progress(
+            project_id,
+            phase="planner_context_assembled",
+            summary="Planner context assembled.",
+            details={"iteration": iteration, "draft_version": current_draft.version},
+        )
+        decision = await _request_server_planner_decision(
+            access_token=access_token,
+            record=record,
+            project_id=project_id,
+            prompt=prompt,
+            draft=current_draft,
+            target=target,
+            iteration=iteration,
+        )
+        await _emit_agent_progress(
+            project_id,
+            phase="planner_decision_received",
+            summary="Planner decision received.",
+            details={
+                "iteration": iteration,
+                "status": decision.status,
+                "draft_strategy": decision.draft_strategy,
+                "tool_name": decision.tool_name,
+            },
+        )
+        if decision.status == "requires_tool":
+            await _emit_agent_progress(
+                project_id,
+                phase="tool_execution_todo",
+                summary="Planner requested tool execution, but the execution loop is still TODO.",
+                details={
+                    "iteration": iteration,
+                    "tool_name": decision.tool_name,
+                    "tool_input_summary": decision.tool_input_summary,
+                },
+            )
+            raise CoreApiError(
+                status_code=501,
+                code="AGENT_TOOL_EXECUTION_TODO",
+                message="Planner requested tool execution, but tool execution loop is not implemented in Core yet.",
+                details={
+                    "iteration": iteration,
+                    "tool_name": decision.tool_name,
+                    "tool_input_summary": decision.tool_input_summary,
+                },
+            )
+        return decision
+    raise CoreApiError(
+        status_code=502,
+        code="AGENT_LOOP_DID_NOT_FINALIZE",
+        message="Planner loop exceeded the iteration budget without producing a final decision.",
+        details={"max_iterations": AGENT_LOOP_MAX_ITERATIONS},
+    )
 
 
 class InMemoryProjectStore:
@@ -709,56 +1015,73 @@ class InMemoryProjectStore:
                     code="AUTH_SESSION_REQUIRED",
                     message="Sign in is required before chat can run.",
                 )
-            proxy_result = await _request_server_chat_completion(
+            decision = await _run_chat_agent_loop(
+                record=record,
                 access_token=access_token,
                 project_id=project_id,
                 prompt=prompt,
                 draft=draft,
                 target=target,
             )
-            shots, scenes = _build_edit_plan(draft.clips, prompt)
-            scoped_target = "selected scene" if target and target.scene_id else "whole draft"
+            if decision.draft_strategy == "placeholder_first_cut":
+                shots, scenes = _build_edit_plan(draft.clips, prompt)
+            else:
+                shots = list(draft.shots)
+                scenes = list(draft.scenes or [])
             next_draft = _bump_draft(
                 draft,
                 shots=shots,
                 scenes=scenes,
-                selected_scene_id=scenes[0].id if scenes else None,
-                selected_shot_id=shots[0].id if shots else None,
+                selected_scene_id=scenes[0].id if scenes else draft.selected_scene_id,
+                selected_shot_id=shots[0].id if shots else draft.selected_shot_id,
                 status="ready",
             )
-            reasoning_summary = proxy_result["content"].strip()
-            usage = proxy_result.get("usage")
-            usage_summary = (
-                f"Server proxy tokens: {usage.get('total_tokens')}"
-                if isinstance(usage, dict) and usage.get("total_tokens") is not None
-                else "Server proxy completed successfully."
-            )
+            reply_text = decision.assistant_reply.strip() or decision.reasoning_summary.strip()
+            ops = [
+                AssistantDecisionOperationModel(
+                    id=_entity_id("op"),
+                    action="planner_context_assembled",
+                    target="core.agent.loop",
+                    summary="Built planner context from workspace snapshot, chat summary, target scope, and user input.",
+                ),
+                AssistantDecisionOperationModel(
+                    id=_entity_id("op"),
+                    action="planner_decision_finalized",
+                    target="server.v1.chat.completions",
+                    summary=f"Planner returned a final decision with draft strategy {decision.draft_strategy}.",
+                ),
+                AssistantDecisionOperationModel(
+                    id=_entity_id("op"),
+                    action="todo_tool_execution_loop",
+                    target="core.agent.tools",
+                    summary="Tool execution remains TODO in the current prototype; planner-driven loop shape is preserved.",
+                ),
+            ]
+            if decision.draft_strategy == "placeholder_first_cut":
+                ops.append(
+                    AssistantDecisionOperationModel(
+                        id=_entity_id("op"),
+                        action="placeholder_edit_draft_applied",
+                        target="workspace.edit_draft",
+                        summary="Applied the current placeholder first-cut strategy while planner-driven tools are still TODO.",
+                    )
+                )
+            else:
+                ops.append(
+                    AssistantDecisionOperationModel(
+                        id=_entity_id("op"),
+                        action="no_edit_draft_change",
+                        target="workspace.edit_draft",
+                        summary="Planner explicitly chose not to modify the draft in the current iteration.",
+                    )
+                )
             assistant_turn = AssistantDecisionTurnModel(
                 id=_entity_id("turn"),
                 role="assistant",
                 type="decision",
                 decision_type="EDIT_DRAFT_PATCH",
-                reasoning_summary=reasoning_summary,
-                ops=[
-                    AssistantDecisionOperationModel(
-                        id=_entity_id("op"),
-                        action="replace_edit_draft_structure",
-                        target="workspace.edit_draft",
-                        summary="Generated a new shot sequence and optional scene grouping from current clips.",
-                    ),
-                    AssistantDecisionOperationModel(
-                        id=_entity_id("op"),
-                        action="sync_server_reasoning",
-                        target="server.v1.chat.completions",
-                        summary=f"Applied proxy-guided reasoning for {scoped_target}. {usage_summary}",
-                    ),
-                    AssistantDecisionOperationModel(
-                        id=_entity_id("op"),
-                        action="select_edit_target",
-                        target="workspace.edit_draft.selected_scene_id",
-                        summary="Moved the active focus to the primary scene of the new draft.",
-                    ),
-                ],
+                reasoning_summary=reply_text,
+                ops=ops,
             )
             record["edit_draft"] = next_draft.model_dump()
             record["chat_turns"].append(assistant_turn.model_dump())
@@ -897,109 +1220,6 @@ class CoreAuthSessionStore:
     async def snapshot(self) -> dict[str, str | None]:
         async with self._lock:
             return dict(self._session)
-
-
-async def _request_server_chat_completion(
-    *,
-    access_token: str,
-    project_id: str,
-    prompt: str,
-    draft: EditDraftModel,
-    target: ChatTarget | None,
-) -> dict[str, Any]:
-    clip_context = [
-        {
-            "clip_id": clip.id,
-            "asset_id": clip.asset_id,
-            "visual_desc": clip.visual_desc,
-            "semantic_tags": clip.semantic_tags,
-        }
-        for clip in draft.clips[:6]
-    ]
-    system_context = {
-        "project_id": project_id,
-        "asset_count": len(draft.assets),
-        "clip_count": len(draft.clips),
-        "selected_scene_id": target.scene_id if target else None,
-        "selected_shot_id": target.shot_id if target else None,
-        "clips": clip_context,
-    }
-    payload = {
-        "model": SERVER_CHAT_MODEL,
-        "stream": False,
-        "temperature": 0.2,
-        "max_tokens": 400,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are the editing reasoning layer for EntroCut Core. "
-                    "Summarize the editing intent in concise English, referencing the available footage context. "
-                    f"Context: {system_context}"
-                ),
-            },
-            {
-                "role": "user",
-                "content": prompt,
-            },
-        ],
-    }
-
-    async with httpx.AsyncClient(timeout=SERVER_CHAT_TIMEOUT_SECONDS) as client:
-        response = await client.post(
-            f"{SERVER_BASE_URL}/v1/chat/completions",
-            json=payload,
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/json",
-                "X-Request-ID": _request_id(),
-            },
-        )
-
-    if response.status_code == 401:
-        raise CoreApiError(
-            status_code=401,
-            code="AUTH_SESSION_EXPIRED",
-            message="Core auth session is expired. Refresh login in client and resync token.",
-            details={"server_status": 401},
-        )
-    if response.status_code == 403:
-        raise CoreApiError(
-            status_code=403,
-            code="AUTH_SESSION_FORBIDDEN",
-            message="The current user is not allowed to call server chat proxy.",
-            details={"server_status": 403},
-        )
-    if response.status_code >= 400:
-        details: dict[str, Any] = {"server_status": response.status_code}
-        try:
-            body = response.json()
-            if isinstance(body, dict):
-                details["server_error"] = body
-        except Exception:
-            details["server_error_text"] = response.text[:400]
-        raise CoreApiError(
-            status_code=502,
-            code="SERVER_CHAT_PROXY_FAILED",
-            message="Server chat proxy rejected the request.",
-            details=details,
-        )
-
-    body = response.json()
-    choices = body.get("choices") if isinstance(body, dict) else None
-    message = choices[0].get("message") if isinstance(choices, list) and choices else None
-    content = _extract_text_content(message.get("content") if isinstance(message, dict) else None)
-    if not content:
-        raise CoreApiError(
-            status_code=502,
-            code="SERVER_CHAT_PROXY_EMPTY",
-            message="Server chat proxy returned an empty assistant message.",
-        )
-    return {
-        "content": content,
-        "usage": body.get("usage") if isinstance(body, dict) else None,
-        "entro_metadata": body.get("entro_metadata") if isinstance(body, dict) else None,
-    }
 
 
 async def _mark_chat_failed(
