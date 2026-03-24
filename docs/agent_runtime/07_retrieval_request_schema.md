@@ -2,6 +2,10 @@
 
 本文档定义 `retrieve` 工具的字段级契约。
 
+如果要看 `retrieve phase 1` 的执行级设计、候选归一化、近重复抑制与充分性判断，请继续阅读：
+
+- [07a_retrieve_execution_design.md](./07a_retrieve_execution_design.md)
+
 它的作用是：
 
 `把当前编辑假设，转成一个基于纯多模态 embedding 的单次候选召回请求。`
@@ -18,13 +22,15 @@
 4. `query` 不应机械复用用户原话，而应来自 `retrieval hypothesis（检索假设）`
 5. 约束只表达搜索空间边界，不承担语义替代职责
 
+本文档只回答“对外如何请求一次召回”，不回答“执行时内部如何展开”。后者已收敛到 [07a_retrieve_execution_design.md](./07a_retrieve_execution_design.md)。
+
 所以一个检索请求必须至少表达：
 
 1. 当前是在补什么编排缺口
 2. 当前假设想找什么镜头
 3. 可接受的搜索空间边界
 4. 这次要召回多少候选
-5. 召回不够时是否允许改写 query 或扩展假设
+5. 是否需要做最小近重复抑制
 
 ---
 
@@ -39,11 +45,6 @@ type RetrievalIntent =
   | "find_transition"
   | "find_ending"
   | "gather_options";
-
-type RetrievalQueryMode =
-  | "semantic"
-  | "proxy_semantic"
-  | "reference_rewrite";
 
 interface RetrievalHypothesis {
   summary: string;
@@ -60,8 +61,6 @@ interface RetrievalConstraintSet {
 
 interface RetrievalPolicy {
   top_k: number;
-  allow_query_rewrite: boolean;
-  allow_hypothesis_expansion: boolean;
   diversify_results: boolean;
 }
 
@@ -71,7 +70,6 @@ interface RetrievalRequest {
   intent: RetrievalIntent;
   hypothesis: RetrievalHypothesis;
   query: string;
-  query_mode: RetrievalQueryMode;
   scope: "global" | "scene" | "shot";
   target_scene_id?: string | null;
   target_shot_id?: string | null;
@@ -170,6 +168,16 @@ interface RetrievalError {
 3. 时长边界
 
 而不应该在 phase 1 中塞进大量“必须有某个 tag”这类语义替代条件。
+
+### 5.4 为什么当前不保留 `query rewrite / hypothesis expansion`
+
+因为它们属于“执行策略”，不是当前 `phase 1` 的最小对外契约。
+
+当前阶段先把一件事做稳：
+
+`一个检索假设 + 一个主 query + 一次主召回`
+
+如果未来真的需要自动扩召，再通过新的策略字段增量引入，而不是现在提前支付复杂度。
 
 ---
 

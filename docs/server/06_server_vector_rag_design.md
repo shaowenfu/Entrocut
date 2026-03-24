@@ -6,6 +6,10 @@
 2. 使用 `DashVector Python SDK（DashVector Python SDK）` 写入和检索向量
 3. 对 `Core / Client` 暴露尽量稳定、尽量接近官方语义的 `REST API`
 
+如果要看 `retrieve / inspect` 在当前架构下的整体云端网关方案，请继续阅读：
+
+- [06a_server_retrieve_inspect_gateway_design.md](./06a_server_retrieve_inspect_gateway_design.md)
+
 ## 1. 设计结论
 
 ### 1.1 第一阶段能力边界
@@ -18,9 +22,9 @@
 3. 既然产品要求是“文搜图、图搜图、文搜视频、跨模态检索”，那 `/v1/assets/vectorize` 的第一性目标就应该是把 `text/image/video` 融成一个向量
 
 因此第一阶段建议：
-1. `/v1/assets/vectorize` 直接支持 `text + image + video` 的融合输入
+1. `/v1/assets/vectorize` 当前主输入固定为 `Core` 生成的 `clip contact sheet image`
 2. 融合模型默认使用 `qwen3-vl-embedding`
-3. `/v1/assets/retrieval` phase 1 允许先用 `query_text` 生成查询融合向量；后续再扩到 `query_image / query_video`
+3. `/v1/assets/retrieval` phase 1 只支持基于 `planner` 生成的 `query_text` 做纯向量召回；`query_image / query_video` 与辅助通道后续再扩
 
 ### 1.2 与官方接口的对齐策略
 
@@ -59,6 +63,12 @@
    - `image`
    - `video`
 5. 当三者放在同一个对象里时，返回一个融合向量
+
+但当前项目的 `phase 1` 并不直接使用这三者全开能力，而是收敛为：
+
+1. 由 `Core` 本地抽帧并拼成 `contact sheet`
+2. `Server` 只接收 `image_base64`
+3. 先把检索主链跑稳，再考虑未来扩成更宽输入
 
 ### 2.2 DashVector SDK（插入与检索）
 
@@ -119,7 +129,7 @@ DASHVECTOR_PROTOCOL=grpc
 
 ### 目标
 
-接收一批资产多模态内容，先生成 `fused embedding（融合向量）`，再原子写入 `DashVector`。
+接收一批候选 `clip` 的 `contact sheet image`，先生成 `fused embedding（融合向量）`，再原子写入 `DashVector`。
 
 ### 为什么不用“只返回向量给 Core”
 
@@ -137,13 +147,12 @@ DASHVECTOR_PROTOCOL=grpc
   "dimension": 1024,
   "docs": [
     {
-      "id": "asset_001",
+      "id": "clip_001",
       "content": {
-        "text": "滑雪运动员腾空跃起，背景是雪山",
-        "image": "https://example.com/frame.jpg",
-        "video": "https://example.com/clip.mp4"
+        "image_base64": "..."
       },
       "fields": {
+        "clip_id": "clip_001",
         "asset_id": "asset_001",
         "project_id": "proj_001",
         "scene_id": "scene_001",
@@ -184,16 +193,14 @@ DASHVECTOR_PROTOCOL=grpc
 1. `id: str`
    - 建议必填
    - 不建议依赖 `DashVector` 自动生成 `id`
-   - 因为业务系统必须能稳定追踪资产
+   - 因为业务系统必须能稳定追踪候选 `clip`
 
 2. `content: object`
    - phase 1 必填
-   - 至少要有 `text / image / video` 其中一个
-   - 三者可同时存在并融合为一个向量
+   - 当前最小输入固定为 `image_base64`
+   - 表示由 `Core` 本地生成的 `clip contact sheet`
 
-3. `content.text: str | null`
-4. `content.image: str | null`
-5. `content.video: str | null`
+3. `content.image_base64: str`
 
 6. `fields: object`
    - 直接映射到 `DashVector Doc.fields`
@@ -202,7 +209,7 @@ DASHVECTOR_PROTOCOL=grpc
 ### 处理流程
 
 1. 校验 `JWT`
-2. 校验 `docs` 非空，且每个 `doc.id / doc.content` 合法
+2. 校验 `docs` 非空，且每个 `doc.id / doc.content.image_base64` 合法
 3. 批量调用 `dashscope.MultiModalEmbedding.call(...)`
 4. 将结果映射成 `DashVector Doc(id, vector, fields)`
 5. 调 `collection.insert(docs=..., partition=...)`
@@ -253,7 +260,7 @@ DASHVECTOR_PROTOCOL=grpc
 
 ### 目标
 
-根据检索意图生成查询融合向量，再在 `DashVector` 中执行相似性检索。
+根据上游 `planner` 生成的主 `query_text` 生成查询向量，再在 `DashVector` 中执行一次纯向量相似性检索。
 
 ### 请求体
 
@@ -267,7 +274,7 @@ DASHVECTOR_PROTOCOL=grpc
   "topk": 8,
   "filter": "project_id = 'proj_001'",
   "include_vector": false,
-  "output_fields": ["asset_id", "project_id", "scene_id", "media_type"]
+  "output_fields": ["clip_id", "asset_id", "project_id", "scene_id", "media_type"]
 }
 ```
 
@@ -286,14 +293,17 @@ DASHVECTOR_PROTOCOL=grpc
    - 与向量入库时保持一致
 
 5. `query_text: str`
-   - phase 1 主查询入口
+   - phase 1 唯一主查询入口
+   - 来源应是 `retrieval hypothesis` 改写后的可搜索自然语言
 
 6. `topk: int`
    - 直接对齐官方 `topk`
+   - 当前只表示单次主召回返回上限
 
 7. `filter: str`
    - 直接对齐官方 `filter`
    - 语法按 `DashVector` 官方过滤表达式处理
+   - 当前只应用于搜索空间边界，不承担语义替代职责
 
 8. `include_vector: bool`
    - 直接对齐官方 `include_vector`
@@ -308,7 +318,14 @@ DASHVECTOR_PROTOCOL=grpc
 2. 校验 `query_text`、`topk`
 3. 调 `DashScope MultiModalEmbedding` 生成查询向量
 4. 调 `collection.query(vector=..., topk=..., filter=..., include_vector=..., output_fields=..., partition=...)`
-5. 将结果映射为对外响应
+5. 对结果做最小归一化并返回
+
+当前阶段不做：
+
+1. 不做 `ASR/OCR` 辅助通道融合
+2. 不做多 query 合并
+3. 不做服务端 rerank
+4. 不做 `inspect` 级精判
 
 ### 响应体
 
@@ -323,9 +340,10 @@ DASHVECTOR_PROTOCOL=grpc
   },
   "matches": [
     {
-      "id": "asset_001",
+      "id": "clip_001",
       "score": 0.9231,
       "fields": {
+        "clip_id": "clip_001",
         "asset_id": "asset_001",
         "project_id": "proj_001",
         "scene_id": "scene_001",

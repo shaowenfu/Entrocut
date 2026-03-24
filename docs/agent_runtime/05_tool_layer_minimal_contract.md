@@ -165,6 +165,7 @@
 2. phase 1 只走纯多模态 `embedding` 主召回
 3. `ASR/OCR / tags / shot stats` 暂不进入默认召回主链
 4. 精确判断延后给 `inspect`
+5. 执行细节见 [07a_retrieve_execution_design.md](./07a_retrieve_execution_design.md)
 
 ---
 

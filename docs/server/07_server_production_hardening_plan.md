@@ -8,8 +8,9 @@
 
 1. `Auth（鉴权）`：`Google OAuth`、`JWT access/refresh token`、`login_session one-shot consume（一次性消费）`、`/api/v1/me`、`/user/profile`、`/user/usage`
 2. `AI Model Proxy & Gateway（模型中转站）`：`/v1/chat/completions` 非流式 + `SSE streaming（流式）`、真实 `provider` 代理、`quota / rate limit` 回写
-3. `Vector & RAG（向量与检索）`：`/v1/assets/vectorize`、`/v1/assets/retrieval`、真实 `DashScope + DashVector` 闭环
-4. `Stateful dependency（有状态依赖）`：`MongoDB Atlas`、`Redis`、`Gemini`、`DashScope`、`DashVector`
+3. `Vector & Retrieval（向量与召回）`：`/v1/assets/vectorize`、`/v1/assets/retrieval`、真实 `DashScope + DashVector` 闭环
+4. `Inspect Gateway（图像级候选判定）`：`/v1/tools/inspect`，当前以 `Gemini` 等图像多模态模型为主
+5. `Stateful dependency（有状态依赖）`：`MongoDB Atlas`、`Redis`、`Gemini`、`DashScope`、`DashVector`
 
 结论：功能面已经收口，当前缺口主要集中在 `operability（可运维性）`、`resilience（韧性）`、`security（安全）`，而不是业务功能。
 
@@ -123,7 +124,8 @@
 7. `rate limited`
 8. `vectorize` 调用 `DashScope`
 9. `retrieval` 调用 `DashVector`
-10. 依赖连接失败：`MongoDB / Redis / provider / DashScope / DashVector`
+10. `inspect` 调用 `Gemini`
+11. 依赖连接失败：`MongoDB / Redis / provider / DashScope / DashVector / Gemini`
 
 落地要求：
 
@@ -156,7 +158,9 @@
 10. `server_vectorize_requests_total{status}`
 11. `server_vectorize_embedding_latency_ms`
 12. `server_vector_db_latency_ms{operation}`
-13. `server_dependency_health{dependency}`
+13. `server_inspect_requests_total{status,mode}`
+14. `server_inspect_provider_latency_ms{provider,mode}`
+15. `server_dependency_health{dependency}`
 
 实现方式：
 

@@ -5,6 +5,7 @@
 如果要看设计推导、取舍和讨论细节，请看：
 
 - [Editing Agent 详细设计](./00_editing_agent_design_detailed.md)
+- [Retrieve 执行级设计](./07a_retrieve_execution_design.md)
 
 ---
 
@@ -77,12 +78,13 @@
 
 ### 4.2 检索流程
 
-1. `planner` 生成 `retrieval hypothesis`
-2. 每个假设生成一个自然语言 `semantic query`
-3. 对每个 `query` 执行一次 `embedding recall`
-4. 合并、去重，得到候选池
-5. 将候选交给 `inspect`
-6. 不够就扩展假设或改写 `query`
+1. `planner` 生成一个主 `retrieval hypothesis`
+2. 这个假设生成一个自然语言 `semantic query`
+3. `phase 1` 默认只执行这个主 `query`
+4. 对这个 `query` 执行一次 `embedding recall`
+5. 做最小近重复抑制，得到候选池
+6. 将候选交给 `inspect`
+7. 不够时返回不足，不在默认链路自动扩召
 
 ### 4.3 检索原则
 

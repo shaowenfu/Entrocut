@@ -5,7 +5,7 @@
 ## 1. 设计原则
 
 1. `Server` 只负责身份验证、安全中转、额度账本、资源调度，不承载本地 `Core` 的工程状态。
-2. `Core -> Server` 的模型调用统一走 `POST /v1/chat/completions`，保持 `OpenAI-compatible（OpenAI 兼容）`。
+2. `Core -> Server` 的开放式推理统一走 `POST /v1/chat/completions`，保持 `OpenAI-compatible（OpenAI 兼容）`；专用工具能力走独立 `REST endpoints`。
 3. `Client` 是唯一的 `refresh owner（刷新责任方）`，`Core` 只消费最新 `access token`。
 4. `Server` 内部统一使用 `_id`，对外响应才映射为 `id`。
 5. `login_session` 是 `one-shot consume（一 次性消费）`，`deep link` 中不传 token。
@@ -29,8 +29,9 @@
 | User | `/user/profile` | `GET` | 是 | `Authorization` | `membership`, `remaining_quota`, `quota_status` | current |
 | User | `/user/usage` | `GET` | 是 | `Authorization` | Token 消耗、订阅状态、剩余额度 | current |
 | AI Proxy | `/v1/chat/completions` | `POST` | 是 | `messages`, `model`, `stream` | `OpenAI-compatible` 响应或 `SSE` | current |
-| Vector | `/v1/assets/vectorize` | `POST` | 是 | `references[]`, `metadata` | 向量化并入库结果 | current |
+| Vector | `/v1/assets/vectorize` | `POST` | 是 | `clip contact sheets[]`, `metadata` | 向量化并入库结果 | current |
 | Retrieval | `/v1/assets/retrieval` | `POST` | 是 | `query_text`, `topk`, `filter` | 命中素材 ID、分数、元数据 | current |
+| Tool | `/v1/tools/inspect` | `POST` | 是 | `mode`, `question`, `candidates[].frames[]` | 结构化候选判定结果 | planned |
 
 ## 3. 模块说明
 
@@ -129,6 +130,7 @@
 
 #### `POST /v1/chat/completions`
 - 用途：统一承接 `Core` 的模型推理请求。
+- 边界：只承接 `planner` 与开放式对话，不承接专用 `inspect` 工具调用。
 - 请求：保持 `OpenAI-compatible`。
 ```json
 {
@@ -186,13 +188,18 @@
 - 请求：
 ```json
 {
-  "images": [
+  "docs": [
     {
-      "image_base64": "...",
-      "asset_id": "asset_001",
-      "metadata": {
+      "id": "clip_001",
+      "content": {
+        "image_base64": "..."
+      },
+      "fields": {
+        "clip_id": "clip_001",
+        "asset_id": "asset_001",
         "project_id": "proj_001",
-        "scene_id": "scene_001"
+        "source_start_ms": 1200,
+        "source_end_ms": 4800
       }
     }
   ]
@@ -208,6 +215,7 @@
 - 原子语义：
 1. 若 `embedding` 成功但 `Vector DB insert` 失败，整个请求返回明确错误
 2. `Core` 只接收“成功写入”或“明确失败”，不接收裸向量
+3. 当前阶段主输入是 `clip contact sheet image_base64`，不上传原始视频
 
 #### `POST /v1/assets/retrieval`
 - 用途：执行语义检索。
@@ -221,6 +229,11 @@
   }
 }
 ```
+
+- 边界：
+1. 当前阶段只做纯向量主召回
+2. 不做 `inspect` 级精判
+3. 不支持 `query_image / query_video`
 
 - 响应：
 ```json
@@ -236,6 +249,19 @@
   ]
 }
 ```
+
+#### `POST /v1/tools/inspect`
+- 用途：对小规模候选 `clip` 做图像级结构化判定。
+- 当前形态：
+1. 输入候选的多关键帧序列
+2. 每张关键帧都带时间位置
+3. 同时附带片段总时长
+4. 服务端调用 `Gemini` 等图像多模态模型
+5. 返回 `verify / compare / choose / rank` 结果
+- 非目标：
+1. 不做整段视频理解
+2. 不做开放式聊天
+3. 不直接生成 `EditDraftPatch`
 
 ## 4. 推荐错误语义
 

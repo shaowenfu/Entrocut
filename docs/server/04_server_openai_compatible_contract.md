@@ -44,6 +44,12 @@
 5. `quota metadata（额度元数据）` 回传
 6. 结构化错误语义
 
+说明：
+
+1. 本文档只覆盖开放式推理与 `OpenAI-compatible` 主链
+2. `vectorize / retrieval / inspect` 这类专用工具能力不在本文档内定义
+3. 它们应走独立 `REST tool contracts`
+
 当前明确 `Non-goals（非目标）`：
 
 1. 不保证完整覆盖所有 `OpenAI API` 参数
@@ -73,6 +79,9 @@
 1. `POST /v1/embeddings`
 2. `POST /api/v1/search`
 3. `GET /api/v1/quota`
+4. `POST /v1/assets/vectorize`
+5. `POST /v1/assets/retrieval`
+6. `POST /v1/tools/inspect`
 
 ## 4. 通用请求约定
 
@@ -471,14 +480,13 @@ interface EntroMetadata {
 {
   "service": "server",
   "version": "0.6.0",
-  "phase": "clean_room_rewrite",
-  "mode": "contract_first",
-  "retained_surfaces": [
-    "health",
-    "runtime_capabilities",
-    "request_id_middleware",
-    "chat_completions_proxy"
-  ]
+  "capabilities": {
+    "planner_chat": { "available": true },
+    "multimodal_embedding": { "available": true, "model": "qwen3-vl-embedding" },
+    "vector_retrieval": { "available": true, "provider": "dashvector" },
+    "inspect_image": { "available": true, "provider": "gemini", "mode": "ordered_keyframes" },
+    "inspect_video": { "available": false, "reason": "not_enabled_in_phase_1" }
+  }
 }
 ```
 

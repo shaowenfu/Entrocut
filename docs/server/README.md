@@ -16,9 +16,19 @@
    - 当前已落地鉴权实现规范
 6. [06_server_vector_rag_design.md](./06_server_vector_rag_design.md)
    - 向量与 `RAG` 设计
-7. [07_server_production_hardening_plan.md](./07_server_production_hardening_plan.md)
+7. [06a_server_retrieve_inspect_gateway_design.md](./06a_server_retrieve_inspect_gateway_design.md)
+   - `retrieve / inspect` 云端网关主方案
+8. [06b_server_vectorize_contract.md](./06b_server_vectorize_contract.md)
+   - `POST /v1/assets/vectorize` 字段级契约草案
+9. [06c_server_retrieval_contract.md](./06c_server_retrieval_contract.md)
+   - `POST /v1/assets/retrieval` 字段级契约草案
+10. [06d_server_inspect_contract.md](./06d_server_inspect_contract.md)
+   - `POST /v1/tools/inspect` 字段级契约草案
+11. [06e_server_inspect_implementation_draft.md](./06e_server_inspect_implementation_draft.md)
+   - `/v1/tools/inspect` 实现级设计草案
+11. [07_server_production_hardening_plan.md](./07_server_production_hardening_plan.md)
    - 生产加固
-8. [08_server_staging_runbook.md](./08_server_staging_runbook.md)
+12. [08_server_staging_runbook.md](./08_server_staging_runbook.md)
    - `staging` 运维说明
 
 ## 配套阅读

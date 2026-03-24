@@ -2,6 +2,10 @@
 
 本文档定义 `inspect` 工具的字段级契约。
 
+如果要看 `inspect phase 1` 的执行级设计、候选预算、证据装配与结果归一化，请继续阅读：
+
+- [08b_inspect_execution_design.md](./08b_inspect_execution_design.md)
+
 若要看 `inspect` 面向 `VLM（多模态大模型）` 的内部提问与返回设计，请继续阅读：
 
 - [08a_inspect_query_prompt_contract.md](./08a_inspect_query_prompt_contract.md)
@@ -21,6 +25,8 @@
 1. 谁更适合
 2. 为什么更适合
 3. 还需不需要进一步视觉判断
+
+本文档只回答“对外如何发起一次 inspect”，不回答“执行时内部如何展开”。后者已收敛到 [08b_inspect_execution_design.md](./08b_inspect_execution_design.md)。
 
 ---
 

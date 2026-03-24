@@ -2,6 +2,10 @@
 
 本文档定义 `inspect` 工具内部面向 `VLM（多模态大模型）` 的 `query / prompt contract（问题与提示词契约）`。
 
+如果要先看 `inspect` 的执行级边界、候选预算、证据装配和结果归一化，请先阅读：
+
+- [08b_inspect_execution_design.md](./08b_inspect_execution_design.md)
+
 它回答的问题不是：
 
 `怎么让模型自由描述看到了什么`
@@ -218,7 +222,13 @@ interface InspectPromptContract {
     clip_id: string;
     asset_id: string;
     summary?: string | null;
-    frame_refs?: string[];
+    clip_duration_ms: number;
+    frames: Array<{
+      frame_index: number;
+      timestamp_ms: number;
+      timestamp_label: string;
+      image_ref: string;
+    }>;
   }>;
   output_schema: "inspection_observation_v1";
 }
@@ -246,6 +256,10 @@ interface InspectPromptContract {
 
 6. `candidates`
    - 候选引用和必要证据
+   - 当前阶段必须显式带：
+     - 多张关键帧
+     - 每帧时间位置
+     - 片段总时长
 
 7. `output_schema`
    - 明确要求按固定结构返回
@@ -317,6 +331,13 @@ interface InspectionObservation {
 ### 8.3 候选材料只给必要证据
 
 不要把整段素材、全量聊天历史、整份 `EditDraft` 都塞进 `inspect`。
+
+当前阶段最优证据形态是：
+
+1. 多张关键帧图按时间顺序发送
+2. 每张图都附 `timestamp_label`
+3. 同时附 `clip_duration_ms`
+4. 让模型通过这些时间锚点推断片段内容
 
 只给：
 
