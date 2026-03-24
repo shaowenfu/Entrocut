@@ -14,6 +14,7 @@ import httpx
 from fastapi import Depends, FastAPI, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
+from pydantic import ValidationError
 from pymongo.errors import PyMongoError
 from redis.exceptions import RedisError
 
@@ -23,17 +24,21 @@ from .config import Settings, get_settings
 from .errors import (
     ServerApiError,
     error_payload,
+    invalid_retrieval_request,
+    invalid_vectorize_request,
     unhandled_error_handler,
 )
+from .inspect_service import InspectService
 from .observability import MetricsRegistry, configure_logging, log_audit_event, log_event, now_ms
 from .quota_service import QuotaService, RateLimitService
 from .runtime_guard import validate_runtime_settings
 from .user_routes import build_user_router
 from .vector_service import VectorService
 from .models import (
-    AssetReference,
     AssetRetrievalRequest,
     AssetRetrievalResponse,
+    InspectRequest,
+    InspectResponse,
     LoginSessionCreateRequest,
     LoginSessionCreateResponse,
     LoginSessionResult,
@@ -42,8 +47,6 @@ from .models import (
     MeResponse,
     RefreshTokenRequest,
     RefreshTokenResponse,
-    RetrievalMatch,
-    RetrievalQuery,
     RuntimeCapabilitiesResponse,
     StagingBootstrapLoginSessionRequest,
     StagingBootstrapLoginSessionResponse,
@@ -67,6 +70,7 @@ token_service = TokenService(settings, store)
 quota_service = QuotaService(settings, store)
 rate_limit_service = RateLimitService(settings)
 vector_service = VectorService(settings)
+inspect_service = InspectService(settings)
 
 
 @asynccontextmanager
@@ -1045,7 +1049,28 @@ def runtime_capabilities() -> RuntimeCapabilitiesResponse:
             "chat_completions_proxy",
             "assets_vectorize",
             "assets_retrieval",
+            "tools_inspect",
         ],
+        capabilities={
+            "planner_chat": {"available": True, "provider": _provider_dependency_status().get("mode")},
+            "multimodal_embedding": {
+                "available": bool((settings.dashscope_api_key or "").strip()),
+                "provider": settings.dashscope_multimodal_embedding_model,
+            },
+            "vector_retrieval": {
+                "available": bool((settings.dashvector_api_key or "").strip() and (settings.dashvector_endpoint or "").strip()),
+                "provider": "dashvector",
+            },
+            "inspect_image": {
+                "available": bool((settings.google_api_key or "").strip()),
+                "provider": inspect_service.peek_provider_name(),
+                "mode": "ordered_keyframes",
+            },
+            "inspect_video": {
+                "available": False,
+                "reason": "not_enabled_in_phase_1",
+            },
+        },
     )
 
 
@@ -1583,12 +1608,22 @@ async def chat_completions(request: Request, current: dict[str, Any] = Depends(g
 
 
 @app.post("/v1/assets/vectorize", response_model=VectorizeResponse)
-def vectorize_asset(
+async def vectorize_asset(
     request: Request,
-    payload: VectorizeRequest,
     current: dict[str, Any] = Depends(get_current_user),
 ) -> VectorizeResponse:
-    """向量化 Asset 并写入向量数据库（原子操作）。"""
+    """向量化 clip contact sheets 并写入向量数据库。"""
+    try:
+        raw_payload = await request.json()
+    except json.JSONDecodeError as exc:
+        raise invalid_vectorize_request("Request body must be valid JSON.") from exc
+    try:
+        payload = VectorizeRequest.model_validate(raw_payload)
+    except ValidationError as exc:
+        raise invalid_vectorize_request(
+            "Vectorize request validation failed.",
+            details={"validation_errors": exc.errors()},
+        ) from exc
     try:
         log_event(
             logger,
@@ -1597,14 +1632,10 @@ def vectorize_asset(
             env=settings.app_env,
             request_id=getattr(request.state, "request_id", None),
             user_id=current["user"]["_id"],
-            asset_id=payload.asset_id,
-            reference_count=len(payload.references),
+            collection_name=payload.collection_name,
+            doc_count=len(payload.docs),
         )
-        result = vector_service.vectorize(
-            asset_id=payload.asset_id,
-            references=payload.references,
-            metadata=payload.metadata,
-        )
+        result = vector_service.vectorize(payload)
         metrics.inc("server_vectorize_requests_total", status="success")
         log_event(
             logger,
@@ -1613,8 +1644,9 @@ def vectorize_asset(
             env=settings.app_env,
             request_id=getattr(request.state, "request_id", None),
             user_id=current["user"]["_id"],
-            asset_id=payload.asset_id,
-            dimension=result.dimension,
+            collection_name=payload.collection_name,
+            inserted_count=result["inserted_count"],
+            dimension=result["dimension"],
         )
         log_audit_event(
             "audit_vectorize_succeeded",
@@ -1623,33 +1655,40 @@ def vectorize_asset(
             actor_user_id=current["user"]["_id"],
             action="assets.vectorize",
             result="success",
-            target_type="asset",
-            target_id=payload.asset_id,
-            details={"dimension": result.dimension},
+            target_type="collection",
+            target_id=payload.collection_name,
+            details={"dimension": result["dimension"], "inserted_count": result["inserted_count"]},
         )
-        return VectorizeResponse(
-            status="success",
-            vectors=[result],
-        )
+        return VectorizeResponse(**result)
     except ServerApiError:
         metrics.inc("server_vectorize_requests_total", status="error")
         raise
     except Exception as exc:
         raise ServerApiError(
             status_code=500,
-            code="VECTORIZE_ERROR",
+            code="VECTORIZE_WRITE_FAILED",
             message=f"Vectorization failed: {exc}",
             error_type="server_error",
         ) from exc
 
 
 @app.post("/v1/assets/retrieval", response_model=AssetRetrievalResponse)
-def assets_retrieval(
+async def assets_retrieval(
     request: Request,
-    payload: AssetRetrievalRequest,
     current: dict[str, Any] = Depends(get_current_user),
 ) -> AssetRetrievalResponse:
     """资产检索接口：根据查询文本返回语义匹配的资产。 """
+    try:
+        raw_payload = await request.json()
+    except json.JSONDecodeError as exc:
+        raise invalid_retrieval_request("Request body must be valid JSON.") from exc
+    try:
+        payload = AssetRetrievalRequest.model_validate(raw_payload)
+    except ValidationError as exc:
+        raise invalid_retrieval_request(
+            "Retrieval request validation failed.",
+            details={"validation_errors": exc.errors()},
+        ) from exc
     log_event(
         logger,
         "retrieval_started",
@@ -1660,17 +1699,7 @@ def assets_retrieval(
         collection_name=payload.collection_name,
         topk=payload.topk,
     )
-    result = vector_service.retrieve(
-        collection_name=payload.collection_name,
-        partition=payload.partition,
-        model=payload.model,
-        dimension=payload.dimension,
-        query_text=payload.query_text,
-        topk=payload.topk,
-        filter_str=payload.filter,
-        include_vector=payload.include_vector,
-        output_fields=payload.output_fields,
-    )
+    result = vector_service.retrieve(payload)
     metrics.inc("server_vector_retrieval_requests_total", status="success")
     log_event(
         logger,
@@ -1694,6 +1723,100 @@ def assets_retrieval(
         details={"match_count": len(result.get("matches", [])), "topk": payload.topk},
     )
     return AssetRetrievalResponse(**result)
+
+
+@app.post("/v1/tools/inspect", response_model=InspectResponse)
+async def tools_inspect(
+    request: Request,
+    current: dict[str, Any] = Depends(get_current_user),
+) -> InspectResponse:
+    try:
+        raw_payload = await request.json()
+    except json.JSONDecodeError as exc:
+        raise ServerApiError(
+            status_code=422,
+            code="INVALID_INSPECT_REQUEST",
+            message="Request body must be valid JSON.",
+            error_type="invalid_request_error",
+        ) from exc
+
+    payload = inspect_service.validate_request(raw_payload)
+    request_id = getattr(request.state, "request_id", None)
+    provider_name = inspect_service.peek_provider_name()
+    started_ms = now_ms()
+
+    log_event(
+        logger,
+        "inspect_started",
+        service="server",
+        env=settings.app_env,
+        request_id=request_id,
+        user_id=current["user"]["_id"],
+        mode=payload.mode,
+        candidate_count=len(payload.candidates),
+        provider=provider_name,
+    )
+    try:
+        result = await inspect_service.inspect(payload)
+    except ServerApiError as exc:
+        metrics.inc(
+            "server_inspect_requests_total",
+            status="error",
+            mode=payload.mode,
+        )
+        log_event(
+            logger,
+            "inspect_failed",
+            service="server",
+            env=settings.app_env,
+            request_id=request_id,
+            user_id=current["user"]["_id"],
+            mode=payload.mode,
+            candidate_count=len(payload.candidates),
+            provider=provider_name,
+            error_code=exc.code,
+        )
+        raise
+
+    metrics.inc(
+        "server_inspect_requests_total",
+        status="success",
+        mode=payload.mode,
+    )
+    metrics.observe(
+        "server_inspect_provider_latency_ms",
+        now_ms() - started_ms,
+        provider=provider_name,
+        mode=payload.mode,
+    )
+    log_event(
+        logger,
+        "inspect_succeeded",
+        service="server",
+        env=settings.app_env,
+        request_id=request_id,
+        user_id=current["user"]["_id"],
+        mode=payload.mode,
+        candidate_count=len(payload.candidates),
+        provider=provider_name,
+        selected_clip_id=result.selected_clip_id,
+    )
+    log_audit_event(
+        "audit_inspect_succeeded",
+        env=settings.app_env,
+        request_id=request_id,
+        actor_user_id=current["user"]["_id"],
+        action="tools.inspect",
+        result="success",
+        target_type="inspect_request",
+        target_id=request_id,
+        details={
+            "mode": payload.mode,
+            "candidate_count": len(payload.candidates),
+            "selected_clip_id": result.selected_clip_id,
+        },
+    )
+    return result
 
 
 @app.get("/")

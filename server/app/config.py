@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     llm_gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     llm_gemini_chat_path: str = "/chat/completions"
     llm_gemini_default_model: str = "gemini-2.5-flash"
+    inspect_provider_mode: str = "google_gemini"
+    inspect_default_model: str | None = None
+    inspect_timeout_seconds: int = 45
     llm_upstream_base_url: str | None = None
     llm_upstream_api_key: str | None = None
     llm_upstream_chat_path: str = "/v1/chat/completions"

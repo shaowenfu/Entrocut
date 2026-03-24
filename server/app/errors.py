@@ -84,6 +84,86 @@ def vectorize_error(message: str, *, details: dict[str, Any] | None = None) -> S
     )
 
 
+def invalid_vectorize_request(message: str, *, details: dict[str, Any] | None = None) -> ServerApiError:
+    return ServerApiError(
+        status_code=422,
+        code="INVALID_VECTORIZE_REQUEST",
+        message=message,
+        error_type="invalid_request_error",
+        details=details,
+    )
+
+
+def image_decode_failed(message: str, *, details: dict[str, Any] | None = None) -> ServerApiError:
+    return ServerApiError(
+        status_code=422,
+        code="IMAGE_DECODE_FAILED",
+        message=message,
+        error_type="invalid_request_error",
+        details=details,
+    )
+
+
+def embedding_provider_unavailable(message: str, *, details: dict[str, Any] | None = None) -> ServerApiError:
+    return ServerApiError(
+        status_code=502,
+        code="EMBEDDING_PROVIDER_UNAVAILABLE",
+        message=message,
+        error_type="server_error",
+        details=details,
+    )
+
+
+def vector_store_unavailable(message: str, *, details: dict[str, Any] | None = None) -> ServerApiError:
+    return ServerApiError(
+        status_code=502,
+        code="VECTOR_STORE_UNAVAILABLE",
+        message=message,
+        error_type="server_error",
+        details=details,
+    )
+
+
+def vectorize_write_failed(message: str, *, details: dict[str, Any] | None = None) -> ServerApiError:
+    return ServerApiError(
+        status_code=502,
+        code="VECTORIZE_WRITE_FAILED",
+        message=message,
+        error_type="server_error",
+        details=details,
+    )
+
+
+def invalid_retrieval_request(message: str, *, details: dict[str, Any] | None = None) -> ServerApiError:
+    return ServerApiError(
+        status_code=422,
+        code="INVALID_RETRIEVAL_REQUEST",
+        message=message,
+        error_type="invalid_request_error",
+        details=details,
+    )
+
+
+def query_embedding_failed(message: str, *, details: dict[str, Any] | None = None) -> ServerApiError:
+    return ServerApiError(
+        status_code=502,
+        code="QUERY_EMBEDDING_FAILED",
+        message=message,
+        error_type="server_error",
+        details=details,
+    )
+
+
+def retrieval_failed(message: str, *, details: dict[str, Any] | None = None) -> ServerApiError:
+    return ServerApiError(
+        status_code=502,
+        code="RETRIEVAL_FAILED",
+        message=message,
+        error_type="server_error",
+        details=details,
+    )
+
+
 def vector_embedding_error(message: str, *, details: dict[str, Any] | None = None) -> ServerApiError:
     """Embedding API 调用失败"""
     return ServerApiError(
@@ -111,6 +191,68 @@ def vector_config_error(message: str, *, details: dict[str, Any] | None = None) 
     return ServerApiError(
         status_code=503,
         code="VECTOR_CONFIG_ERROR",
+        message=message,
+        error_type="server_error",
+        details=details,
+    )
+
+
+# ============ Inspect Error Factories ============
+
+
+def invalid_inspect_request(message: str, *, details: dict[str, Any] | None = None) -> ServerApiError:
+    return ServerApiError(
+        status_code=422,
+        code="INVALID_INSPECT_REQUEST",
+        message=message,
+        error_type="invalid_request_error",
+        details=details,
+    )
+
+
+def inspect_evidence_missing(message: str, *, details: dict[str, Any] | None = None) -> ServerApiError:
+    return ServerApiError(
+        status_code=422,
+        code="INSPECT_EVIDENCE_MISSING",
+        message=message,
+        error_type="invalid_request_error",
+        details=details,
+    )
+
+
+def inspect_provider_unavailable(
+    message: str,
+    *,
+    status_code: int = 503,
+    details: dict[str, Any] | None = None,
+) -> ServerApiError:
+    return ServerApiError(
+        status_code=status_code,
+        code="INSPECT_PROVIDER_UNAVAILABLE",
+        message=message,
+        error_type="server_error",
+        details=details,
+    )
+
+
+def inspect_provider_invalid_response(
+    message: str,
+    *,
+    details: dict[str, Any] | None = None,
+) -> ServerApiError:
+    return ServerApiError(
+        status_code=502,
+        code="INSPECT_PROVIDER_INVALID_RESPONSE",
+        message=message,
+        error_type="server_error",
+        details=details,
+    )
+
+
+def decision_inconclusive(message: str, *, details: dict[str, Any] | None = None) -> ServerApiError:
+    return ServerApiError(
+        status_code=409,
+        code="DECISION_INCONCLUSIVE",
         message=message,
         error_type="server_error",
         details=details,
