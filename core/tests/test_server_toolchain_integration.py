@@ -166,6 +166,48 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             self.assertEqual(workspace["project"]["workflow_state"], "media_ready")
             self.assertEqual(len(workspace["edit_draft"]["shots"]), 0)
 
+    def test_chat_planner_context_contains_structured_tools_and_scope(self) -> None:
+        project_id, _ = self._create_project()
+        self._set_auth_session()
+
+        captured_context: dict[str, Any] = {}
+        planner_json = (
+            '{"status":"final","reasoning_summary":"context checked",'
+            '"assistant_reply":"上下文已完成结构化。","tool_name":null,'
+            '"tool_input_summary":null,"draft_strategy":"no_change"}'
+        )
+
+        async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
+            messages = json.get("messages", [])
+            user_message = next((item for item in messages if item.get("role") == "user"), {})
+            captured_context.update(core_server.json.loads(user_message.get("content", "{}")))
+
+            class _DummyResponse:
+                status_code = 200
+
+                @staticmethod
+                def json() -> dict[str, Any]:
+                    return {
+                        "choices": [{"message": {"content": planner_json}}],
+                        "usage": {"prompt_tokens": 70, "completion_tokens": 24, "total_tokens": 94},
+                    }
+
+                text = planner_json
+
+            return _DummyResponse()
+
+        with patch("httpx.AsyncClient.post", fake_post):
+            chat_response = self.client.post(
+                f"/api/v1/projects/{project_id}/chat",
+                json={"prompt": "做一个旅行视频开头", "target": {"scene_id": "scene_focus_1"}},
+            )
+            self.assertEqual(chat_response.status_code, 200)
+            self._poll_workspace(project_id)
+
+        self.assertEqual(captured_context["scope"]["scope_type"], "scene")
+        tool_names = [item["name"] for item in captured_context["tools"]["available_tools"]]
+        self.assertIn("read", tool_names)
+
 
 if __name__ == "__main__":
     unittest.main()
