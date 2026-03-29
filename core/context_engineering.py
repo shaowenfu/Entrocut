@@ -76,23 +76,27 @@ def build_tool_capability_state() -> dict[str, Any]:
     return {
         "available_tools": [
             {
+                "name": "read",
+                "purpose": "Read current workspace and draft state snapshot for planning.",
+            },
+            {
                 "name": "retrieve",
-                "purpose": "TODO: describe retrieval usage boundary",
+                "purpose": "Retrieve candidate clips from indexed draft/media summaries.",
             },
             {
                 "name": "inspect",
-                "purpose": "TODO: describe inspect usage boundary",
+                "purpose": "Inspect clip-level details before making patch decisions.",
             },
             {
                 "name": "patch",
-                "purpose": "TODO: describe patch usage boundary",
+                "purpose": "Apply bounded edit-draft updates through state deltas.",
             },
             {
                 "name": "preview",
-                "purpose": "TODO: describe preview usage boundary",
+                "purpose": "Generate lightweight preview metadata for verification.",
             },
         ],
-        "status": "TODO: replace with registry-backed tool capability summary",
+        "status": "minimal-loop-tools-ready",
     }
 
 
@@ -111,7 +115,7 @@ def build_working_memory_state(
 def build_runtime_capabilities_state() -> dict[str, Any]:
     return {
         "planner_loop": "implemented",
-        "tool_execution": "TODO",
+        "tool_execution": "implemented_minimal",
         "allowed_draft_strategy": ["placeholder_first_cut", "no_change"],
     }
 

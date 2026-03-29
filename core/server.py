@@ -259,6 +259,8 @@ class ChatRequest(BaseModel):
 
 PlannerDecisionStatus = Literal["final", "requires_tool"]
 PlannerDraftStrategy = Literal["placeholder_first_cut", "no_change"]
+ToolName = Literal["read", "retrieve", "inspect", "patch", "preview"]
+SUPPORTED_TOOL_NAMES: set[str] = {"read", "retrieve", "inspect", "patch", "preview"}
 
 
 class PlannerDecisionModel(BaseModel):
@@ -268,6 +270,25 @@ class PlannerDecisionModel(BaseModel):
     tool_name: str | None = None
     tool_input_summary: str | None = None
     draft_strategy: PlannerDraftStrategy = "placeholder_first_cut"
+
+
+class ToolCallModel(BaseModel):
+    tool_name: ToolName
+    tool_input: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolObservationModel(BaseModel):
+    tool_name: ToolName
+    success: bool
+    summary: str
+    output: dict[str, Any] = Field(default_factory=dict)
+    state_delta: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentLoopResultModel(BaseModel):
+    final_decision: PlannerDecisionModel
+    draft: EditDraftModel
+    observations: list[ToolObservationModel] = Field(default_factory=list)
 
 
 class ExportRequest(BaseModel):
@@ -664,13 +685,22 @@ def _validate_planner_decision(
     iteration: int,
     draft: EditDraftModel,
 ) -> PlannerDecisionModel:
-    if decision.status == "requires_tool" and not _trimmed(decision.tool_name):
-        raise CoreApiError(
-            status_code=502,
-            code="PLANNER_DECISION_INVALID",
-            message="Planner requested tool execution without a tool name.",
-            details={"iteration": iteration, "draft_version": draft.version},
-        )
+    if decision.status == "requires_tool":
+        normalized_tool_name = _trimmed(decision.tool_name)
+        if not normalized_tool_name:
+            raise CoreApiError(
+                status_code=502,
+                code="PLANNER_DECISION_INVALID",
+                message="Planner requested tool execution without a tool name.",
+                details={"iteration": iteration, "draft_version": draft.version},
+            )
+        if normalized_tool_name not in SUPPORTED_TOOL_NAMES:
+            raise CoreApiError(
+                status_code=502,
+                code="TOOL_NAME_NOT_SUPPORTED",
+                message="Planner requested a tool that is not supported in Core loop.",
+                details={"iteration": iteration, "tool_name": normalized_tool_name},
+            )
     return decision
 
 
@@ -678,35 +708,196 @@ def _should_continue_agent_loop(*, decision: PlannerDecisionModel) -> bool:
     return decision.status == "requires_tool"
 
 
+def _parse_tool_input_summary(tool_input_summary: str | None) -> dict[str, Any]:
+    normalized = _trimmed(tool_input_summary)
+    if not normalized:
+        return {}
+    try:
+        parsed = json.loads(normalized)
+    except json.JSONDecodeError:
+        return {"query": normalized}
+    return parsed if isinstance(parsed, dict) else {"query": normalized}
+
+
+def _build_tool_call_or_raise(decision: PlannerDecisionModel) -> ToolCallModel:
+    normalized_tool_name = _trimmed(decision.tool_name)
+    if not normalized_tool_name:
+        raise CoreApiError(
+            status_code=502,
+            code="PLANNER_DECISION_INVALID",
+            message="Planner requested tool execution without a tool name.",
+        )
+    try:
+        return ToolCallModel(
+            tool_name=normalized_tool_name,  # type: ignore[arg-type]
+            tool_input=_parse_tool_input_summary(decision.tool_input_summary),
+        )
+    except ValidationError as exc:
+        raise CoreApiError(
+            status_code=502,
+            code="TOOL_INPUT_INVALID",
+            message="Planner tool input is invalid for execution.",
+            details={"validation_errors": exc.errors()},
+        ) from exc
+
+
 async def _execute_tool_call_todo(
     *,
     project_id: str,
     iteration: int,
     decision: PlannerDecisionModel,
-) -> dict[str, Any]:
+    draft: EditDraftModel,
+) -> ToolObservationModel:
+    tool_call = _build_tool_call_or_raise(decision)
+    try:
+        if tool_call.tool_name == "read":
+            output = {
+                "draft_summary": _draft_summary(draft),
+                "query": tool_call.tool_input.get("query"),
+            }
+            return ToolObservationModel(
+                tool_name="read",
+                success=True,
+                summary="Read current draft state for planner.",
+                output=output,
+            )
+
+        if tool_call.tool_name == "retrieve":
+            query = str(tool_call.tool_input.get("query") or "").lower()
+            matched_clip_ids = [
+                clip.id
+                for clip in draft.clips
+                if not query
+                or query in clip.visual_desc.lower()
+                or any(query in tag.lower() for tag in clip.semantic_tags)
+            ][:5]
+            return ToolObservationModel(
+                tool_name="retrieve",
+                success=True,
+                summary="Retrieved candidate clips from local draft catalog.",
+                output={"query": query, "matched_clip_ids": matched_clip_ids},
+            )
+
+        if tool_call.tool_name == "inspect":
+            clip_id = _trimmed(str(tool_call.tool_input.get("clip_id") or ""))
+            target_clip = next((clip for clip in draft.clips if clip.id == clip_id), None)
+            if target_clip is None and draft.clips:
+                target_clip = draft.clips[0]
+            if target_clip is None:
+                raise CoreApiError(
+                    status_code=502,
+                    code="TOOL_EXECUTION_FAILED",
+                    message="Inspect tool could not find any clip in draft.",
+                    details={"project_id": project_id, "iteration": iteration},
+                )
+            return ToolObservationModel(
+                tool_name="inspect",
+                success=True,
+                summary="Inspected clip details for reasoning.",
+                output={"clip": target_clip.model_dump()},
+            )
+
+        if tool_call.tool_name == "patch":
+            clip_id = _trimmed(str(tool_call.tool_input.get("clip_id") or ""))
+            target_clip = next((clip for clip in draft.clips if clip.id == clip_id), None)
+            if target_clip is None and draft.clips:
+                target_clip = draft.clips[0]
+            if target_clip is None:
+                raise CoreApiError(
+                    status_code=502,
+                    code="TOOL_EXECUTION_FAILED",
+                    message="Patch tool requires at least one clip to create a shot.",
+                    details={"project_id": project_id, "iteration": iteration},
+                )
+            next_order = len(draft.shots)
+            shot = ShotModel(
+                id=_entity_id("shot"),
+                clip_id=target_clip.id,
+                source_in_ms=target_clip.source_start_ms,
+                source_out_ms=min(target_clip.source_end_ms, target_clip.source_start_ms + 4000),
+                order=next_order,
+                enabled=True,
+                label=f"Patched Shot {next_order + 1}",
+                intent="tool.patch generated",
+                note=None,
+                locked_fields=[],
+            )
+            scene = SceneModel(
+                id=_entity_id("scene"),
+                shot_ids=[shot.id],
+                order=len(draft.scenes or []),
+                enabled=True,
+                label=shot.label,
+                intent=shot.intent,
+                note=None,
+                locked_fields=[],
+            )
+            return ToolObservationModel(
+                tool_name="patch",
+                success=True,
+                summary="Patched draft with one additional shot from selected clip.",
+                output={"clip_id": target_clip.id, "shot_id": shot.id},
+                state_delta={
+                    "draft_update": {
+                        "shots": [*draft.shots, shot],
+                        "scenes": [*(draft.scenes or []), scene],
+                        "selected_shot_id": shot.id,
+                        "selected_scene_id": scene.id,
+                        "status": "ready",
+                    }
+                },
+            )
+
+        if tool_call.tool_name == "preview":
+            return ToolObservationModel(
+                tool_name="preview",
+                success=True,
+                summary="Generated lightweight preview metadata.",
+                output={
+                    "shot_count": len(draft.shots),
+                    "scene_count": len(draft.scenes or []),
+                    "estimated_duration_ms": sum(max(0, shot.source_out_ms - shot.source_in_ms) for shot in draft.shots),
+                },
+            )
+    except CoreApiError:
+        raise
+    except Exception as exc:
+        raise CoreApiError(
+            status_code=502,
+            code="TOOL_EXECUTION_FAILED",
+            message="Tool execution failed unexpectedly.",
+            details={"tool_name": tool_call.tool_name, "error": str(exc)},
+        ) from exc
+
     raise CoreApiError(
-        status_code=501,
-        code="AGENT_TOOL_EXECUTION_TODO",
-        message="Planner requested tool execution, but tool execution loop is not implemented in Core yet.",
-        details={
-            "project_id": project_id,
-            "iteration": iteration,
-            "tool_name": decision.tool_name,
-            "tool_input_summary": decision.tool_input_summary,
-        },
+        status_code=502,
+        code="TOOL_NAME_NOT_SUPPORTED",
+        message="Tool is not supported by current loop implementation.",
+        details={"tool_name": tool_call.tool_name},
     )
 
 
-def _apply_tool_observation_to_draft_todo(draft: EditDraftModel, observation: dict[str, Any]) -> EditDraftModel:
-    state_delta = observation.get("state_delta")
-    if not isinstance(state_delta, dict) or not state_delta:
+def _apply_tool_observation_to_draft_todo(draft: EditDraftModel, observation: ToolObservationModel) -> EditDraftModel:
+    state_delta = observation.state_delta
+    if not state_delta:
         return draft
-    raise CoreApiError(
-        status_code=501,
-        code="AGENT_TOOL_STATE_WRITEBACK_TODO",
-        message="Tool observation produced a state delta, but loop write-back is not implemented in Core yet.",
-        details={"state_delta_keys": sorted(state_delta.keys())[:20]},
-    )
+    draft_update = state_delta.get("draft_update")
+    if not isinstance(draft_update, dict):
+        raise CoreApiError(
+            status_code=502,
+            code="TOOL_OBSERVATION_INVALID",
+            message="Tool observation has invalid state delta payload.",
+            details={"state_delta_keys": sorted(state_delta.keys())[:20]},
+        )
+    try:
+        return _bump_draft(draft, **draft_update)
+    except Exception as exc:
+        raise CoreApiError(
+            status_code=502,
+            code="STATE_WRITEBACK_FAILED",
+            message="Failed to apply tool state delta to draft.",
+            details={"error": str(exc)},
+        ) from exc
 
 
 async def _run_chat_agent_loop(
@@ -717,7 +908,7 @@ async def _run_chat_agent_loop(
     prompt: str,
     draft: EditDraftModel,
     target: ChatTarget | None,
-) -> PlannerDecisionModel:
+) -> AgentLoopResultModel:
     await _emit_agent_progress(
         project_id,
         phase="loop_started",
@@ -725,7 +916,7 @@ async def _run_chat_agent_loop(
         details={"max_iterations": AGENT_LOOP_MAX_ITERATIONS},
     )
     current_draft = draft
-    observations: list[dict[str, Any]] = []
+    observations: list[ToolObservationModel] = []
     for iteration in range(1, AGENT_LOOP_MAX_ITERATIONS + 1):
         await _emit_agent_progress(
             project_id,
@@ -745,7 +936,7 @@ async def _run_chat_agent_loop(
             draft=current_draft,
             target=target,
             iteration=iteration,
-            observations=observations,
+            observations=[item.model_dump() for item in observations],
         )
         decision = _validate_planner_decision(
             decision,
@@ -770,7 +961,7 @@ async def _run_chat_agent_loop(
                 summary="Planner returned a final decision.",
                 details={"iteration": iteration, "draft_version": current_draft.version},
             )
-            return decision
+            return AgentLoopResultModel(final_decision=decision, draft=current_draft, observations=observations)
         await _emit_agent_progress(
             project_id,
             phase="tool_execution_requested",
@@ -785,6 +976,7 @@ async def _run_chat_agent_loop(
             project_id=project_id,
             iteration=iteration,
             decision=decision,
+            draft=current_draft,
         )
         observations.append(observation)
         await _emit_agent_progress(
@@ -793,8 +985,8 @@ async def _run_chat_agent_loop(
             summary="Tool observation recorded for replanning.",
             details={
                 "iteration": iteration,
-                "tool_name": observation.get("tool_name"),
-                "success": observation.get("success"),
+                "tool_name": observation.tool_name,
+                "success": observation.success,
                 "observation_count": len(observations),
             },
         )
@@ -1083,7 +1275,7 @@ class InMemoryProjectStore:
                     code="AUTH_SESSION_REQUIRED",
                     message="Sign in is required before chat can run.",
                 )
-            decision = await _run_chat_agent_loop(
+            loop_result = await _run_chat_agent_loop(
                 record=record,
                 access_token=access_token,
                 project_id=project_id,
@@ -1091,19 +1283,18 @@ class InMemoryProjectStore:
                 draft=draft,
                 target=target,
             )
-            if decision.draft_strategy == "placeholder_first_cut":
-                shots, scenes = _build_edit_plan(draft.clips, prompt)
-            else:
-                shots = list(draft.shots)
-                scenes = list(draft.scenes or [])
-            next_draft = _bump_draft(
-                draft,
-                shots=shots,
-                scenes=scenes,
-                selected_scene_id=scenes[0].id if scenes else draft.selected_scene_id,
-                selected_shot_id=shots[0].id if shots else draft.selected_shot_id,
-                status="ready",
-            )
+            decision = loop_result.final_decision
+            next_draft = loop_result.draft
+            if decision.draft_strategy == "placeholder_first_cut" and not next_draft.shots:
+                shots, scenes = _build_edit_plan(next_draft.clips, prompt)
+                next_draft = _bump_draft(
+                    next_draft,
+                    shots=shots,
+                    scenes=scenes,
+                    selected_scene_id=scenes[0].id if scenes else next_draft.selected_scene_id,
+                    selected_shot_id=shots[0].id if shots else next_draft.selected_shot_id,
+                    status="ready",
+                )
             reply_text = decision.assistant_reply.strip() or decision.reasoning_summary.strip()
             ops = [
                 AssistantDecisionOperationModel(
@@ -1120,18 +1311,18 @@ class InMemoryProjectStore:
                 ),
                 AssistantDecisionOperationModel(
                     id=_entity_id("op"),
-                    action="todo_tool_execution_loop",
+                    action="agent_tool_execution_loop",
                     target="core.agent.tools",
-                    summary="Tool execution remains TODO in the current prototype; planner-driven loop shape is preserved.",
+                    summary=f"Executed {len(loop_result.observations)} tool step(s) in planner-driven loop.",
                 ),
             ]
-            if decision.draft_strategy == "placeholder_first_cut":
+            if decision.draft_strategy == "placeholder_first_cut" and next_draft.shots:
                 ops.append(
                     AssistantDecisionOperationModel(
                         id=_entity_id("op"),
                         action="placeholder_edit_draft_applied",
                         target="workspace.edit_draft",
-                        summary="Applied the current placeholder first-cut strategy while planner-driven tools are still TODO.",
+                        summary="Applied placeholder first-cut strategy after loop finalized.",
                     )
                 )
             else:
