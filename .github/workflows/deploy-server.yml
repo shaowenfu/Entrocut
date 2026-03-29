@@ -181,6 +181,8 @@ jobs:
               READY_CODE=$(curl --silent --output /dev/null --write-out "%{http_code}" http://127.0.0.1:8001/readyz || true)
               if [ "${LIVE_CODE}" = "200" ] && [ "${READY_CODE}" = "200" ]; then
                 echo "deploy_ready"
+                curl --silent http://127.0.0.1:8001/ || true
+                echo
                 exit 0
               fi
               echo "livez=${LIVE_CODE} readyz=${READY_CODE}"

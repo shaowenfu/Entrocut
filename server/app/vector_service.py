@@ -1,33 +1,43 @@
-"""向量化服务：封装 DashScope MultiModalEmbedding 和 DashVector SDK。"""
+"""向量服务：封装 DashScope 多模态 embedding 与 DashVector 检索。"""
 from __future__ import annotations
 
+import base64
+import binascii
 import logging
 from typing import Any
 
 from .config import Settings
 from .errors import (
     ServerApiError,
+    embedding_provider_unavailable,
+    image_decode_failed,
+    invalid_retrieval_request,
+    invalid_vectorize_request,
+    query_embedding_failed,
+    retrieval_failed,
     vector_config_error,
-    vector_db_error,
-    vector_embedding_error,
-    vectorize_error,
+    vector_store_unavailable,
+    vectorize_write_failed,
 )
-from .models import AssetReference, AssetVector
+from .models import (
+    AssetRetrievalRequest,
+    VectorizeDoc,
+    VectorizeRequest,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class VectorService:
-    """向量化服务，提供「向量化 + 入库」原子操作。"""
+    """phase 1 向量化与检索服务。"""
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self._embedding_client = None
         self._vector_client = None
-        self._collection = None
+        self._collection_cache: dict[str, Any] = {}
 
     def _ensure_embedding_client(self) -> Any:
-        """懒加载 DashScope Embedding 客户端。"""
         if self._embedding_client is not None:
             return self._embedding_client
 
@@ -47,13 +57,11 @@ class VectorService:
             ) from exc
 
     def _ensure_vector_client(self) -> Any:
-        """懒加载 DashVector 客户端。"""
         if self._vector_client is not None:
             return self._vector_client
 
         api_key = self.settings.dashvector_api_key
         endpoint = self.settings.dashvector_endpoint
-
         if not api_key or not endpoint:
             raise vector_config_error(
                 "DASHVECTOR_API_KEY and DASHVECTOR_ENDPOINT are required.",
@@ -90,61 +98,35 @@ class VectorService:
                 details={"hint": "pip install dashvector"},
             ) from exc
 
-    def _get_collection(self, collection_name: str | None = None) -> Any:
-        """获取 DashVector Collection。"""
-        target_collection = collection_name or self.settings.dashvector_collection_name
-        if self._collection is not None and target_collection == self.settings.dashvector_collection_name:
-            return self._collection
+    def _get_collection(self, collection_name: str) -> Any:
+        if collection_name in self._collection_cache:
+            return self._collection_cache[collection_name]
 
         client = self._ensure_vector_client()
-        collection = client.get(name=target_collection)
+        collection = client.get(name=collection_name)
         if collection is None:
-            raise vector_db_error(
-                f"Collection not found: {target_collection}",
-                details={"collection_name": target_collection},
+            raise vector_store_unavailable(
+                "DashVector collection not found.",
+                details={"collection_name": collection_name},
             )
-        if target_collection == self.settings.dashvector_collection_name:
-            self._collection = collection
+        self._collection_cache[collection_name] = collection
         return collection
 
-    def _create_collection(self, collection_name: str | None = None) -> Any:
-        target_collection = collection_name or self.settings.dashvector_collection_name
+    def _create_collection(self, collection_name: str, dimension: int) -> Any:
         client = self._ensure_vector_client()
-        result = client.create(
-            name=target_collection,
-            dimension=self.settings.dashscope_multimodal_dimension,
-            metric="cosine",
-        )
+        result = client.create(name=collection_name, dimension=dimension, metric="cosine")
         result_code = getattr(result, "code", getattr(result, "status_code", None))
         if result_code not in {0, "0"}:
-            raise vector_db_error(
-                f"Failed to create collection: {target_collection}",
+            raise vector_store_unavailable(
+                "Failed to create DashVector collection.",
                 details={
-                    "collection_name": target_collection,
+                    "collection_name": collection_name,
                     "status_code": result_code,
                     "message": getattr(result, "message", None),
                 },
             )
-        self._collection = None
-        return self._get_collection(target_collection)
-
-    def _build_multimodal_input(self, references: list[AssetReference]) -> list[dict[str, Any]]:
-        """将 AssetReference 列表转换为 DashScope MultiModal Embedding 输入格式。"""
-        fused_content: dict[str, Any] = {}
-        for ref in references:
-            if ref.type == "image_url":
-                if "image" in fused_content:
-                    raise vectorize_error("Multiple image_url references are not supported in one fused embedding request.")
-                fused_content["image"] = ref.content
-            elif ref.type == "video_url":
-                if "video" in fused_content:
-                    raise vectorize_error("Multiple video_url references are not supported in one fused embedding request.")
-                fused_content["video"] = ref.content
-            elif ref.type == "text":
-                if "text" in fused_content:
-                    raise vectorize_error("Multiple text references are not supported in one fused embedding request.")
-                fused_content["text"] = ref.content
-        return [fused_content] if fused_content else []
+        self._collection_cache.pop(collection_name, None)
+        return self._get_collection(collection_name)
 
     @staticmethod
     def _extract_embedding(output: Any) -> list[float]:
@@ -159,224 +141,240 @@ class VectorService:
                     candidate = first_item.get("embedding") or first_item.get("vector")
                     if isinstance(candidate, list):
                         return candidate
-        raise vector_embedding_error(
-            "Invalid embedding response from DashScope.",
-            details={"response": str(output)[:500]},
-        )
+        raise embedding_provider_unavailable("Embedding provider returned an invalid embedding payload.")
 
-    def compute_embedding(self, references: list[AssetReference]) -> list[float]:
-        """调用 DashScope MultiModal Embedding API 计算融合向量。"""
-        if not references:
-            raise vectorize_error("At least one reference is required.")
+    def _validate_image_base64(self, image_base64: str, *, doc_id: str) -> str:
+        try:
+            base64.b64decode(image_base64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise image_decode_failed(
+                "image_base64 is not valid base64.",
+                details={"doc_id": doc_id},
+            ) from exc
+        return f"data:image/jpeg;base64,{image_base64}"
 
+    def _validate_vectorize_request(self, payload: VectorizeRequest) -> None:
+        if not payload.docs:
+            raise invalid_vectorize_request("docs must contain at least one item.")
+        seen_ids: set[str] = set()
+        for doc in payload.docs:
+            if doc.id in seen_ids:
+                raise invalid_vectorize_request(
+                    "Duplicate doc.id values are not allowed within one request.",
+                    details={"doc_id": doc.id},
+                )
+            seen_ids.add(doc.id)
+            if doc.fields.source_start_ms >= doc.fields.source_end_ms:
+                raise invalid_vectorize_request(
+                    "source_start_ms must be less than source_end_ms.",
+                    details={"doc_id": doc.id},
+                )
+            self._validate_image_base64(doc.content.image_base64, doc_id=doc.id)
+
+    def _build_image_embedding_input(self, image_base64: str, *, doc_id: str) -> list[dict[str, Any]]:
+        return [{"image": self._validate_image_base64(image_base64, doc_id=doc_id)}]
+
+    def _compute_embedding_from_image(self, image_base64: str, *, doc_id: str, model: str, dimension: int) -> list[float]:
         self._ensure_embedding_client()
-        multimodal_input = self._build_multimodal_input(references)
-
-        if not multimodal_input:
-            raise vectorize_error("No valid references to vectorize.")
-
         try:
             from dashscope import MultiModalEmbedding
 
             response = MultiModalEmbedding.call(
                 api_key=self.settings.dashscope_api_key,
-                model=self.settings.dashscope_multimodal_embedding_model,
-                input=multimodal_input,
-                dimension=self.settings.dashscope_multimodal_dimension,
+                model=model,
+                input=self._build_image_embedding_input(image_base64, doc_id=doc_id),
+                dimension=dimension,
             )
-
             status_code = getattr(response, "status_code", None)
             if status_code not in {200, "200", 0}:
-                raise vector_embedding_error(
-                    f"DashScope embedding API failed: {response.message or 'Unknown error'}",
+                raise embedding_provider_unavailable(
+                    "Embedding provider returned an error.",
                     details={
+                        "doc_id": doc_id,
                         "status_code": status_code,
-                        "code": getattr(response, "code", None),
+                        "provider_code": getattr(response, "code", None),
                         "request_id": getattr(response, "request_id", None),
                     },
                 )
             return self._extract_embedding(getattr(response, "output", None))
-
         except ServerApiError:
             raise
         except Exception as exc:
-            logger.exception("DashScope embedding API call failed")
-            raise vector_embedding_error(
-                f"DashScope embedding API call failed: {exc}",
+            logger.exception("Embedding provider image request failed")
+            raise embedding_provider_unavailable(
+                f"Embedding provider request failed: {exc}",
+                details={"doc_id": doc_id, "error_type": type(exc).__name__},
+            ) from exc
+
+    def _compute_query_embedding(self, query_text: str, *, model: str, dimension: int) -> list[float]:
+        if not query_text or not query_text.strip():
+            raise invalid_retrieval_request("query_text is required and cannot be empty.")
+        self._ensure_embedding_client()
+        try:
+            from dashscope import MultiModalEmbedding
+
+            response = MultiModalEmbedding.call(
+                api_key=self.settings.dashscope_api_key,
+                model=model,
+                input=[{"text": query_text.strip()}],
+                dimension=dimension,
+            )
+            status_code = getattr(response, "status_code", None)
+            if status_code not in {200, "200", 0}:
+                raise query_embedding_failed(
+                    "Embedding provider returned an error while encoding query_text.",
+                    details={
+                        "status_code": status_code,
+                        "provider_code": getattr(response, "code", None),
+                        "request_id": getattr(response, "request_id", None),
+                    },
+                )
+            return self._extract_embedding(getattr(response, "output", None))
+        except ServerApiError:
+            raise
+        except Exception as exc:
+            logger.exception("Embedding provider query request failed")
+            raise query_embedding_failed(
+                f"Query embedding request failed: {exc}",
                 details={"error_type": type(exc).__name__},
             ) from exc
 
-    def upsert_vector(
+    def _insert_docs(
         self,
-        asset_id: str,
-        vector: list[float],
-        metadata: dict[str, Any] | None = None,
+        *,
+        collection_name: str,
+        partition: str,
+        dimension: int,
+        vector_docs: list[dict[str, Any]],
     ) -> None:
-        """将向量写入 DashVector。"""
-        collection = self._get_collection()
-
         try:
             from dashvector import Doc
 
-            doc = Doc(
-                id=asset_id,
-                vector=vector,
-                fields=metadata or {},
-            )
-
-            result = collection.insert(doc, partition=self.settings.dashvector_partition)
+            try:
+                collection = self._get_collection(collection_name)
+            except ServerApiError as exc:
+                if exc.code != "VECTOR_STORE_UNAVAILABLE":
+                    raise
+                collection = self._create_collection(collection_name, dimension)
+            docs = [
+                Doc(
+                    id=item["id"],
+                    vector=item["vector"],
+                    fields=item["fields"],
+                )
+                for item in vector_docs
+            ]
+            result = collection.insert(docs, partition=partition)
             result_code = getattr(result, "code", getattr(result, "status_code", None))
             if result_code == -2021:
-                collection = self._create_collection()
-                result = collection.insert(doc, partition=self.settings.dashvector_partition)
+                collection = self._create_collection(collection_name, dimension)
+                result = collection.insert(docs, partition=partition)
                 result_code = getattr(result, "code", getattr(result, "status_code", None))
             if result_code not in {0, "0"}:
-                raise vector_db_error(
-                    f"Failed to insert vector for asset: {asset_id}",
+                raise vectorize_write_failed(
+                    "DashVector insert failed.",
                     details={
+                        "collection_name": collection_name,
                         "status_code": result_code,
                         "message": getattr(result, "message", None),
                     },
                 )
-
         except ServerApiError:
             raise
         except Exception as exc:
-            logger.exception("DashVector upsert failed")
-            raise vector_db_error(
+            logger.exception("DashVector insert failed")
+            raise vector_store_unavailable(
                 f"DashVector insert failed: {exc}",
-                details={"asset_id": asset_id, "error_type": type(exc).__name__},
+                details={"collection_name": collection_name, "error_type": type(exc).__name__},
             ) from exc
 
-    def vectorize(
-        self,
-        asset_id: str,
-        references: list[AssetReference],
-        metadata: dict[str, Any] | None = None,
-    ) -> AssetVector:
-        """原子操作：计算向量 + 写入数据库。"""
-        # Step 1: 计算 embedding
-        vector = self.compute_embedding(references)
+    def vectorize(self, payload: VectorizeRequest) -> dict[str, Any]:
+        self._validate_vectorize_request(payload)
 
-        # Step 2: 写入向量数据库
-        self.upsert_vector(asset_id, vector, metadata)
+        vector_docs: list[dict[str, Any]] = []
+        for doc in payload.docs:
+            vector = self._compute_embedding_from_image(
+                doc.content.image_base64,
+                doc_id=doc.id,
+                model=payload.model,
+                dimension=payload.dimension,
+            )
+            vector_docs.append(
+                {
+                    "id": doc.id,
+                    "vector": vector,
+                    "fields": doc.fields.model_dump(exclude_none=True),
+                }
+            )
 
-        return AssetVector(
-            asset_id=asset_id,
-            vector=vector,
-            dimension=len(vector),
+        self._insert_docs(
+            collection_name=payload.collection_name,
+            partition=payload.partition,
+            dimension=payload.dimension,
+            vector_docs=vector_docs,
         )
 
-    def compute_query_embedding(self, query_text: str) -> list[float]:
-        """将查询文本转换为融合向量。"""
-        if not query_text or not query_text.strip():
-            raise vectorize_error("query_text cannot be empty.")
+        return {
+            "collection_name": payload.collection_name,
+            "partition": payload.partition,
+            "model": payload.model,
+            "dimension": payload.dimension,
+            "inserted_count": len(payload.docs),
+            "results": [{"id": doc.id, "status": "inserted"} for doc in payload.docs],
+            "usage": {
+                "embedding_doc_count": len(payload.docs),
+                "dashvector_write_units": len(payload.docs),
+            },
+        }
 
-        self._ensure_embedding_client()
+    def retrieve(self, payload: AssetRetrievalRequest) -> dict[str, Any]:
+        if not payload.query_text or not payload.query_text.strip():
+            raise invalid_retrieval_request("query_text is required and cannot be empty.")
 
+        query_vector = self._compute_query_embedding(
+            payload.query_text,
+            model=payload.model,
+            dimension=payload.dimension,
+        )
         try:
-            from dashscope import MultiModalEmbedding
-
-            response = MultiModalEmbedding.call(
-                api_key=self.settings.dashscope_api_key,
-                model=self.settings.dashscope_multimodal_embedding_model,
-                input=[{"text": query_text.strip()}],
-                dimension=self.settings.dashscope_multimodal_dimension,
-            )
-
-            status_code = getattr(response, "status_code", None)
-            if status_code not in {200, "200", 0}:
-                raise vector_embedding_error(
-                    f"DashScope embedding API failed: {response.message or 'Unknown error'}",
-                    details={
-                        "status_code": status_code,
-                        "code": getattr(response, "code", None),
-                        "request_id": getattr(response, "request_id", None),
-                    },
-                )
-            return self._extract_embedding(getattr(response, "output", None))
-
-        except ServerApiError:
-            raise
-        except Exception as exc:
-            logger.exception("DashScope query embedding API call failed")
-            raise vector_embedding_error(
-                f"DashScope query embedding API call failed: {exc}",
-                details={"error_type": type(exc).__name__},
-            ) from exc
-
-    def retrieve(
-        self,
-        collection_name: str | None = None,
-        partition: str | None = None,
-        model: str | None = None,
-        dimension: int | None = None,
-        query_text: str | None = None,
-        topk: int = 8,
-        filter_str: str | None = None,
-        include_vector: bool = False,
-        output_fields: list[str] | None = None,
-    ) -> dict[str, Any]:
-        """执行语义检索：生成查询向量 + 向量检索。"""
-        # 参数校验
-        if not query_text or not query_text.strip():
-            raise vectorize_error("query_text is required and cannot be empty.")
-
-        # Step 1: 生成查询向量
-        query_vector = self.compute_query_embedding(query_text)
-
-        # Step 2: 获取 Collection
-        collection = self._get_collection(collection_name)
-
-        # Step 3: 执行检索
-        try:
+            collection = self._get_collection(payload.collection_name)
             result = collection.query(
                 vector=query_vector,
-                topk=topk,
-                filter=filter_str,
-                include_vector=include_vector,
-                partition=partition or self.settings.dashvector_partition,
-                output_fields=output_fields,
+                topk=payload.topk,
+                filter=payload.filter,
+                include_vector=payload.include_vector,
+                partition=payload.partition,
+                output_fields=payload.output_fields,
             )
-
             result_code = getattr(result, "code", getattr(result, "status_code", None))
             if result_code not in {0, "0"}:
-                # Collection 不存在的特殊处理
-                if result_code == 1004:  # DashVector collection not found error code
-                    raise vector_db_error(
-                        f"Collection not found: {collection_name or self.settings.dashvector_collection_name}",
-                        details={
-                            "status_code": result_code,
-                            "message": getattr(result, "message", None),
-                        },
-                    )
-                raise vector_db_error(
-                    f"DashVector query failed: {getattr(result, 'message', None) or 'Unknown error'}",
+                raise retrieval_failed(
+                    "DashVector query failed.",
                     details={
+                        "collection_name": payload.collection_name,
                         "status_code": result_code,
                         "message": getattr(result, "message", None),
                     },
                 )
 
-            # Step 4: 组装响应
             matches = []
-            for doc in result.output:
+            for doc in getattr(result, "output", []) or []:
                 match = {
                     "id": doc.id,
                     "score": doc.score,
                     "fields": doc.fields or {},
                 }
-                if include_vector and hasattr(doc, "vector"):
+                if payload.include_vector and hasattr(doc, "vector"):
                     match["vector"] = doc.vector
                 matches.append(match)
 
             return {
-                "collection_name": collection_name or self.settings.dashvector_collection_name,
-                "partition": partition or self.settings.dashvector_partition,
+                "collection_name": payload.collection_name,
+                "partition": payload.partition,
                 "query": {
-                    "query_text": query_text,
-                    "topk": topk,
-                    "filter": filter_str,
+                    "query_text": payload.query_text,
+                    "topk": payload.topk,
+                    "filter": payload.filter,
                 },
                 "matches": matches,
                 "usage": {
@@ -384,12 +382,11 @@ class VectorService:
                     "dashvector_read_units": len(matches),
                 },
             }
-
         except ServerApiError:
             raise
         except Exception as exc:
             logger.exception("DashVector query failed")
-            raise vector_db_error(
+            raise vector_store_unavailable(
                 f"DashVector query failed: {exc}",
-                details={"error_type": type(exc).__name__},
+                details={"collection_name": payload.collection_name, "error_type": type(exc).__name__},
             ) from exc

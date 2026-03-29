@@ -89,7 +89,7 @@
   - 而应先把 `agent runtime` 的总架构和每层职责钉住
 
 - 今天新增动作：
-  - 新建 `docs/editing_agent_runtime_architecture.md`
+  - 新建 `docs/agent_runtime/02_editing_agent_runtime_architecture.md`
   - 作为后续逐层细化的方向性骨架文档
 
 - 当前建议的后续顺序：

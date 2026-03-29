@@ -1,80 +1,196 @@
 # EntroCut Monorepo
 
-`EntroCut` 当前进入 `MVP` 重构阶段，目标是交付 `Chat-to-Cut（对话生成剪辑）` 闭环。
+`EntroCut` 当前处于 `MVP` 重构与 `editing agent（剪辑智能体）` 主骨架收口阶段。
 
-当前已接入以下全局基线：
+这不是一个“已经产品化”的仓库，而是一个方向已经比较清楚、但核心 `agent loop` 仍在继续落地的系统。
 
-1. `JWT Auth（鉴权）`：`core/server` 强制校验 `Authorization: Bearer <token>`。
-2. `ErrorEnvelope（统一错误包）`：三端按 `error.code/error.message/error.details` 对齐。
-3. `Redis Queue（外部队列）`：`ingest/index/chat` 统一基于 `job` 模型执行。
-4. `SQLite Persistence（持久化）`：`core/server` 重启后数据可恢复。
-5. `request_id` 贯通：前端请求自动注入 `X-Request-ID`，后端回传并记录。
+## 当前项目的一句话定位
 
-## 目录结构
+`EntroCut` 想做的是一个 `Chat-to-Cut（对话到剪辑）` 系统：
 
-1. `client/`：`Electron + React` 客户端壳层，承载 `AI Copilot` 界面与状态同步。
-2. `core/`：本地 `Python Sidecar`，负责切分、抽帧、渲染与导出。
-3. `server/`：云端 `FastAPI`，负责 `Agent` 编排、向量化与会话管理。
-4. `docs/`：MVP 设计与开发文档集（当前唯一规范源）。
+1. 用户通过自然语言表达目标
+2. 系统围绕 `EditDraft` 形成结构化剪辑草案
+3. 后续再通过局部选择、检索、判定、补丁和预览，持续收敛结果
 
-## MVP 主路径
+## 出发点
+视频剪辑 的本质，不是“操作时间线”，而是从一堆原始时空片段里，选择、排序、裁切、组织出一个能表达意图的观看序列。
 
-1. `Ingest`：本地素材导入、切分、关键帧拼图与向量索引。
-2. `Agent`：通过单一 `POST /api/v1/chat` 处理所有自然语言交互。
-3. `EditDraft`：在 `Asset / Clip / Shot / Scene` 分层上形成结构化剪辑草案。
-4. `Render`：以 `EditDraft.shots` 为最终执行输入生成可预览结果。
+系统最底层不会变的真理：
+1. 原始世界里有 media asset（媒体素材）
+2. 素材里有可被理解和复用的 candidate unit（候选片段）
+3. 用户有一个想表达的 intent（意图）
+4. 剪辑过程就是不断把“候选片段集合”收敛成“满足意图的最终序列”
 
-## API 入口（当前规范）
+从这些真理往上推，系统是在做：intent -> selection -> arrangement -> refinement -> export
 
-1. `core`（本地）：
-   1. `GET /health`
-   2. `GET /api/v1/projects`
-   3. `GET /api/v1/projects/{project_id}`
-   4. `POST /api/v1/projects`
-   5. `POST /api/v1/projects/import`
-   6. `POST /api/v1/projects/upload`
-   7. `POST /api/v1/projects/{project_id}/assets/import`
-   8. `POST /api/v1/projects/{project_id}/assets/upload`
-   9. `POST /api/v1/ingest`
-   10. `POST /api/v1/search`
-   11. `POST /api/v1/render`
-2. `server`（云端）：
-   1. `GET /health`
-   2. `POST /api/v1/index/upsert-clips`
-   3. `POST /api/v1/chat`（唯一 `Agent` 对外入口）
+## 剪辑过程的本质
 
-详细契约见 `docs/`：
+如果继续往下压缩，剪辑过程本质上只是在反复做 4 件事：
 
-1. `docs/core_api_ws_contract.md`
-2. `docs/edit_draft_schema.md`
+1. `select（选）`
+   - 从素材里找可用内容
+2. `compose（排）`
+   - 决定顺序、时长、分组和衔接
+3. `evaluate（判）`
+   - 判断当前草案是否更接近目标
+4. `revise（改）`
+   - 做局部替换、缩短、延长、重排和补镜头
 
-## 快速启动
+所以一个真正可工作的 `editing agent（剪辑智能体）`，最小也必须能支持：
 
-1. 一键启动本地三端（推荐）
+`选 -> 排 -> 判 -> 改`
+
+当前项目里收口出来的高层工具边界，本质上也正是在服务这 4 个动作：
+
+1. `retrieve` 解决“选”
+2. `inspect` 解决“判”
+3. `patch` 解决“改”
+4. `preview` 解决“判 + 对人展示”
+
+## 系统目标
+
+`EntroCut` 的目标不是做一个传统 `timeline editor（时间线编辑器）`，也不是一次性替代专业剪辑师。
+
+更准确的说法是：
+
+`帮助用户通过自然语言，持续把一个模糊剪辑目标收敛成一个可执行的 EditDraft。`
+
+所以系统真正要做的不是“一次性生成视频”，而是：
+
+`iterative convergence（迭代收敛）`
+
+这也决定了：
+
+1. 最重要的事实源必须是 `EditDraft`
+2. 最重要的运行能力必须是 `agent loop`
+3. 最重要的工程问题必须是 `context engineering（上下文工程）`
+
+## 当前三端分工
+
+### 1. `client/`
+
+技术栈：`Electron + React + Vite + Zustand`
+
+当前职责：
+
+1. `Launchpad / Workspace` 界面与状态同步
+2. 调用本地 `core` 契约
+3. 承载一套前端侧 `agent runtime` 原型骨架
+
+### 2. `core/`
+
+技术栈：`Python + FastAPI`
+
+当前职责：
+
+1. 本地项目与 `EditDraft` 状态管理
+2. `Client -> Core` 本地契约落点
+3. `planner-first` 的 `chat` 主链骨架
+4. `WebSocket event stream` 推送
+
+### 3. `server/`
+
+技术栈：`Python + FastAPI`
+
+当前职责：
+
+1. `Core -> Server` 云端能力网关
+2. `OpenAI-compatible` `completion` 代理
+3. `vectorize / retrieval / inspect` 专用工具接口
+4. 鉴权、能力探测与错误语义稳定化
+
+## 当前核心数据模型
+
+系统当前围绕 `EditDraft` 工作，而不是围绕展示型 `Storyboard` 工作。
+
+基本层次是：
+
+1. `Asset`
+2. `Clip`
+3. `Shot`
+4. `Scene`
+5. `EditDraft`
+
+当前统一口径：
+
+1. `clip` 是分析/检索单元
+2. `shot` 是最小可编辑语义单元
+3. `scene` 是可选工作分组层
+4. 最终执行语义以 `EditDraft.shots` 为准
+
+## 当前整体进度
+
+### 已经比较明确的部分
+
+1. 最小 `Launchpad -> Workspace -> import -> chat -> export -> preview` 闭环已经跑通过
+2. `EditDraft` 已经成为统一事实源
+3. `agent runtime` 的五层骨架已经讨论清楚并大部分文档化：
+   - `State`
+   - `Planner`
+   - `Tool`
+   - `Memory / Context`
+   - `Execution Loop`
+4. `retrieve / inspect / patch / preview` 的工具边界已经收口
+5. `server` 侧的 `planner / vectorize / retrieval / inspect` 契约和实现已经开始成型
+
+### 当前仍在收口的部分
+
+1. `core /chat` 还停在 `planner-first` 骨架阶段
+2. `planner -> tool execution -> replanning` 的真实 `agent loop` 还没有在 `core` 里彻底落地
+3. `retrieve / inspect` 的真实 `Core -> Server` 接入还需要继续按新契约推进
+
+所以现在最准确的描述不是“功能缺很多”，而是：
+
+`系统主方向已经基本确定，但核心 agent 执行闭环仍在实现中。`
+
+## 当前推荐阅读路径
+
+如果你要快速重新进入项目，建议按这个顺序看：
+
+1. [docs/README.md](./docs/README.md)
+2. [docs/editing/01_edit_draft_schema.md](./docs/editing/01_edit_draft_schema.md)
+3. [docs/contracts/01_core_api_ws_contract.md](./docs/contracts/01_core_api_ws_contract.md)
+4. [docs/agent_runtime/README.md](./docs/agent_runtime/README.md)
+5. [docs/server/README.md](./docs/server/README.md)
+6. [docs/develop_diary/2026-03-24_project_recap_and_pause_journal.md](./docs/develop_diary/2026-03-24_project_recap_and_pause_journal.md)
+
+## 当前关键接口面
+
+### Core
+
+当前真实入口主要包括：
+
+1. `GET /health`
+2. `GET /api/v1/runtime/capabilities`
+3. `GET /api/v1/projects`
+4. `POST /api/v1/projects`
+5. `GET /api/v1/projects/{project_id}`
+6. `POST /api/v1/projects/{project_id}/assets:import`
+7. `POST /api/v1/projects/{project_id}/chat`
+8. `POST /api/v1/projects/{project_id}/export`
+9. `GET /api/v1/projects/{project_id}/events` (`WebSocket`)
+
+### Server
+
+当前重点接口包括：
+
+1. `POST /v1/chat/completions`
+2. `POST /v1/assets/vectorize`
+3. `POST /v1/assets/retrieval`
+4. `POST /v1/tools/inspect`
+5. `GET /api/v1/runtime/capabilities`
+
+更详细的字段级契约，请直接看 `docs/server/`。
+
+## 本地启动
+
+### 一键启动
 
 ```bash
 ./scripts/dev_up.sh
 ```
 
-2. 生成开发 Token（本地）
-
-```bash
-AUTH_JWT_SECRET=entrocut-dev-secret-change-me ./scripts/issue_dev_token.sh
-```
-
-将输出的 token 写入 `client/.env`：
-
-```bash
-VITE_AUTH_TOKEN=<your_token>
-```
-
-3. 运行冒烟测试（Auth + Queue + Contract）
-
-```bash
-bash scripts/smoke_test.sh
-```
-
-4. 手动启动 `client`
+### 手动启动 client
 
 ```bash
 cd client
@@ -82,7 +198,7 @@ npm install
 npm run dev -- --host 127.0.0.1 --port 5173
 ```
 
-5. 手动启动 `core`
+### 手动启动 core
 
 ```bash
 cd core
@@ -92,22 +208,25 @@ pip install -r requirements.txt
 uvicorn server:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-6. 手动启动 `server`
+### 手动启动 server
 
 ```bash
 cd server
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-uvicorn main:app --host 127.0.0.1 --port 8001 --reload
+uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
-## 当前实现状态
+## 当前非目标
 
-1. 启动台主路径已接入真实项目接口；其余核心能力仍以 `Shell（壳层）` 为主。
-2. 当前剪辑结构设计以 `docs/edit_draft_schema.md` 为准：
-   - `clip` 是分析/检索单元
-   - `shot` 是最小可编辑语义单元
-   - `scene` 是可选工作分组层
-   - `render` 以 `shots` 为准，而不是以展示型 `storyboard` 为准
-3. 历史验证阶段代码和过时文档已清理。
+当前仓库明确不追求这些事情：
+
+1. 不做传统 `timeline editor（时间线编辑器）`
+2. 不提前接入复杂精剪、特效、协作等重能力
+3. 不让 `Storyboard` 重新变回事实源
+4. 不用一堆固定规则去“教 AI 怎么剪”
+
+当前最重要的原则仍然是：
+
+`把脚手架收缩到基础设施层，把决策自由留给模型。`

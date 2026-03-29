@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.auth_service import new_id
 from app.auth_store import now_utc, to_iso
-from app.errors import vector_db_error, vector_embedding_error
+from app.errors import query_embedding_failed, retrieval_failed
 from app.main import app, rate_limit_service, settings, store, token_service
 
 
@@ -66,6 +66,7 @@ def test_retrieval_validates_query_text(monkeypatch) -> None:
     )
 
     assert response.status_code == 422
+    assert response.json()["error"]["code"] == "INVALID_RETRIEVAL_REQUEST"
 
 
 def test_retrieval_success(monkeypatch) -> None:
@@ -121,7 +122,7 @@ def test_retrieval_embedding_error(monkeypatch) -> None:
 
     with patch(
         "app.main.vector_service.retrieve",
-        side_effect=vector_embedding_error("DashScope embedding failed", details={"source": "test"}),
+        side_effect=query_embedding_failed("DashScope embedding failed", details={"source": "test"}),
     ):
         response = client.post(
             "/v1/assets/retrieval",
@@ -130,7 +131,7 @@ def test_retrieval_embedding_error(monkeypatch) -> None:
         )
 
     assert response.status_code == 502
-    assert response.json()["error"]["code"] == "VECTOR_EMBEDDING_ERROR"
+    assert response.json()["error"]["code"] == "QUERY_EMBEDDING_FAILED"
 
 
 def test_retrieval_db_error(monkeypatch) -> None:
@@ -141,7 +142,7 @@ def test_retrieval_db_error(monkeypatch) -> None:
 
     with patch(
         "app.main.vector_service.retrieve",
-        side_effect=vector_db_error("DashVector query failed", details={"source": "test"}),
+        side_effect=retrieval_failed("DashVector query failed", details={"source": "test"}),
     ):
         response = client.post(
             "/v1/assets/retrieval",
@@ -150,4 +151,4 @@ def test_retrieval_db_error(monkeypatch) -> None:
         )
 
     assert response.status_code == 502
-    assert response.json()["error"]["code"] == "VECTOR_DB_ERROR"
+    assert response.json()["error"]["code"] == "RETRIEVAL_FAILED"

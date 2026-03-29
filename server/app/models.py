@@ -5,12 +5,20 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, Field
 
 
+class RuntimeCapabilityItem(BaseModel):
+    available: bool
+    provider: str | None = None
+    mode: str | None = None
+    reason: str | None = None
+
+
 class RuntimeCapabilitiesResponse(BaseModel):
     service: str
     version: str
     phase: str
     mode: str
     retained_surfaces: list[str]
+    capabilities: dict[str, RuntimeCapabilityItem] | None = None
 
 
 class LoginSessionCreateRequest(BaseModel):
@@ -122,14 +130,6 @@ class AssetReference(BaseModel):
     mime_type: str | None = Field(default=None, description="可选的 MIME 类型提示")
 
 
-class VectorizeRequest(BaseModel):
-    """向量化请求"""
-
-    asset_id: str = Field(..., description="Asset 唯一标识符")
-    references: list[AssetReference] = Field(..., min_length=1, description="Asset 引用列表")
-    metadata: dict[str, Any] | None = Field(default=None, description="可选的元数据")
-
-
 class AssetVector(BaseModel):
     """单个 Asset 的向量结果"""
 
@@ -138,12 +138,55 @@ class AssetVector(BaseModel):
     dimension: int
 
 
+class VectorizeDocContent(BaseModel):
+    image_base64: str = Field(..., min_length=16)
+
+
+class VectorizeDocFields(BaseModel):
+    clip_id: str = Field(..., min_length=1, max_length=128)
+    asset_id: str = Field(..., min_length=1, max_length=128)
+    project_id: str = Field(..., min_length=1, max_length=128)
+    source_start_ms: int = Field(..., ge=0)
+    source_end_ms: int = Field(..., gt=0)
+    frame_count: int | None = Field(default=None, ge=1)
+
+
+class VectorizeDoc(BaseModel):
+    id: str = Field(..., min_length=1, max_length=128)
+    content: VectorizeDocContent
+    fields: VectorizeDocFields
+
+
+class VectorizeResultItem(BaseModel):
+    id: str
+    status: Literal["inserted"] = "inserted"
+
+
+class VectorizeUsage(BaseModel):
+    embedding_doc_count: int
+    dashvector_write_units: int | None = None
+
+
+class VectorizeRequest(BaseModel):
+    """向量化请求"""
+
+    collection_name: str = "entrocut_assets"
+    partition: str = "default"
+    model: str = "qwen3-vl-embedding"
+    dimension: int = 1024
+    docs: list[VectorizeDoc] = Field(..., min_length=1)
+
+
 class VectorizeResponse(BaseModel):
     """向量化响应"""
 
-    status: Literal["success", "partial_success", "failed"] = "success"
-    vectors: list[AssetVector]
-    message: str | None = None
+    collection_name: str
+    partition: str
+    model: str
+    dimension: int
+    inserted_count: int
+    results: list[VectorizeResultItem]
+    usage: VectorizeUsage | None = None
 
 
 # ============ Retrieval Models ============
@@ -192,3 +235,50 @@ class AssetRetrievalResponse(BaseModel):
     query: RetrievalQuery
     matches: list[RetrievalMatch]
     usage: dict[str, int]
+
+
+# ============ Inspect Models ============
+
+
+class InspectFrame(BaseModel):
+    frame_index: int = Field(ge=0)
+    timestamp_ms: int = Field(ge=0)
+    timestamp_label: str = Field(..., min_length=1, max_length=32)
+    image_base64: str = Field(..., min_length=16)
+
+
+class InspectCriterion(BaseModel):
+    name: str = Field(..., min_length=1, max_length=64)
+    description: str = Field(..., min_length=1, max_length=400)
+
+
+class InspectCandidate(BaseModel):
+    clip_id: str = Field(..., min_length=1, max_length=128)
+    asset_id: str = Field(..., min_length=1, max_length=128)
+    clip_duration_ms: int = Field(..., gt=0)
+    summary: str | None = Field(default=None, max_length=1000)
+    frames: list[InspectFrame] = Field(default_factory=list)
+
+
+class InspectRequest(BaseModel):
+    mode: Literal["verify", "compare", "choose", "rank"]
+    task_summary: str = Field(..., min_length=1, max_length=2000)
+    hypothesis_summary: str | None = Field(default=None, max_length=2000)
+    question: str = Field(..., min_length=1, max_length=2000)
+    criteria: list[InspectCriterion] = Field(default_factory=list)
+    candidates: list[InspectCandidate] = Field(default_factory=list)
+
+
+class CandidateJudgment(BaseModel):
+    clip_id: str = Field(..., min_length=1, max_length=128)
+    verdict: Literal["match", "partial_match", "mismatch"]
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    short_reason: str = Field(..., min_length=1, max_length=500)
+
+
+class InspectResponse(BaseModel):
+    question_type: Literal["verify", "compare", "choose", "rank"]
+    selected_clip_id: str | None = Field(default=None, min_length=1, max_length=128)
+    ranking: list[str] | None = None
+    candidate_judgments: list[CandidateJudgment] = Field(..., min_length=1)
+    uncertainty: str | None = Field(default=None, max_length=1000)
