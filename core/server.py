@@ -530,6 +530,7 @@ def _build_planner_messages(
     draft: EditDraftModel,
     target: ChatTarget | None,
     iteration: int,
+    observations: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     planner_context = {
         "project_id": project_id,
@@ -541,9 +542,10 @@ def _build_planner_messages(
             "draft": _draft_summary(draft),
         },
         "chat_history_summary": _chat_history_summary(record),
+        "tool_observations": observations or [],
         "prototype_constraints": {
             "planner_loop": "implemented",
-            "tool_execution": "todo_not_implemented",
+            "tool_execution": "scaffolded_but_todo",
             "allowed_draft_strategy": ["placeholder_first_cut", "no_change"],
         },
     }
@@ -578,6 +580,7 @@ async def _request_server_planner_decision(
     draft: EditDraftModel,
     target: ChatTarget | None,
     iteration: int,
+    observations: list[dict[str, Any]] | None = None,
 ) -> PlannerDecisionModel:
     payload = {
         "model": SERVER_CHAT_MODEL,
@@ -591,6 +594,7 @@ async def _request_server_planner_decision(
             draft=draft,
             target=target,
             iteration=iteration,
+            observations=observations,
         ),
     }
 
@@ -672,6 +676,57 @@ async def _request_server_planner_decision(
         ) from exc
 
 
+def _validate_planner_decision(
+    decision: PlannerDecisionModel,
+    *,
+    iteration: int,
+    draft: EditDraftModel,
+) -> PlannerDecisionModel:
+    if decision.status == "requires_tool" and not _trimmed(decision.tool_name):
+        raise CoreApiError(
+            status_code=502,
+            code="PLANNER_DECISION_INVALID",
+            message="Planner requested tool execution without a tool name.",
+            details={"iteration": iteration, "draft_version": draft.version},
+        )
+    return decision
+
+
+def _should_continue_agent_loop(*, decision: PlannerDecisionModel) -> bool:
+    return decision.status == "requires_tool"
+
+
+async def _execute_tool_call_todo(
+    *,
+    project_id: str,
+    iteration: int,
+    decision: PlannerDecisionModel,
+) -> dict[str, Any]:
+    raise CoreApiError(
+        status_code=501,
+        code="AGENT_TOOL_EXECUTION_TODO",
+        message="Planner requested tool execution, but tool execution loop is not implemented in Core yet.",
+        details={
+            "project_id": project_id,
+            "iteration": iteration,
+            "tool_name": decision.tool_name,
+            "tool_input_summary": decision.tool_input_summary,
+        },
+    )
+
+
+def _apply_tool_observation_to_draft_todo(draft: EditDraftModel, observation: dict[str, Any]) -> EditDraftModel:
+    state_delta = observation.get("state_delta")
+    if not isinstance(state_delta, dict) or not state_delta:
+        return draft
+    raise CoreApiError(
+        status_code=501,
+        code="AGENT_TOOL_STATE_WRITEBACK_TODO",
+        message="Tool observation produced a state delta, but loop write-back is not implemented in Core yet.",
+        details={"state_delta_keys": sorted(state_delta.keys())[:20]},
+    )
+
+
 async def _run_chat_agent_loop(
     *,
     record: dict[str, Any],
@@ -688,12 +743,17 @@ async def _run_chat_agent_loop(
         details={"max_iterations": AGENT_LOOP_MAX_ITERATIONS},
     )
     current_draft = draft
+    observations: list[dict[str, Any]] = []
     for iteration in range(1, AGENT_LOOP_MAX_ITERATIONS + 1):
         await _emit_agent_progress(
             project_id,
             phase="planner_context_assembled",
             summary="Planner context assembled.",
-            details={"iteration": iteration, "draft_version": current_draft.version},
+            details={
+                "iteration": iteration,
+                "draft_version": current_draft.version,
+                "observation_count": len(observations),
+            },
         )
         decision = await _request_server_planner_decision(
             access_token=access_token,
@@ -703,6 +763,12 @@ async def _run_chat_agent_loop(
             draft=current_draft,
             target=target,
             iteration=iteration,
+            observations=observations,
+        )
+        decision = _validate_planner_decision(
+            decision,
+            iteration=iteration,
+            draft=current_draft,
         )
         await _emit_agent_progress(
             project_id,
@@ -715,28 +781,48 @@ async def _run_chat_agent_loop(
                 "tool_name": decision.tool_name,
             },
         )
-        if decision.status == "requires_tool":
+        if not _should_continue_agent_loop(decision=decision):
             await _emit_agent_progress(
                 project_id,
-                phase="tool_execution_todo",
-                summary="Planner requested tool execution, but the execution loop is still TODO.",
-                details={
-                    "iteration": iteration,
-                    "tool_name": decision.tool_name,
-                    "tool_input_summary": decision.tool_input_summary,
-                },
+                phase="loop_finalized",
+                summary="Planner returned a final decision.",
+                details={"iteration": iteration, "draft_version": current_draft.version},
             )
-            raise CoreApiError(
-                status_code=501,
-                code="AGENT_TOOL_EXECUTION_TODO",
-                message="Planner requested tool execution, but tool execution loop is not implemented in Core yet.",
-                details={
-                    "iteration": iteration,
-                    "tool_name": decision.tool_name,
-                    "tool_input_summary": decision.tool_input_summary,
-                },
-            )
-        return decision
+            return decision
+        await _emit_agent_progress(
+            project_id,
+            phase="tool_execution_requested",
+            summary="Planner requested tool execution.",
+            details={
+                "iteration": iteration,
+                "tool_name": decision.tool_name,
+                "tool_input_summary": decision.tool_input_summary,
+            },
+        )
+        observation = await _execute_tool_call_todo(
+            project_id=project_id,
+            iteration=iteration,
+            decision=decision,
+        )
+        observations.append(observation)
+        await _emit_agent_progress(
+            project_id,
+            phase="tool_observation_recorded",
+            summary="Tool observation recorded for replanning.",
+            details={
+                "iteration": iteration,
+                "tool_name": observation.get("tool_name"),
+                "success": observation.get("success"),
+                "observation_count": len(observations),
+            },
+        )
+        current_draft = _apply_tool_observation_to_draft_todo(current_draft, observation)
+        await _emit_agent_progress(
+            project_id,
+            phase="draft_updated_in_loop",
+            summary="Loop draft state updated from tool observation.",
+            details={"iteration": iteration, "draft_version": current_draft.version},
+        )
     raise CoreApiError(
         status_code=502,
         code="AGENT_LOOP_DID_NOT_FINALIZE",
