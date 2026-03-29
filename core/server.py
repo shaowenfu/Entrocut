@@ -13,6 +13,7 @@ from fastapi import FastAPI, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
+from context_engineering import build_planner_context_packet, build_planner_system_prompt
 
 APP_VERSION = "0.8.0-edit-draft"
 REWRITE_PHASE = "clean_room_rewrite"
@@ -532,41 +533,22 @@ def _build_planner_messages(
     iteration: int,
     observations: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    planner_context = {
-        "project_id": project_id,
-        "iteration": iteration,
-        "user_input": prompt,
-        "target": target.model_dump() if target else None,
-        "workspace_snapshot": {
-            "project": record["project"],
-            "draft": _draft_summary(draft),
-        },
-        "chat_history_summary": _chat_history_summary(record),
-        "tool_observations": observations or [],
-        "prototype_constraints": {
-            "planner_loop": "implemented",
-            "tool_execution": "scaffolded_but_todo",
-            "allowed_draft_strategy": ["placeholder_first_cut", "no_change"],
-        },
-    }
-    system_prompt = (
-        "You are the planning layer for EntroCut Core.\n"
-        "Decide the next agent step using the provided context.\n"
-        "Return exactly one JSON object with these fields:\n"
-        "- status: \"final\" | \"requires_tool\"\n"
-        "- reasoning_summary: short English planning summary\n"
-        "- assistant_reply: concise Chinese reply for the user\n"
-        "- tool_name: string or null\n"
-        "- tool_input_summary: string or null\n"
-        "- draft_strategy: \"placeholder_first_cut\" | \"no_change\"\n"
-        "Current prototype rule: tool execution is not implemented yet, so prefer status=\"final\" unless a tool is truly mandatory.\n"
-        "Do not return markdown, code fences, or extra prose."
+    context_packet = build_planner_context_packet(
+        project_id=project_id,
+        iteration=iteration,
+        prompt=prompt,
+        target=target.model_dump() if target else None,
+        project=record["project"],
+        draft_summary=_draft_summary(draft),
+        chat_history_summary=_chat_history_summary(record),
+        tool_observations=observations or [],
     )
+    system_prompt = build_planner_system_prompt()
     return [
         {"role": "system", "content": system_prompt},
         {
             "role": "user",
-            "content": json.dumps(planner_context, ensure_ascii=False),
+            "content": json.dumps(context_packet.planner_input, ensure_ascii=False),
         },
     ]
 
