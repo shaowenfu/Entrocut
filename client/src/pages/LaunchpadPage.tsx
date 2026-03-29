@@ -171,7 +171,8 @@ function LaunchpadPage() {
             title={`Sign out ${authUser?.email ?? authUser?.display_name ?? "current user"}`}
             disabled={authStatus === "authenticating"}
           >
-            {authUser?.display_name ?? authUser?.email ?? "ME"}
+            {authUser?.display_name ?? authUser?.email ?? "ME"} · ⚡{" "}
+            {Math.floor((authUser?.credits_balance ?? 0) / 1000)}k
             <LogOut size={14} />
           </button>
         ) : (

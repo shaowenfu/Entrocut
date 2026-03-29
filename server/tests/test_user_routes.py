@@ -33,10 +33,7 @@ def _create_user() -> dict[str, str | int | None]:
         "avatar_url": None,
         "status": "active",
         "primary_provider": "google",
-        "plan": "free",
-        "quota_total": 4321,
-        "quota_status": "healthy",
-        "remaining_quota": 4321,
+        "credits_balance": 100_000,
         "created_at": to_iso(current_time),
         "updated_at": to_iso(current_time),
         "last_login_at": to_iso(current_time),
@@ -93,15 +90,13 @@ def test_user_profile_and_usage_return_expected_fields(monkeypatch) -> None:
     profile_body = profile_response.json()
     usage_body = usage_response.json()
     assert profile_body["user"]["id"] == user["_id"]
-    assert profile_body["user"]["plan"] == "free"
+    assert profile_body["user"]["credits_balance"] == 100_000
     assert usage_body["user_id"] == user["_id"]
-    assert usage_body["usage"]["remaining_quota"] == 4256
-    assert usage_body["usage"]["quota_total"] == 4321
+    assert usage_body["usage"]["credits_balance"] == 100_000
     assert usage_body["usage"]["consumed_tokens_today"] == 65
     assert usage_body["usage"]["consumed_tokens_this_month"] == 65
     assert usage_body["usage"]["request_count_today"] == 2
     assert usage_body["usage"]["request_count_this_month"] == 2
-    assert usage_body["usage"]["membership_plan"] == "free"
     assert usage_body["usage"]["subscription_status"] == "active"
     assert usage_body["usage"]["rate_limit_requests_per_minute"] == 20
     assert usage_body["usage"]["rate_limit_tokens_per_minute"] == 40000

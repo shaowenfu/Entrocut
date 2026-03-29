@@ -199,10 +199,7 @@ class UserService:
                 "avatar_url": profile.get("avatar_url"),
                 "status": "active",
                 "primary_provider": provider,
-                "plan": "free",
-                "quota_total": self._settings.quota_free_total_tokens,
-                "remaining_quota": self._settings.quota_free_total_tokens,
-                "quota_status": "healthy",
+                "credits_balance": 100_000,
                 "created_at": to_iso(current_time),
                 "updated_at": to_iso(current_time),
                 "last_login_at": to_iso(current_time),
@@ -235,10 +232,7 @@ class UserService:
             "display_name": user.get("display_name"),
             "avatar_url": user.get("avatar_url"),
             "status": user.get("status", "active"),
-            "plan": user.get("plan", "free"),
-            "quota_status": user.get("quota_status", "healthy"),
-            "quota_total": user.get("quota_total"),
-            "remaining_quota": user.get("remaining_quota"),
+            "credits_balance": int(user.get("credits_balance") or 0),
         }
 
     def usage_snapshot(self, user: dict[str, Any]) -> dict[str, Any]:
@@ -248,14 +242,11 @@ class UserService:
         today_summary = self._store.mongo.summarize_user_usage(user_id=user["_id"], period_start=day_start)
         month_summary = self._store.mongo.summarize_user_usage(user_id=user["_id"], period_start=month_start)
         return {
-            "remaining_quota": user.get("remaining_quota"),
-            "quota_total": user.get("quota_total"),
-            "quota_status": user.get("quota_status", "healthy"),
+            "credits_balance": int(user.get("credits_balance") or 0),
             "consumed_tokens_today": today_summary["total_tokens"],
             "consumed_tokens_this_month": month_summary["total_tokens"],
             "request_count_today": today_summary["request_count"],
             "request_count_this_month": month_summary["request_count"],
-            "membership_plan": user.get("plan", "free"),
             "subscription_status": "active" if user.get("status", "active") == "active" else "inactive",
             "rate_limit_requests_per_minute": self._settings.rate_limit_requests_per_minute,
             "rate_limit_tokens_per_minute": self._settings.rate_limit_tokens_per_minute,

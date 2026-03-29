@@ -22,6 +22,7 @@ SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", DEFAULT_SERVER_BASE_URL).rstrip("
 SERVER_CHAT_MODEL = os.getenv("SERVER_CHAT_MODEL", "entro-reasoning-v1").strip() or "entro-reasoning-v1"
 SERVER_CHAT_TIMEOUT_SECONDS = float(os.getenv("SERVER_CHAT_TIMEOUT_SECONDS", "30"))
 AGENT_LOOP_MAX_ITERATIONS = int(os.getenv("AGENT_LOOP_MAX_ITERATIONS", "3"))
+DEFAULT_BYOK_BASE_URL = "https://api.openai.com"
 
 app = FastAPI(title="EntroCut Core In-Memory", version=APP_VERSION)
 app.add_middleware(
@@ -254,6 +255,7 @@ class ChatTarget(BaseModel):
 class ChatRequest(BaseModel):
     prompt: str
     target: ChatTarget | None = None
+    model: str | None = None
 
 
 PlannerDecisionStatus = Literal["final", "requires_tool"]
@@ -939,7 +941,7 @@ class InMemoryProjectStore:
             {"task": succeeded.model_dump(), "workflow_state": next_workflow_state},
         )
 
-    async def queue_chat(self, project_id: str, prompt: str, target: ChatTarget | None) -> TaskModel:
+    async def queue_chat(self, project_id: str, prompt: str, target: ChatTarget | None, model: str | None, routing_mode: str, byok_key: str | None, byok_base_url: str | None) -> TaskModel:
         normalized_prompt = _trimmed(prompt)
         if normalized_prompt is None:
             raise CoreApiError(
@@ -988,10 +990,10 @@ class InMemoryProjectStore:
             "task.updated",
             {"task": task.model_dump(), "workflow_state": "chat_thinking"},
         )
-        asyncio.create_task(self._run_chat(project_id, normalized_prompt, target, task))
+        asyncio.create_task(self._run_chat(project_id, normalized_prompt, target, task, model, routing_mode, byok_key, byok_base_url))
         return task
 
-    async def _run_chat(self, project_id: str, prompt: str, target: ChatTarget | None, task: TaskModel) -> None:
+    async def _run_chat(self, project_id: str, prompt: str, target: ChatTarget | None, task: TaskModel, model: str | None, routing_mode: str, byok_key: str | None, byok_base_url: str | None) -> None:
         record = self.get_project_or_raise(project_id)
         await asyncio.sleep(0.05)
         running = task.model_copy(
@@ -1022,6 +1024,10 @@ class InMemoryProjectStore:
                 prompt=prompt,
                 draft=draft,
                 target=target,
+                model=model,
+                routing_mode=routing_mode,
+                byok_key=byok_key,
+                byok_base_url=byok_base_url,
             )
             if decision.draft_strategy == "placeholder_first_cut":
                 shots, scenes = _build_edit_plan(draft.clips, prompt)
@@ -1221,7 +1227,122 @@ class CoreAuthSessionStore:
         async with self._lock:
             return dict(self._session)
 
+async def _request_server_chat_completion(
+    *,
+    access_token: str,
+    project_id: str,
+    prompt: str,
+    draft: EditDraftModel,
+    target: ChatTarget | None,
+    model: str | None,
+    routing_mode: str,
+    byok_key: str | None,
+    byok_base_url: str | None,
+) -> dict[str, Any]:
+    clip_context = [
+        {
+            "clip_id": clip.id,
+            "asset_id": clip.asset_id,
+            "visual_desc": clip.visual_desc,
+            "semantic_tags": clip.semantic_tags,
+        }
+        for clip in draft.clips[:6]
+    ]
+    system_context = {
+        "project_id": project_id,
+        "asset_count": len(draft.assets),
+        "clip_count": len(draft.clips),
+        "selected_scene_id": target.scene_id if target else None,
+        "selected_shot_id": target.shot_id if target else None,
+        "clips": clip_context,
+    }
+    payload = {
+        "model": model.strip() if isinstance(model, str) and model.strip() else SERVER_CHAT_MODEL,
+        "stream": False,
+        "temperature": 0.2,
+        "max_tokens": 400,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are the editing reasoning layer for EntroCut Core. "
+                    "Summarize the editing intent in concise English, referencing the available footage context. "
+                    f"Context: {system_context}"
+                ),
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+    }
 
+    request_headers: dict[str, str] = {
+        "Content-Type": "application/json",
+        "X-Request-ID": _request_id(),
+    }
+    if routing_mode == "BYOK":
+        normalized_key = (byok_key or "").strip()
+        if not normalized_key:
+            raise CoreApiError(
+                status_code=422,
+                code="BYOK_KEY_REQUIRED",
+                message="X-BYOK-Key is required when X-Routing-Mode is BYOK.",
+            )
+        base_url = (byok_base_url or DEFAULT_BYOK_BASE_URL).rstrip("/")
+        endpoint_url = f"{base_url}/v1/chat/completions"
+        request_headers["Authorization"] = f"Bearer {normalized_key}"
+    else:
+        endpoint_url = f"{SERVER_BASE_URL}/v1/chat/completions"
+        request_headers["Authorization"] = f"Bearer {access_token}"
+
+    async with httpx.AsyncClient(timeout=SERVER_CHAT_TIMEOUT_SECONDS) as client:
+        response = await client.post(endpoint_url, json=payload, headers=request_headers)
+
+    if response.status_code == 401:
+        raise CoreApiError(
+            status_code=401,
+            code="AUTH_SESSION_EXPIRED",
+            message="Core auth session is expired. Refresh login in client and resync token.",
+            details={"server_status": 401},
+        )
+    if response.status_code == 403:
+        raise CoreApiError(
+            status_code=403,
+            code="AUTH_SESSION_FORBIDDEN",
+            message="The current user is not allowed to call server chat proxy.",
+            details={"server_status": 403},
+        )
+    if response.status_code >= 400:
+        details: dict[str, Any] = {"server_status": response.status_code}
+        try:
+            body = response.json()
+            if isinstance(body, dict):
+                details["server_error"] = body
+        except Exception:
+            details["server_error_text"] = response.text[:400]
+        raise CoreApiError(
+            status_code=502,
+            code="SERVER_CHAT_PROXY_FAILED",
+            message="Server chat proxy rejected the request.",
+            details=details,
+        )
+
+    body = response.json()
+    choices = body.get("choices") if isinstance(body, dict) else None
+    message = choices[0].get("message") if isinstance(choices, list) and choices else None
+    content = _extract_text_content(message.get("content") if isinstance(message, dict) else None)
+    if not content:
+        raise CoreApiError(
+            status_code=502,
+            code="SERVER_CHAT_PROXY_EMPTY",
+            message="Server chat proxy returned an empty assistant message.",
+        )
+    return {
+        "content": content,
+        "usage": body.get("usage") if isinstance(body, dict) else None,
+        "entro_metadata": body.get("entro_metadata") if isinstance(body, dict) else None,
+    }
 async def _mark_chat_failed(
     *,
     project_id: str,
@@ -1368,7 +1489,7 @@ async def import_assets(project_id: str, payload: ImportAssetsRequest) -> TaskRe
 
 
 @app.post("/api/v1/projects/{project_id}/chat", response_model=TaskResponse)
-async def chat(project_id: str, payload: ChatRequest) -> TaskResponse:
+async def chat(project_id: str, payload: ChatRequest, request: Request) -> TaskResponse:
     auth_session = await auth_session_store.snapshot()
     if not auth_session.get("access_token"):
         raise CoreApiError(
@@ -1376,7 +1497,17 @@ async def chat(project_id: str, payload: ChatRequest) -> TaskResponse:
             code="AUTH_SESSION_REQUIRED",
             message="Sign in is required before chat can run.",
         )
-    task = await store.queue_chat(project_id, payload.prompt, payload.target)
+    routing_mode = (request.headers.get("X-Routing-Mode") or "Platform").strip()
+    normalized_mode = "BYOK" if routing_mode.upper() == "BYOK" else "Platform"
+    task = await store.queue_chat(
+        project_id,
+        payload.prompt,
+        payload.target,
+        payload.model,
+        normalized_mode,
+        request.headers.get("X-BYOK-Key"),
+        request.headers.get("X-BYOK-BaseURL"),
+    )
     return TaskResponse(task=task)
 
 

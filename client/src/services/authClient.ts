@@ -15,8 +15,7 @@ export interface AuthUser {
   display_name?: string | null;
   avatar_url?: string | null;
   status: string;
-  plan: string;
-  quota_status: string;
+  credits_balance: number;
 }
 
 interface LoginSessionCreateResponse {
