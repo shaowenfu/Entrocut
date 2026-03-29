@@ -149,6 +149,7 @@ def build_tool_capability_state() -> dict[str, Any]:
                 "when_not_to_use": "草案尚未形成可评估结构时",
             },
         ],
+        "status": "minimal-loop-tools-ready",
         "source": "tool_layer_minimal_contract",
     }
 
@@ -183,7 +184,7 @@ def build_working_memory_state(
 def build_runtime_capabilities_state() -> dict[str, Any]:
     return {
         "planner_loop": "implemented",
-        "tool_execution": "todo",
+        "tool_execution": "implemented_minimal",
         "allowed_draft_strategy": ["placeholder_first_cut", "no_change"],
     }
 
