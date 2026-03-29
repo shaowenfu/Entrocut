@@ -2,6 +2,7 @@ import { create } from "zustand";
 import {
   claimLoginSession,
   clearCoreAuthSessionState,
+  createGithubLoginSession,
   createGoogleLoginSession,
   fetchCurrentUser,
   getRefreshToken,
@@ -22,6 +23,7 @@ interface AuthStoreState {
   lastError: string | null;
   bootstrap: () => Promise<void>;
   startGoogleLogin: () => Promise<void>;
+  startGithubLogin: () => Promise<void>;
   completeLoginFromDeepLink: (loginSessionId: string) => Promise<void>;
   logout: () => Promise<void>;
   clearError: () => void;
@@ -86,6 +88,19 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
       set({
         status: "error",
         lastError: errorMessage(error, "google_login_start_failed"),
+      });
+    }
+  },
+
+  startGithubLogin: async () => {
+    set({ status: "authenticating", lastError: null });
+    try {
+      const session = await createGithubLoginSession();
+      await openExternalUrl(session.authorize_url);
+    } catch (error) {
+      set({
+        status: "error",
+        lastError: errorMessage(error, "github_login_start_failed"),
       });
     }
   },
