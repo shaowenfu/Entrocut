@@ -140,6 +140,12 @@ textarea {
   gap: 10px;
 }
 
+.workspace-status-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .health-cluster {
   display: inline-flex;
   align-items: center;
@@ -1776,7 +1782,7 @@ textarea {
     grid-template-columns: 1fr;
   }
 
-  .health-cluster {
+  .workspace-status-cluster {
     display: none;
   }
 

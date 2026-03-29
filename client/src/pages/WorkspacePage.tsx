@@ -13,20 +13,13 @@ import {
   Play,
   Scissors,
   Send,
-  Settings,
   Sparkles,
   Tag,
   Upload,
   Wand2,
 } from "lucide-react";
+import AccountMenu from "../components/account/AccountMenu";
 import { BrandIcon } from "../components/icons/BrandIcon";
-import {
-  createInitialHealthSnapshot,
-  probeServiceHealth,
-  type HealthState,
-  type ServiceHealthSnapshot,
-  type ServiceTarget,
-} from "../services/health";
 import { createThumbnailFromMediaUrl, getProjectMediaSource } from "../services/localMediaRegistry";
 import { getOrCreateSessionId } from "../utils/session";
 import {
@@ -43,7 +36,6 @@ type WorkspacePageProps = {
 
 type MediaTab = "assets" | "clips";
 type DraggingTarget = "left" | "mid" | null;
-type EventStreamVisualState = "online" | "checking" | "offline";
 type PreviewSelection =
   | { kind: "asset"; assetId: string }
   | { kind: "clip"; clipId: string }
@@ -56,7 +48,6 @@ const SUGGESTION_CHIPS = [
   "Replace scene 2 with a cleaner close-up",
   "Make pacing slightly slower",
 ];
-const HEALTH_POLL_INTERVAL_MS = 10000;
 
 function isDecisionTurn(turn: ChatTurn): turn is AssistantDecisionTurn {
   return turn.role === "assistant";
@@ -108,39 +99,6 @@ function formatTimecode(seconds: number): string {
     .padStart(2, "0")}:${secs.toString().padStart(2, "0")}:00`;
 }
 
-function healthStateLabel(state: HealthState): string {
-  switch (state) {
-    case "online":
-      return "online";
-    case "offline":
-      return "offline";
-    default:
-      return "checking";
-  }
-}
-
-function buildHealthTitle(target: ServiceTarget, snapshot: ServiceHealthSnapshot): string {
-  if (snapshot.state === "online") {
-    return `${target} is online (${snapshot.latencyMs ?? "-"}ms)`;
-  }
-  if (snapshot.state === "checking") {
-    return `${target} is checking`;
-  }
-  return `${target} is offline (${snapshot.message ?? "unknown"})`;
-}
-
-function toEventStreamVisualState(
-  state: "disconnected" | "connecting" | "connected"
-): EventStreamVisualState {
-  if (state === "connected") {
-    return "online";
-  }
-  if (state === "connecting") {
-    return "checking";
-  }
-  return "offline";
-}
-
 function formatOperation(op: AssistantDecisionTurn["ops"][number]): string {
   const parts = [op.action];
   if (op.target) {
@@ -183,10 +141,6 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const [previewSelection, setPreviewSelection] = useState<PreviewSelection>(null);
   const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string>>({});
   const [isAssetDropHovering, setIsAssetDropHovering] = useState(false);
-  const [serviceHealth, setServiceHealth] = useState<Record<ServiceTarget, ServiceHealthSnapshot>>({
-    core: createInitialHealthSnapshot(),
-    server: createInitialHealthSnapshot(),
-  });
 
   const assets = useWorkspaceStore((state) => state.assets);
   const clips = useWorkspaceStore((state) => state.clips);
@@ -198,8 +152,6 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const workflowState = useWorkspaceStore((state) => state.workflowState);
   const exportResult = useWorkspaceStore((state) => state.exportResult);
   const runtimeState = useWorkspaceStore((state) => state.runtimeState);
-  const eventStreamState = useWorkspaceStore((state) => state.eventStreamState);
-  const reconnectState = useWorkspaceStore((state) => state.reconnectState);
   const lastError = useWorkspaceStore((state) => state.lastError);
   const initializeWorkspace = useWorkspaceStore((state) => state.initializeWorkspace);
   const setSelectionContext = useWorkspaceStore((state) => state.setSelectionContext);
@@ -220,7 +172,6 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   );
   const safeTotalDurationSec = Math.max(1, totalDurationSec);
   const sessionLabel = `Session #${sessionId.slice(-8).toUpperCase()}`;
-  const eventStreamVisualState = toEventStreamVisualState(eventStreamState);
   const isLoadingWorkspace = loadState === "loading";
   const isThinking = chatState === "responding";
   const isMediaProcessing = activeTask?.type === "ingest" && activeTask.status === "running";
@@ -243,13 +194,6 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     !isLoadingWorkspace &&
     !(activeTask && activeTask.status === "running") &&
     Boolean(runtimeState.draft.editDraft);
-
-  const reconnectingPill: EventStreamVisualState = useMemo(() => {
-    if (reconnectState === "reconnecting") {
-      return "checking";
-    }
-    return eventStreamVisualState;
-  }, [reconnectState, eventStreamVisualState]);
 
   const activeSceneIndex = useMemo(
     () =>
@@ -421,45 +365,6 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
       window.setTimeout(() => setPatchPulseId(null), 1200);
     }
   }, [chatTurns, storyboard]);
-
-  useEffect(() => {
-    let disposed = false;
-    let polling = false;
-    let intervalId: number | null = null;
-
-    async function pollHealth() {
-      if (disposed || polling) {
-        return;
-      }
-      polling = true;
-      try {
-        const [coreSnapshot, serverSnapshot] = await Promise.all([
-          probeServiceHealth("core"),
-          probeServiceHealth("server"),
-        ]);
-        if (!disposed) {
-          setServiceHealth({
-            core: coreSnapshot,
-            server: serverSnapshot,
-          });
-        }
-      } finally {
-        polling = false;
-      }
-    }
-
-    void pollHealth();
-    intervalId = window.setInterval(() => {
-      void pollHealth();
-    }, HEALTH_POLL_INTERVAL_MS);
-
-    return () => {
-      disposed = true;
-      if (intervalId !== null) {
-        window.clearInterval(intervalId);
-      }
-    };
-  }, []);
 
   useEffect(() => {
     function handleMouseMove(event: MouseEvent) {
@@ -733,35 +638,12 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
         </div>
 
         <div className="topbar-right">
-          <div className="health-cluster">
-            <span
-              className={`health-pill health-pill-${serviceHealth.core.state}`}
-              title={buildHealthTitle("core", serviceHealth.core)}
-            >
-              <span className={`health-dot health-dot-${serviceHealth.core.state}`} />
-              core {healthStateLabel(serviceHealth.core.state)}
-            </span>
-            <span
-              className={`health-pill health-pill-${reconnectingPill}`}
-              title={`core event stream ${eventStreamState}${reconnectState !== "idle" ? ` - reconnecting` : ""}`}
-            >
-              <span className={`health-dot health-dot-${reconnectingPill}`} />
-              ws {reconnectState === "reconnecting" ? "reconnecting" : eventStreamState}
-            </span>
-            <span
-              className={`health-pill health-pill-${serviceHealth.server.state}`}
-              title={buildHealthTitle("server", serviceHealth.server)}
-            >
-              <span className={`health-dot health-dot-${serviceHealth.server.state}`} />
-              server {healthStateLabel(serviceHealth.server.state)}
-            </span>
+          <div className="workspace-status-cluster">
             {isMediaProcessing ? <span className="lock-pill">{mediaStatusText ?? "MEDIA PROCESSING"}</span> : null}
             {isExporting ? <span className="lock-pill">EXPORTING</span> : null}
             {isEditLocked && !isExporting ? <span className="lock-pill">EDIT LOCKED</span> : null}
           </div>
-          <button className="icon-btn topbar-icon-btn" type="button" aria-label="settings">
-            <Settings size={18} />
-          </button>
+          <AccountMenu />
           <button
             className="export-btn"
             type="button"
