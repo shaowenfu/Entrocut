@@ -1,18 +1,25 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import asyncio
 import sys
+import tempfile
 import time
 import unittest
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
+import sqlite3
 
 from fastapi.testclient import TestClient
 
 CORE_DIR = Path(__file__).resolve().parents[1]
 if str(CORE_DIR) not in sys.path:
     sys.path.append(str(CORE_DIR))
+
+CORE_TEST_APPDATA_DIR = tempfile.TemporaryDirectory()
+os.environ["ENTROCUT_APP_DATA_ROOT"] = CORE_TEST_APPDATA_DIR.name
 
 CORE_SERVER_SPEC = importlib.util.spec_from_file_location("core_server_module", CORE_DIR / "server.py")
 if CORE_SERVER_SPEC is None or CORE_SERVER_SPEC.loader is None:
@@ -24,9 +31,8 @@ CORE_SERVER_SPEC.loader.exec_module(core_server)
 
 class CoreChatPlannerSkeletonTest(unittest.TestCase):
     def setUp(self) -> None:
-        core_server.store._projects.clear()
-        core_server.store._subscribers.clear()
-        core_server.store._background_tasks.clear()
+        core_server.store.reset_for_test()
+        core_server.auth_session_store.reset_for_test()
         self.client = TestClient(core_server.app)
         self.client.__enter__()
 
@@ -328,6 +334,188 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self.assertEqual(captured_context["scope"]["scope_type"], "scene")
         tool_names = [item["name"] for item in captured_context["tools"]["available_tools"]]
         self.assertIn("read", tool_names)
+
+    def test_create_project_initializes_local_persistence_and_workspace_dir(self) -> None:
+        response = self.client.post(
+            "/api/v1/projects",
+            json={
+                "title": "Local Persistence Bootstrap",
+                "media": {
+                    "files": [
+                        {"name": "bootstrap.mp4", "path": "/tmp/bootstrap.mp4"},
+                    ]
+                },
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        project_id = body["project"]["id"]
+
+        self.assertTrue(core_server.store.db_path.exists())
+        workspace_dir = core_server.store.app_data_root / "projects" / project_id
+        self.assertTrue(workspace_dir.exists())
+        self.assertTrue((workspace_dir / "thumbs").exists())
+        self.assertTrue((workspace_dir / "preview").exists())
+        self.assertTrue((workspace_dir / "exports").exists())
+        self.assertTrue((workspace_dir / "temp").exists())
+        self.assertTrue((workspace_dir / "proxies").exists())
+
+        reloaded_store = core_server.InMemoryProjectStore(app_data_root=core_server.store.app_data_root)
+        persisted = reloaded_store.get_project_or_raise(project_id)
+        self.assertEqual(persisted["project"]["title"], "Local Persistence Bootstrap")
+        self.assertEqual(persisted["workspace_dir"], str(workspace_dir))
+
+    def test_persistence_tables_restore_workspace_state_after_reload(self) -> None:
+        project_id, _ = self._create_project()
+        self._set_auth_session()
+
+        planner_json = (
+            '{"status":"final","reasoning_summary":"persist reload",'
+            '"assistant_reply":"持久化重载测试。","tool_name":null,'
+            '"tool_input_summary":null,"draft_strategy":"placeholder_first_cut"}'
+        )
+
+        async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
+            class _DummyResponse:
+                status_code = 200
+
+                @staticmethod
+                def json() -> dict[str, Any]:
+                    return {
+                        "choices": [{"message": {"content": planner_json}}],
+                        "usage": {"prompt_tokens": 80, "completion_tokens": 28, "total_tokens": 108},
+                    }
+
+                text = planner_json
+
+            return _DummyResponse()
+
+        with patch("httpx.AsyncClient.post", fake_post):
+            chat_response = self.client.post(
+                f"/api/v1/projects/{project_id}/chat",
+                json={"prompt": "做一个旅行视频的开头，强调出发感"},
+            )
+            self.assertEqual(chat_response.status_code, 200)
+            workspace = self._poll_workspace(project_id)
+
+        self.assertGreaterEqual(workspace["last_event_sequence"] if "last_event_sequence" in workspace else 0, 0)
+        reloaded_store = core_server.InMemoryProjectStore(app_data_root=core_server.store.app_data_root)
+        persisted = reloaded_store.get_project_or_raise(project_id)
+        self.assertEqual(len(persisted["chat_turns"]), 2)
+        self.assertGreaterEqual(len(persisted["edit_draft"]["shots"]), 1)
+        self.assertGreaterEqual(int(persisted["sequence"]), 1)
+
+        connection = sqlite3.connect(core_server.store.db_path)
+        try:
+            table_names = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+            }
+            self.assertTrue(
+                {"projects", "edit_drafts", "chat_turns", "tasks", "project_runtime", "assets", "core_auth_session"}.issubset(table_names)
+            )
+            self.assertNotIn("project_records", table_names)
+            task_count = connection.execute(
+                "SELECT COUNT(*) FROM tasks WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()[0]
+            self.assertGreaterEqual(task_count, 1)
+        finally:
+            connection.close()
+
+    def test_import_keeps_source_path_reference_without_copying_media(self) -> None:
+        source_dir = Path(CORE_TEST_APPDATA_DIR.name) / "external_media"
+        source_dir.mkdir(parents=True, exist_ok=True)
+        source_file = source_dir / "reference-only.mp4"
+        source_file.write_text("source media placeholder\n", encoding="utf-8")
+
+        response = self.client.post(
+            "/api/v1/projects",
+            json={
+                "title": "Reference Only Media",
+                "media": {
+                    "files": [
+                        {"name": source_file.name, "path": str(source_file)},
+                    ]
+                },
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        project_id = body["project"]["id"]
+        assets = body["workspace"]["edit_draft"]["assets"]
+        self.assertEqual(assets[0]["source_path"], str(source_file))
+
+        workspace_dir = core_server.store.app_data_root / "projects" / project_id
+        self.assertFalse((workspace_dir / source_file.name).exists())
+        self.assertFalse((workspace_dir / "temp" / source_file.name).exists())
+        self.assertTrue(source_file.exists())
+
+    def test_export_writes_artifact_into_project_workspace_exports_dir(self) -> None:
+        project_id, _ = self._create_project()
+        self._set_auth_session()
+
+        planner_json = (
+            '{"status":"final","reasoning_summary":"export setup",'
+            '"assistant_reply":"先生成一个占位初剪。","tool_name":null,'
+            '"tool_input_summary":null,"draft_strategy":"placeholder_first_cut"}'
+        )
+
+        async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
+            class _DummyResponse:
+                status_code = 200
+
+                @staticmethod
+                def json() -> dict[str, Any]:
+                    return {
+                        "choices": [{"message": {"content": planner_json}}],
+                        "usage": {"prompt_tokens": 80, "completion_tokens": 28, "total_tokens": 108},
+                    }
+
+                text = planner_json
+
+            return _DummyResponse()
+
+        with patch("httpx.AsyncClient.post", fake_post):
+            chat_response = self.client.post(
+                f"/api/v1/projects/{project_id}/chat",
+                json={"prompt": "做一个旅行视频的开头，强调出发感"},
+            )
+            self.assertEqual(chat_response.status_code, 200)
+            self._poll_workspace(project_id)
+
+        export_response = self.client.post(
+            f"/api/v1/projects/{project_id}/export",
+            json={"format": "mp4", "quality": "preview"},
+        )
+        self.assertEqual(export_response.status_code, 200)
+        workspace = self._poll_task_idle(project_id)
+
+        reloaded_store = core_server.InMemoryProjectStore(app_data_root=core_server.store.app_data_root)
+        persisted = reloaded_store.get_project_or_raise(project_id)
+        export_result = persisted["export_result"]
+        self.assertIsNotNone(export_result)
+        output_url = str(export_result["output_url"])
+        self.assertIn("/projects/", output_url)
+        self.assertIn("/exports/", output_url)
+        export_path = Path(output_url.removeprefix("file://"))
+        self.assertTrue(export_path.exists())
+        self.assertEqual(export_path.parent.name, "exports")
+        self.assertEqual(workspace["project"]["workflow_state"], "ready")
+
+    def test_core_auth_session_persists_across_reload(self) -> None:
+        response = self.client.post(
+            "/api/v1/auth/session",
+            json={"access_token": "tok_test_access_token_value_12345", "user_id": "user_persisted"},
+        )
+        self.assertEqual(response.status_code, 200)
+
+        reloaded_auth_store = core_server.CoreAuthSessionStore(app_data_root=core_server.store.app_data_root)
+        persisted = asyncio.run(reloaded_auth_store.snapshot())
+        self.assertEqual(persisted["access_token"], "tok_test_access_token_value_12345")
+        self.assertEqual(persisted["user_id"], "user_persisted")
 
 
 if __name__ == "__main__":

@@ -14,10 +14,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 from context_engineering import build_planner_context_packet, build_planner_system_prompt
+from local_state_repository import LocalStateRepository
+from workspace_manager import WorkspaceManager
 
 APP_VERSION = "0.8.0-edit-draft"
 REWRITE_PHASE = "clean_room_rewrite"
-CORE_MODE = "prototype_backed"
+CORE_MODE = "local_persistence_bootstrap"
 DEFAULT_SERVER_BASE_URL = "http://127.0.0.1:8001"
 SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", DEFAULT_SERVER_BASE_URL).rstrip("/")
 SERVER_CHAT_MODEL = os.getenv("SERVER_CHAT_MODEL", "entro-reasoning-v1").strip() or "entro-reasoning-v1"
@@ -1006,11 +1008,33 @@ async def _run_chat_agent_loop(
 
 
 class InMemoryProjectStore:
-    def __init__(self) -> None:
+    def __init__(self, *, app_data_root: str | Path | None = None) -> None:
+        self._repository = LocalStateRepository(app_data_root=app_data_root)
+        self._workspace_manager = WorkspaceManager(app_data_root=app_data_root)
         self._projects: dict[str, dict[str, Any]] = {}
         self._subscribers: dict[str, set[asyncio.Queue[dict[str, Any]]]] = {}
         self._background_tasks: dict[str, set[asyncio.Task[Any]]] = {}
         self._lock = asyncio.Lock()
+        self._load_persisted_records()
+
+    @property
+    def app_data_root(self) -> Path:
+        return self._repository.app_data_root
+
+    @property
+    def db_path(self) -> Path:
+        return self._repository.db_path
+
+    def _load_persisted_records(self) -> None:
+        for record in self._repository.load_records():
+            project_id = str(record["project"]["id"])
+            self._projects[project_id] = record
+            self._subscribers.setdefault(project_id, set())
+            self._background_tasks.setdefault(project_id, set())
+
+    def _persist_record_unlocked(self, project_id: str) -> None:
+        record = self.get_project_or_raise(project_id)
+        self._repository.upsert_record(record)
 
     def _register_background_task(self, project_id: str, task: asyncio.Task[Any]) -> None:
         tasks = self._background_tasks.setdefault(project_id, set())
@@ -1072,6 +1096,7 @@ class InMemoryProjectStore:
             created_at=now,
             updated_at=now,
         )
+        workspace_dir = str(self._workspace_manager.prepare_project_workspace(project_id))
         record = {
             "project": project.model_dump(),
             "edit_draft": edit_draft.model_dump(),
@@ -1079,11 +1104,13 @@ class InMemoryProjectStore:
             "active_task": None,
             "export_result": None,
             "sequence": 0,
+            "workspace_dir": workspace_dir,
         }
         async with self._lock:
             self._projects[project_id] = record
             self._subscribers.setdefault(project_id, set())
             self._background_tasks.setdefault(project_id, set())
+            self._persist_record_unlocked(project_id)
         return record
 
     def workspace_snapshot(self, project_id: str) -> WorkspaceSnapshotModel:
@@ -1101,6 +1128,9 @@ class InMemoryProjectStore:
         async with self._lock:
             record = self.get_project_or_raise(project_id)
             record["sequence"] += 1
+            if event_name == "task.updated" and isinstance(data.get("task"), dict):
+                self._repository.upsert_task(project_id, data["task"])
+            self._persist_record_unlocked(project_id)
             envelope = EventEnvelope(
                 sequence=record["sequence"],
                 event=event_name,
@@ -1134,6 +1164,13 @@ class InMemoryProjectStore:
             subscribers = self._subscribers.get(project_id)
             if subscribers is not None:
                 subscribers.discard(queue)
+
+    def reset_for_test(self) -> None:
+        self._projects.clear()
+        self._subscribers.clear()
+        self._background_tasks.clear()
+        self._repository.clear_all()
+        self._workspace_manager.clear_all_project_workspaces()
 
     async def queue_assets_import(self, project_id: str, media: MediaReference) -> TaskModel:
         if not _media_file_refs(media):
@@ -1468,9 +1505,12 @@ class InMemoryProjectStore:
         )
 
         await asyncio.sleep(0.08)
+        export_path = self._workspace_manager.export_output_path(project_id, payload.format or "mp4")
+        export_path.parent.mkdir(parents=True, exist_ok=True)
+        export_path.write_text("placeholder export artifact\n", encoding="utf-8")
         result = {
             "render_type": "export",
-            "output_url": f"file:///tmp/{project_id}_draft.{payload.format or 'mp4'}",
+            "output_url": export_path.resolve().as_uri(),
             "duration_ms": 4800,
             "file_size_bytes": 18_000_000,
             "thumbnail_url": None,
@@ -1498,12 +1538,10 @@ class InMemoryProjectStore:
 
 
 class CoreAuthSessionStore:
-    def __init__(self) -> None:
+    def __init__(self, *, app_data_root: str | Path | None = None) -> None:
+        self._repository = LocalStateRepository(app_data_root=app_data_root)
         self._lock = asyncio.Lock()
-        self._session: dict[str, str | None] = {
-            "access_token": None,
-            "user_id": None,
-        }
+        self._session: dict[str, str | None] = self._repository.load_auth_session()
 
     async def set_session(self, access_token: str, user_id: str | None) -> None:
         async with self._lock:
@@ -1511,14 +1549,24 @@ class CoreAuthSessionStore:
                 "access_token": access_token.strip(),
                 "user_id": user_id.strip() if user_id and user_id.strip() else None,
             }
+            self._repository.upsert_auth_session(
+                self._session["access_token"],
+                self._session["user_id"],
+                _now_iso(),
+            )
 
     async def clear_session(self) -> None:
         async with self._lock:
             self._session = {"access_token": None, "user_id": None}
+            self._repository.clear_auth_session(_now_iso())
 
     async def snapshot(self) -> dict[str, str | None]:
         async with self._lock:
             return dict(self._session)
+
+    def reset_for_test(self) -> None:
+        self._session = {"access_token": None, "user_id": None}
+        self._repository.clear_auth_session(_now_iso())
 
 
 async def _mark_chat_failed(
@@ -1563,7 +1611,7 @@ async def _mark_chat_failed(
 
 
 store = InMemoryProjectStore()
-auth_session_store = CoreAuthSessionStore()
+auth_session_store = CoreAuthSessionStore(app_data_root=store.app_data_root)
 
 
 @app.middleware("http")
@@ -1616,7 +1664,7 @@ def health() -> dict[str, Any]:
         "timestamp": _now_iso(),
         "notes": [
             "Legacy business logic has been removed.",
-            "This service now runs an in-memory EditDraft contract for Launchpad and Workspace.",
+            "This service now bootstraps local SQLite persistence and per-project workspaces.",
         ],
     }
 
