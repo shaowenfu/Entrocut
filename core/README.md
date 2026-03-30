@@ -4,7 +4,7 @@
 
 1. 本地项目与 `EditDraft（剪辑草案）` 状态管理
 2. `Client -> Core` 本地契约落点
-3. `planner-first（先规划）` 的 `chat` 主链骨架
+3. `planner-driven（规划驱动）` 的 `chat` 主链与本地数据层
 
 ## 为什么是 Core
 
@@ -30,12 +30,32 @@
 它现在处在一个中间阶段：
 
 1. 本地项目、素材导入、`WorkspaceSnapshot`、导出任务、`WebSocket event stream（事件流）` 已经存在
-2. `chat` 已经进入 `planner-first` 骨架
-3. 真实 `tool execution loop（工具执行循环）` 还没有在 `core` 内彻底落地，仍保留 `TODO` 边界
+2. 本地数据层已经进入 `SQLite + project workspace dir + auth session mirror` 形态
+3. `chat` 已经进入 `planner-driven` 骨架
+4. 真实 `tool execution loop（工具执行循环）` 还没有在 `core` 内彻底落地，仍保留 `TODO` 边界
 
 换句话说，`core` 当前是：
 
-`本地状态中心 + 本地契约服务 + 正在收口中的 agent 主链`
+`本地状态中心 + 本地契约服务 + SQLite-backed local backend + 正在收口中的 agent 主链`
+
+## 当前本地数据层
+
+当前 `core` 的本地数据层已经不是纯内存态，而是：
+
+1. `SQLite`
+   - 保存 `projects / edit_drafts / chat_turns / tasks / project_runtime / assets / core_auth_session`
+2. `project workspace dir`
+   - 在 `create_project` 时自动初始化
+   - 目录固定为 `thumbs / preview / exports / temp / proxies`
+3. `auth session mirror`
+   - `core` 本地只保存 `access_token / user_id` 镜像
+   - 不保存 `refresh_token`
+
+当前原则：
+
+1. 原始素材只保存路径引用
+2. 导出产物写入项目工作目录
+3. `client` 不直接感知数据库
 
 ## 当前真实能力
 
@@ -59,9 +79,11 @@
 当前 `WebSocket` 已用于推送：
 
 1. `task.updated`
-2. `workspace.snapshot.updated`
+2. `workspace.snapshot`
 3. `edit_draft.updated`
-4. `agent.step.updated`
+4. `project.updated`
+5. `chat.turn.created`
+6. `error.occurred`
 
 ## chat 主链的当前状态
 
@@ -79,12 +101,14 @@
 
 当前明确保留的边界：
 
-1. 如果 `planner` 返回 `requires_tool`，`core` 会 `fail-fast（立即失败）` 抛出 `AGENT_TOOL_EXECUTION_TODO`
-2. 当前仍保留 `placeholder_first_cut（占位初剪）` 作为原型期的最小可运行路径
+1. `planner` 已能驱动最小多轮 loop
+2. `read / retrieve / inspect / patch / preview` 的 loop 形状已经接入
+3. 当前仍保留 `placeholder_first_cut（占位初剪）` 作为原型期的最小可运行路径
+4. 工具和草案写回仍是最小原型实现，不是最终生产形态
 
 这意味着：
 
-`core/chat` 的框架方向已经正确，但真实的 planner -> tool -> replanning 闭环仍是下一步重点。`
+`core/chat` 的框架方向已经正确，但真实的生产级 planner -> tool -> replanning 闭环仍是下一步重点。`
 
 换句话说，`/chat` 的真正目标不是“回复一句话”，而是：
 
@@ -124,7 +148,10 @@
 当前主要看这几个文件：
 
 1. [server.py](./server.py)
-2. [tests/test_server_toolchain_integration.py](./tests/test_server_toolchain_integration.py)
+2. [local_state_repository.py](./local_state_repository.py)
+3. [workspace_manager.py](./workspace_manager.py)
+4. [storage_paths.py](./storage_paths.py)
+5. [tests/test_server_toolchain_integration.py](./tests/test_server_toolchain_integration.py)
 
 如果想先理解契约和结构，建议同时看：
 
@@ -146,4 +173,4 @@ uvicorn server:app --host 127.0.0.1 --port 8000 --reload
 
 如果继续推进 `core`，最应该做的不是再扩接口，而是：
 
-`把 planner -> tool execution -> replanning 的真实 agent loop 落到 core/chat 主链里。`
+`把 planner -> tool execution -> replanning 的真实生产级 agent loop 落到 core/chat 主链里。`

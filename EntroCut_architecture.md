@@ -11,6 +11,7 @@
     - 使用 **Zustand** 建立全局 Store，所有的状态更新不再请求云端，而是请求 `localhost:8000`。
     - 实现一个 **IPC 桥接层**，让 Web 页面能安全地调用 Node.js 的文件系统 API。
     - Client 本地不承担权威事实存储；持久业务数据应下沉到 `Core + SQLite`
+    - 认证凭证在 `Electron` 环境下通过主进程安全桥和系统 `safeStorage` 管理，并兼容迁移旧 `localStorage`
 
 ### 二、 本地引擎 (Core: Python FastAPI + Agent Engine)
 
@@ -33,6 +34,7 @@
     - 使用 **LangChain 或原生 Python** 编写 Agent 决策树。
     - **FFmpeg-python** 封装所有的底层音视频操作。
     - `SQLite` 存结构化业务事实，文件系统存媒体与中间产物，系统安全存储保存认证与敏感密钥
+    - `core` 本地只持久化 `access_token / user_id` 镜像，不持有 `refresh token`
 
 ### 三、 云端服务器 (Server: Python FastAPI + Auth/Proxy)
 
@@ -58,6 +60,14 @@
 3. 大文件继续放文件系统
 4. 敏感凭证放系统安全存储
 5. 云端 `MongoDB Atlas` 只负责同步、账号和云元数据
+
+当前实现状态补充：
+
+1. `core` 已落地 `SQLite-backed local backend`
+2. 项目工作目录已在 `create_project` 时自动初始化
+3. 导出产物已写入项目工作目录
+4. 原始素材仍保持外部路径引用
+5. `client` 已实现旧 `localStorage` 到安全存储的迁移链
 
 一句话：
 

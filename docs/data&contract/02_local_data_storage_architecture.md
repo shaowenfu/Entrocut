@@ -143,6 +143,12 @@
 3. provider secrets
 4. 未来需要长期保存的第三方授权令牌
 
+当前实现补充：
+
+1. `client` 在 `Electron` 环境下通过主进程安全桥读写凭证
+2. 主进程使用系统 `safeStorage` 加密本地凭证文件
+3. `core` 本地只持久化 `access_token / user_id` 镜像，不持久化 `refresh_token`
+
 ---
 
 ## 4. 为什么本地权威库应该是 SQLite
@@ -256,6 +262,13 @@
 2. `Keychain / Credential Manager` 存凭证
 
 在 `client` 里，`localStorage` 最多只能作为原型阶段的过渡实现。
+
+当前落地口径：
+
+1. `client` 启动时优先读取安全存储
+2. 若检测到旧 `localStorage` token，则一次性迁移后清理
+3. 新 token 写入只走安全存储
+4. `core` 通过本地 `auth session` 表保存 `access_token / user_id` 镜像，供本地后端请求 `server` 使用
 
 ---
 

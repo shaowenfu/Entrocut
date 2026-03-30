@@ -35,9 +35,9 @@
    - `active_task`
    - `export_result`
    - `sequence`
-2. `CoreAuthSessionStore` 仍是进程内内存态，不具备重启恢复能力
-3. [client/src/services/httpClient.ts](/home/sherwen/MyProjects/Entrocut/client/src/services/httpClient.ts) 和 [client/src/services/authClient.ts](/home/sherwen/MyProjects/Entrocut/client/src/services/authClient.ts) 仍用 `localStorage`
-4. 项目工作目录尚未成为正式运行时概念
+2. `CoreAuthSessionStore` 已接入本地持久化层，保存 `access_token / user_id` 镜像
+3. `client` 已实现从旧 `localStorage` 到 Electron 安全存储的迁移链
+4. 项目工作目录已成为正式运行时概念并承接导出产物
 5. 当前 `HTTP API` 和 `WebSocket event stream` 已经足够稳定，可以继续复用，不需要先改对外契约
 
 当前最重要的判断不是“功能缺很多”，而是：
@@ -134,6 +134,13 @@
 3. 迁移期允许兼容旧 token 读取，但新写入走安全存储
 
 这一阶段不阻塞数据库落地，但应在本地数据层主线稳定后尽快推进。
+
+当前已落地的最小实现：
+
+1. Electron 主进程新增安全凭证桥
+2. `access_token / refresh_token` 启动时优先从安全存储读取
+3. 若发现旧 `localStorage` 值，则执行一次性迁移并清理
+4. `core` 本地持久化 `access_token / user_id` 镜像，仍不持有 `refresh_token`
 
 ---
 
@@ -305,6 +312,21 @@ app_data_root/
 
 这个表的目标不是替代 `draft_json`，而是给素材引用与后续“重新定位素材”留正式落点。
 
+### 6.7 `core_auth_session`
+
+建议字段：
+
+1. `session_key`
+2. `access_token`
+3. `user_id`
+4. `updated_at`
+
+约束：
+
+1. 只保存 `core` 发起受保护请求所需的本地会话镜像
+2. 不保存 `refresh_token`
+3. 由 `client -> core /api/v1/auth/session` 同步更新
+
 ---
 
 ## 7. 代码改造边界
@@ -337,6 +359,7 @@ app_data_root/
 4. 本地首次启动时可自动初始化数据库和目录
 5. 当前无正式历史数据迁移需求，可不做复杂 migration framework
 6. 若发现旧 token 仍在 `localStorage`，可一次性迁移并清理
+7. `core` 本地只恢复 `access_token / user_id` 镜像，不参与 refresh ownership
 
 这意味着第一阶段实现者不需要同时处理：
 
@@ -382,6 +405,7 @@ app_data_root/
 1. 可从旧 `localStorage` 读取
 2. 可写入系统安全存储
 3. 旧存储可清理
+4. `core` 重启后仍能恢复最近一次同步过来的 `access_token / user_id`
 
 ---
 
