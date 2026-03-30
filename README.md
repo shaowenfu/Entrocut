@@ -202,7 +202,7 @@ npm run dev -- --host 127.0.0.1 --port 5173
 
 ```bash
 cd core
-python -m venv venv
+python -m venv venv(第一次需要创建虚拟环境)
 source venv/bin/activate
 pip install -r requirements.txt
 uvicorn server:app --host 127.0.0.1 --port 8000 --reload
