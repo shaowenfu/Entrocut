@@ -5,14 +5,15 @@ import {
   createGoogleLoginSession,
   fetchCurrentUser,
   getRefreshToken,
+  initializeRefreshTokenStorage,
   logoutCurrentUser,
+  persistRefreshToken,
   refreshAccessToken,
-  setRefreshToken,
   syncCoreAuthSessionState,
   type AuthUser,
 } from "../services/authClient";
 import { openExternalUrl } from "../services/electronBridge";
-import { getAuthToken, setAuthToken } from "../services/httpClient";
+import { getAuthToken, initializeAuthTokenStorage, persistAuthToken } from "../services/httpClient";
 
 type AuthStatus = "idle" | "authenticating" | "authenticated" | "anonymous" | "error";
 
@@ -40,6 +41,8 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
   lastError: null,
 
   bootstrap: async () => {
+    await initializeAuthTokenStorage();
+    await initializeRefreshTokenStorage();
     const accessToken = getAuthToken();
     const refreshToken = getRefreshToken();
     if (!accessToken && !refreshToken) {
@@ -66,8 +69,8 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
       } catch {
         // ignore fallback refresh failure
       }
-      setAuthToken("");
-      setRefreshToken(null);
+      await persistAuthToken("");
+      await persistRefreshToken(null);
       await clearCoreAuthSessionState();
       set({
         status: "anonymous",
@@ -111,8 +114,8 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
     try {
       await logoutCurrentUser();
     } catch {
-      setAuthToken("");
-      setRefreshToken(null);
+      await persistAuthToken("");
+      await persistRefreshToken(null);
       await clearCoreAuthSessionState();
     }
     set({

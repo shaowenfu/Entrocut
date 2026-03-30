@@ -17,6 +17,10 @@ export interface AppHttpError {
 
 const DEFAULT_TIMEOUT_MS = 10000;
 const AUTH_STORAGE_KEY = "ENTROCUT_AUTH_TOKEN";
+const SECURE_AUTH_STORAGE_KEY = "entrocut.auth.access_token";
+
+let cachedAuthToken: string | null = null;
+let authStorageInitialized = false;
 
 function randomRequestId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -36,6 +40,9 @@ export function getAuthToken(): string | null {
   if (envToken) {
     return envToken;
   }
+  if (cachedAuthToken && cachedAuthToken.trim()) {
+    return cachedAuthToken.trim();
+  }
   if (typeof window === "undefined") {
     return null;
   }
@@ -44,10 +51,73 @@ export function getAuthToken(): string | null {
 }
 
 export function setAuthToken(token: string): void {
+  const normalized = token.trim();
+  cachedAuthToken = normalized || null;
   if (typeof window === "undefined") {
     return;
   }
+  if (!normalized) {
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    return;
+  }
+}
+
+export async function initializeAuthTokenStorage(): Promise<void> {
+  if (authStorageInitialized) {
+    return;
+  }
+  authStorageInitialized = true;
+
+  const env = import.meta.env as Record<string, string | undefined>;
+  const envToken = env.VITE_AUTH_TOKEN?.trim();
+  if (envToken) {
+    cachedAuthToken = envToken;
+    return;
+  }
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const electron = window.electron;
+  const legacyToken = window.localStorage.getItem(AUTH_STORAGE_KEY)?.trim() || null;
+  if (electron?.getSecureCredential) {
+    const secureToken = (await electron.getSecureCredential(SECURE_AUTH_STORAGE_KEY))?.trim() || null;
+    if (secureToken) {
+      cachedAuthToken = secureToken;
+      if (legacyToken) {
+        window.localStorage.removeItem(AUTH_STORAGE_KEY);
+      }
+      return;
+    }
+    if (legacyToken) {
+      cachedAuthToken = legacyToken;
+      await electron.setSecureCredential?.(SECURE_AUTH_STORAGE_KEY, legacyToken);
+      window.localStorage.removeItem(AUTH_STORAGE_KEY);
+      return;
+    }
+    cachedAuthToken = null;
+    return;
+  }
+
+  cachedAuthToken = legacyToken;
+}
+
+export async function persistAuthToken(token: string): Promise<void> {
   const normalized = token.trim();
+  cachedAuthToken = normalized || null;
+  if (typeof window === "undefined") {
+    return;
+  }
+  const electron = window.electron;
+  if (electron?.setSecureCredential) {
+    if (!normalized) {
+      await electron.deleteSecureCredential?.(SECURE_AUTH_STORAGE_KEY);
+    } else {
+      await electron.setSecureCredential(SECURE_AUTH_STORAGE_KEY, normalized);
+    }
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    return;
+  }
   if (!normalized) {
     window.localStorage.removeItem(AUTH_STORAGE_KEY);
     return;

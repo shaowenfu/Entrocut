@@ -24,6 +24,15 @@ const electronBridge = {
   async openExternalUrl(url: string): Promise<void> {
     await ipcRenderer.invoke("auth:open-external-url", url);
   },
+  async getSecureCredential(key: string): Promise<string | null> {
+    return (await ipcRenderer.invoke("secure-store:get", key)) as string | null;
+  },
+  async setSecureCredential(key: string, value: string): Promise<void> {
+    await ipcRenderer.invoke("secure-store:set", key, value);
+  },
+  async deleteSecureCredential(key: string): Promise<void> {
+    await ipcRenderer.invoke("secure-store:delete", key);
+  },
   onAuthDeepLink(callback: (payload: AuthDeepLinkPayload) => void): () => void {
     const listener = (_event: Electron.IpcRendererEvent, payload: AuthDeepLinkPayload) => {
       callback(payload);

@@ -135,6 +135,30 @@ export async function openExternalUrl(url: string): Promise<void> {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
+export async function getSecureCredential(key: string): Promise<string | null> {
+  const bridge = typeof window !== "undefined" ? window.electron : undefined;
+  if (!bridge?.getSecureCredential) {
+    return null;
+  }
+  return bridge.getSecureCredential(key);
+}
+
+export async function setSecureCredential(key: string, value: string): Promise<void> {
+  const bridge = typeof window !== "undefined" ? window.electron : undefined;
+  if (!bridge?.setSecureCredential) {
+    return;
+  }
+  await bridge.setSecureCredential(key, value);
+}
+
+export async function deleteSecureCredential(key: string): Promise<void> {
+  const bridge = typeof window !== "undefined" ? window.electron : undefined;
+  if (!bridge?.deleteSecureCredential) {
+    return;
+  }
+  await bridge.deleteSecureCredential(key);
+}
+
 export function subscribeAuthDeepLink(
   callback: (payload: AuthDeepLinkPayload) => void
 ): (() => void) | null {
