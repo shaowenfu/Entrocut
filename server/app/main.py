@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 import json
 import logging
+import math
 import time
 from datetime import timezone
 from inspect import isawaitable
@@ -11,7 +12,7 @@ from uuid import uuid4
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import Depends, FastAPI, Header, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from pydantic import ValidationError
@@ -20,7 +21,7 @@ from redis.exceptions import RedisError
 
 from .auth_service import OAuthService, TokenService, UserService
 from .auth_store import AuthStore, now_utc
-from .config import Settings, get_settings
+from .config import RATE_CARDS, Settings, get_settings
 from .errors import (
     ServerApiError,
     error_payload,
@@ -390,7 +391,6 @@ def get_current_user(authorization: str | None = Header(default=None)) -> dict[s
             message="The current user is suspended.",
             error_type="auth_error",
         )
-    user = quota_service.ensure_user_quota_defaults(user)
     return {"user": user, "token_payload": payload}
 
 
@@ -426,8 +426,7 @@ def _estimate_prompt_tokens(messages: list[dict[str, Any]]) -> int:
 
 def _build_entro_metadata(user: dict[str, Any]) -> dict[str, Any]:
     return {
-        "remaining_quota": user.get("remaining_quota"),
-        "quota_status": user.get("quota_status", "healthy"),
+        "credits_balance": int(user.get("credits_balance") or 0),
         "user_id": _stored_user_id(user),
     }
 
@@ -500,7 +499,7 @@ def _mock_chat_content(prompt: str, user: dict[str, Any]) -> str:
     return (
         f"Editing focus: {prompt_excerpt} "
         f"Use the strongest motion clip as the opener, tighten redundant beats, and end on the clearest payoff. "
-        f"Quota status is {user.get('quota_status', 'healthy')}."
+        f"Credits balance is {int(user.get("credits_balance") or 0)}."
     )
 
 
@@ -663,13 +662,73 @@ async def _close_upstream_response(response: Any) -> None:
             await maybe_awaitable
 
 
+def _resolve_rate(model: str) -> dict[str, int]:
+    if model in RATE_CARDS:
+        return RATE_CARDS[model]
+    if RATE_CARDS:
+        return min(
+            RATE_CARDS.values(),
+            key=lambda item: int(item.get("prompt_per_1m") or 0) + int(item.get("completion_per_1m") or 0),
+        )
+    raise ServerApiError(
+        status_code=500,
+        code="RATE_CARD_UNAVAILABLE",
+        message="No rate card is configured.",
+        error_type="server_error",
+    )
+
+
+def _compute_credit_cost(model: str, prompt_tokens: int, completion_tokens: int) -> int:
+    rate = _resolve_rate(model)
+    weighted_tokens = (
+        int(prompt_tokens) * int(rate["prompt_per_1m"])
+        + int(completion_tokens) * int(rate["completion_per_1m"])
+    )
+    return int(math.ceil(weighted_tokens / 1_000_000))
+
+
+def _settle_chat_billing(
+    *,
+    current: dict[str, Any],
+    request_id: str,
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    provider: str,
+) -> int:
+    user_id = _stored_user_id(current["user"])
+    session_id = str(current["token_payload"]["sid"])
+    credits_cost = _compute_credit_cost(model, prompt_tokens, completion_tokens)
+    credits_balance = store.mongo.deduct_credits(user_id, credits_cost) if credits_cost > 0 else int(current["user"].get("credits_balance") or 0)
+    store.mongo.record_ledger(
+        {
+            "_id": f"ledger_{uuid4().hex}",
+            "request_id": request_id,
+            "user_id": user_id,
+            "session_id": session_id,
+            "model": model,
+            "usage": {
+                "prompt_tokens": int(prompt_tokens),
+                "completion_tokens": int(completion_tokens),
+                "total_tokens": int(prompt_tokens) + int(completion_tokens),
+            },
+            "credits_cost": credits_cost,
+            "credits_balance": credits_balance,
+            "provider": provider,
+            "created_at": now_utc().isoformat(),
+        }
+    )
+    current["user"]["credits_balance"] = credits_balance
+    return credits_balance
+
+
 async def _upstream_chat_stream(
     payload: dict[str, Any],
     *,
     current: dict[str, Any],
     request_id: str,
+    background_tasks: BackgroundTasks,
 ) -> StreamingResponse:
-    messages = payload["messages"]
     upstream_payload = dict(payload)
     proxy_mode = _effective_llm_proxy_mode()
     if proxy_mode == "google_gemini":
@@ -685,24 +744,16 @@ async def _upstream_chat_stream(
     upstream_url, headers = _upstream_stream_url_and_headers()
     exposed_model = str(payload.get("model") or settings.llm_default_model)
     provider_name = _resolve_chat_provider()["provider"]
+    prompt_tokens = 0
+    completion_tokens = 0
 
     async def event_stream():
-        aggregated_text_parts: list[str] = []
-        final_usage: dict[str, int] | None = None
-        provider_model: str | None = None
-        terminal_chunk: dict[str, Any] | None = None
-        stream_id: str | None = None
-        stream_created: int | None = None
         response: Any = None
         started_ms = now_ms()
+        nonlocal prompt_tokens, completion_tokens
         try:
             async with httpx.AsyncClient(timeout=None) as client:
-                stream_context = client.stream(
-                    "POST",
-                    upstream_url,
-                    json=upstream_payload,
-                    headers=headers,
-                )
+                stream_context = client.stream("POST", upstream_url, json=upstream_payload, headers=headers)
                 try:
                     async with stream_context as response:
                         if response.status_code == 429:
@@ -716,11 +767,7 @@ async def _upstream_chat_stream(
                             )
                         if response.status_code >= 400:
                             body = await response.aread()
-                            metrics.inc(
-                                "server_chat_provider_errors_total",
-                                provider=provider_name,
-                                code=str(response.status_code),
-                            )
+                            metrics.inc("server_chat_provider_errors_total", provider=provider_name, code=str(response.status_code))
                             raise ServerApiError(
                                 status_code=502,
                                 code="MODEL_PROVIDER_UNAVAILABLE",
@@ -735,49 +782,19 @@ async def _upstream_chat_stream(
                             line = raw_line.strip()
                             if not line:
                                 continue
-                            if not line.startswith("data:"):
-                                continue
-                            data = line[5:].strip()
-                            if not data:
-                                continue
-                            if data == "[DONE]":
-                                break
-                            try:
-                                chunk_body = json.loads(data)
-                            except json.JSONDecodeError as exc:
-                                raise ServerApiError(
-                                    status_code=502,
-                                    code="MODEL_PROVIDER_INVALID_RESPONSE",
-                                    message="Upstream model provider returned an invalid streaming chunk.",
-                                    error_type="server_error",
-                                    details={"request_id": request_id, "chunk_excerpt": data[:200]},
-                                ) from exc
-                            if not isinstance(chunk_body, dict):
-                                continue
-                            if isinstance(chunk_body.get("model"), str) and chunk_body["model"].strip():
-                                provider_model = chunk_body["model"].strip()
-                            if stream_id is None and isinstance(chunk_body.get("id"), str):
-                                stream_id = chunk_body["id"]
-                            if stream_created is None and isinstance(chunk_body.get("created"), int):
-                                stream_created = chunk_body["created"]
-                            normalized_usage = _normalize_usage(chunk_body.get("usage"))
-                            if normalized_usage:
-                                final_usage = normalized_usage
-                            aggregated_text = _extract_stream_delta_text(chunk_body)
-                            if aggregated_text:
-                                aggregated_text_parts.append(aggregated_text)
-                            sanitized = _sanitize_stream_chunk(chunk_body, exposed_model=exposed_model)
-                            choices = sanitized.get("choices")
-                            is_terminal = False
-                            if isinstance(choices, list):
-                                is_terminal = any(
-                                    isinstance(choice, dict) and choice.get("finish_reason") is not None
-                                    for choice in choices
-                                )
-                            if is_terminal:
-                                terminal_chunk = sanitized
-                                continue
-                            yield f"data: {json.dumps(sanitized, ensure_ascii=True)}\n\n"
+                            if line.startswith("data:"):
+                                data = line[5:].strip()
+                                if data and data != "[DONE]":
+                                    try:
+                                        chunk_body = json.loads(data)
+                                    except json.JSONDecodeError:
+                                        chunk_body = None
+                                    if isinstance(chunk_body, dict):
+                                        usage = _normalize_usage(chunk_body.get("usage"))
+                                        if usage is not None:
+                                            prompt_tokens = int(usage.get("prompt_tokens") or 0)
+                                            completion_tokens = int(usage.get("completion_tokens") or 0)
+                            yield f"{line}\n\n"
                 finally:
                     if response is not None:
                         await _close_upstream_response(response)
@@ -799,70 +816,25 @@ async def _upstream_chat_stream(
                 error_type="server_error",
                 details={"provider": provider_name},
             ) from exc
-        metrics.observe(
-            "server_chat_provider_latency_ms",
-            now_ms() - started_ms,
-            provider=provider_name,
-            provider_model=str(upstream_payload.get("model") or "unknown"),
-        )
+        finally:
+            metrics.observe(
+                "server_chat_provider_latency_ms",
+                now_ms() - started_ms,
+                provider=provider_name,
+                provider_model=str(upstream_payload.get("model") or "unknown"),
+            )
 
-        usage = final_usage or _build_usage(messages, "".join(aggregated_text_parts))
-        updated_user = quota_service.record_chat_usage(
-            user=current["user"],
-            session_id=current["token_payload"]["sid"],
+    def settle_stream_usage() -> None:
+        _settle_chat_billing(
+            current=current,
             request_id=request_id,
-            exposed_model=exposed_model,
-            provider_model=provider_model,
-            usage=usage,
-        )
-        rate_limit_service.add_completion_tokens(
-            user_id=_stored_user_id(updated_user),
-            completion_tokens=int(usage.get("completion_tokens") or 0),
-        )
-        final_chunk = terminal_chunk or {
-            "id": stream_id or f"chatcmpl_{uuid4().hex[:24]}",
-            "object": "chat.completion.chunk",
-            "created": stream_created or int(time.time()),
-            "model": exposed_model,
-            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-        }
-        final_chunk["model"] = exposed_model
-        final_chunk["usage"] = usage
-        final_chunk["entro_metadata"] = _build_entro_metadata(updated_user)
-        log_event(
-            logger,
-            "chat_stream_completed",
-            service="server",
-            env=settings.app_env,
-            request_id=request_id,
-            user_id=current["user"]["_id"],
-            session_id=current["token_payload"]["sid"],
             model=exposed_model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
             provider=provider_name,
-            prompt_tokens=int(usage.get("prompt_tokens") or 0),
-            completion_tokens=int(usage.get("completion_tokens") or 0),
-            total_tokens=int(usage.get("total_tokens") or 0),
-            remaining_quota=updated_user.get("remaining_quota"),
         )
-        log_audit_event(
-            "audit_chat_stream_usage_recorded",
-            env=settings.app_env,
-            request_id=request_id,
-            actor_user_id=current["user"]["_id"],
-            actor_session_id=current["token_payload"]["sid"],
-            action="chat.completions.stream.consume",
-            result="success",
-            target_type="quota_ledger",
-            target_id=request_id,
-            details={
-                "model": exposed_model,
-                "total_tokens": int(usage.get("total_tokens") or 0),
-                "remaining_quota": updated_user.get("remaining_quota"),
-            },
-        )
-        yield f"data: {json.dumps(final_chunk, ensure_ascii=True)}\n\n"
-        yield "data: [DONE]\n\n"
 
+    background_tasks.add_task(settle_stream_usage)
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
@@ -878,6 +850,11 @@ async def _build_chat_completion_payload(
             message="messages must be a non-empty array.",
             error_type="invalid_request_error",
         )
+    stream_options = payload.get("stream_options")
+    if isinstance(stream_options, dict):
+        payload["stream_options"] = {**stream_options, "include_usage": True}
+    else:
+        payload["stream_options"] = {"include_usage": True}
 
     if _effective_llm_proxy_mode() in {"upstream", "google_gemini"}:
         body = await _call_upstream_chat(payload)
@@ -1487,7 +1464,11 @@ def get_me(current: dict[str, Any] = Depends(get_current_user)) -> MeResponse:
 
 
 @app.post("/v1/chat/completions")
-async def chat_completions(request: Request, current: dict[str, Any] = Depends(get_current_user)):
+async def chat_completions(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    current: dict[str, Any] = Depends(get_current_user),
+):
     payload = await request.json()
     if not isinstance(payload, dict):
         raise ServerApiError(
@@ -1511,7 +1492,18 @@ async def chat_completions(request: Request, current: dict[str, Any] = Depends(g
             message="messages must be a non-empty array.",
             error_type="invalid_request_error",
         )
-    quota_service.assert_can_chat(current["user"])
+    stream_options = payload.get("stream_options")
+    if isinstance(stream_options, dict):
+        payload["stream_options"] = {**stream_options, "include_usage": True}
+    else:
+        payload["stream_options"] = {"include_usage": True}
+    if int(current["user"].get("credits_balance") or 0) <= 0:
+        raise ServerApiError(
+            status_code=402,
+            code="INSUFFICIENT_CREDITS",
+            message="Insufficient credits balance.",
+            error_type="payment_required",
+        )
     rate_limit_service.consume_prompt_budget(
         user_id=_stored_user_id(current["user"]),
         prompt_tokens=_estimate_prompt_tokens(messages),
@@ -1538,31 +1530,27 @@ async def chat_completions(request: Request, current: dict[str, Any] = Depends(g
             provider=provider_name,
             status="accepted",
         )
-        return await _upstream_chat_stream(payload, current=current, request_id=request_id)
+        return await _upstream_chat_stream(payload, current=current, request_id=request_id, background_tasks=background_tasks)
     body = await _build_chat_completion_payload(payload, current)
     usage = body.get("usage") if isinstance(body, dict) else None
-    updated_user = quota_service.record_chat_usage(
-        user=current["user"],
-        session_id=current["token_payload"]["sid"],
+    prompt_tokens = int((usage or {}).get("prompt_tokens") or 0) if isinstance(usage, dict) else 0
+    completion_tokens = int((usage or {}).get("completion_tokens") or 0) if isinstance(usage, dict) else 0
+    credits_balance = _settle_chat_billing(
+        current=current,
         request_id=request_id,
-        exposed_model=str(payload.get("model") or settings.llm_default_model),
-        provider_model=str(body.get("_provider_model")) if isinstance(body, dict) and body.get("_provider_model") else None,
-        usage=usage if isinstance(usage, dict) else None,
+        model=str(payload.get("model") or settings.llm_default_model),
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        provider=provider_name,
     )
     if isinstance(usage, dict):
-        metrics.inc(
-            "server_quota_consumed_tokens_total",
-            value=float(int(usage.get("total_tokens") or 0)),
-            model=str(payload.get("model") or settings.llm_default_model),
-            provider_model=str(body.get("_provider_model") or provider_name),
-        )
         rate_limit_service.add_completion_tokens(
-            user_id=_stored_user_id(updated_user),
-            completion_tokens=int(usage.get("completion_tokens") or 0),
+            user_id=_stored_user_id(current["user"]),
+            completion_tokens=completion_tokens,
         )
     if isinstance(body, dict):
-        body["entro_metadata"] = _build_entro_metadata(updated_user)
-        body.pop("_provider_model", None)
+        body["entro_metadata"] = _build_entro_metadata(current["user"])
+        body["entro_metadata"]["credits_balance"] = credits_balance
     log_event(
         logger,
         "chat_request_succeeded",
@@ -1574,10 +1562,10 @@ async def chat_completions(request: Request, current: dict[str, Any] = Depends(g
         model=str(payload.get("model") or settings.llm_default_model),
         provider=provider_name,
         stream=bool(payload.get("stream") is True),
-        prompt_tokens=int((usage or {}).get("prompt_tokens") or 0) if isinstance(usage, dict) else 0,
-        completion_tokens=int((usage or {}).get("completion_tokens") or 0) if isinstance(usage, dict) else 0,
-        total_tokens=int((usage or {}).get("total_tokens") or 0) if isinstance(usage, dict) else 0,
-        remaining_quota=updated_user.get("remaining_quota"),
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=prompt_tokens + completion_tokens,
+        credits_balance=credits_balance,
     )
     log_audit_event(
         "audit_chat_usage_recorded",
@@ -1587,12 +1575,13 @@ async def chat_completions(request: Request, current: dict[str, Any] = Depends(g
         actor_session_id=current["token_payload"]["sid"],
         action="chat.completions.consume",
         result="success",
-        target_type="quota_ledger",
+        target_type="credit_ledger",
         target_id=request_id,
         details={
             "model": str(payload.get("model") or settings.llm_default_model),
-            "total_tokens": int((usage or {}).get("total_tokens") or 0) if isinstance(usage, dict) else 0,
-            "remaining_quota": updated_user.get("remaining_quota"),
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "credits_balance": credits_balance,
         },
     )
     metrics.inc(

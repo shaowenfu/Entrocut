@@ -99,6 +99,13 @@
 3. `vectorize / retrieval / inspect` 专用工具接口
 4. 鉴权、能力探测与错误语义稳定化
 
+当前 `server` 分支额外已经并入的能力点：
+
+1. `Google + GitHub OAuth`
+2. `client -> core -> server` 登录态同步链
+3. `credits_balance` 用户字段及前端展示入口
+4. `model selection + BYOK routing` 配套参数透传
+
 ## 当前核心数据模型
 
 系统当前围绕 `EditDraft` 工作，而不是围绕展示型 `Storyboard` 工作。
@@ -132,12 +139,14 @@
    - `Execution Loop`
 4. `retrieve / inspect / patch / preview` 的工具边界已经收口
 5. `server` 侧的 `planner / vectorize / retrieval / inspect` 契约和实现已经开始成型
+6. `server` 分支已经回收两条历史能力线：`GitHub OAuth` 与 `credits/BYOK`
 
 ### 当前仍在收口的部分
 
 1. `core /chat` 还停在 `planner-first` 骨架阶段
 2. `planner -> tool execution -> replanning` 的真实 `agent loop` 还没有在 `core` 里彻底落地
 3. `retrieve / inspect` 的真实 `Core -> Server` 接入还需要继续按新契约推进
+4. `credits / BYOK` 还需要更系统的端到端验证与真实上游兼容性核查
 
 所以现在最准确的描述不是“功能缺很多”，而是：
 
@@ -152,7 +161,8 @@
 3. [docs/contracts/01_core_api_ws_contract.md](./docs/contracts/01_core_api_ws_contract.md)
 4. [docs/agent_runtime/README.md](./docs/agent_runtime/README.md)
 5. [docs/server/README.md](./docs/server/README.md)
-6. [docs/develop_diary/2026-03-24_project_recap_and_pause_journal.md](./docs/develop_diary/2026-03-24_project_recap_and_pause_journal.md)
+6. [docs/develop_diary/2026-03-29_server_branch_pr_merge_journal.md](./docs/develop_diary/2026-03-29_server_branch_pr_merge_journal.md)
+7. [docs/develop_diary/2026-03-24_project_recap_and_pause_journal.md](./docs/develop_diary/2026-03-24_project_recap_and_pause_journal.md)
 
 ## 当前关键接口面
 

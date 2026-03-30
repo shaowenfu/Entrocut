@@ -39,6 +39,7 @@ import {
   type TaskType,
 } from "../services/coreClient";
 import { registerProjectMediaSources } from "../services/localMediaRegistry";
+import { useAuthStore } from "./useAuthStore";
 
 export interface WorkspaceAssetItem {
   id: string;
@@ -1138,16 +1139,26 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
       try {
         const selection = get().runtimeState.selection;
-        const response = await sendChatRequest(workspaceId, {
-          prompt: trimmedPrompt,
-          target:
-            selection.scope === "global"
-              ? undefined
-              : {
-                  scene_id: selection.selectedSceneId,
-                  shot_id: selection.scope === "shot" ? selection.selectedShotId : undefined,
-                },
-        });
+        const { modelPrefs } = useAuthStore.getState();
+        const response = await sendChatRequest(
+          workspaceId,
+          {
+            prompt: trimmedPrompt,
+            model: modelPrefs.selectedModel.replace(/^byok:/, ""),
+            target:
+              selection.scope === "global"
+                ? undefined
+                : {
+                    scene_id: selection.selectedSceneId,
+                    shot_id: selection.scope === "shot" ? selection.selectedShotId : undefined,
+                  },
+          },
+          {
+            mode: modelPrefs.routingMode,
+            byokKey: modelPrefs.byokKey,
+            byokBaseUrl: modelPrefs.byokBaseUrl,
+          }
+        );
         applyDirectPatch({
           runtimeState: recordExecutionAction(get().runtimeState, {
             action: "apply_patch",

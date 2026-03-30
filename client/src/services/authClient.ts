@@ -15,8 +15,7 @@ export interface AuthUser {
   display_name?: string | null;
   avatar_url?: string | null;
   status: string;
-  plan: string;
-  quota_status: string;
+  credits_balance: number;
 }
 
 interface LoginSessionCreateResponse {
@@ -99,6 +98,21 @@ export async function createGoogleLoginSession(): Promise<LoginSessionCreateResp
     authRequired: false,
     body: {
       provider: "google",
+      client_redirect_uri: clientRedirectUri,
+    },
+  });
+}
+
+export async function createGithubLoginSession(): Promise<LoginSessionCreateResponse> {
+  const clientRedirectUri =
+    isElectronEnvironment() || typeof window === "undefined"
+      ? undefined
+      : `${window.location.origin}/`;
+  return requestJson<LoginSessionCreateResponse>(endpoint("/api/v1/auth/login-sessions"), {
+    method: "POST",
+    authRequired: false,
+    body: {
+      provider: "github",
       client_redirect_uri: clientRedirectUri,
     },
   });

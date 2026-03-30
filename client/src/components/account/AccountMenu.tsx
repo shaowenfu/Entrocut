@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { ChevronDown, LogIn, LogOut, ShieldCheck, WalletCards } from "lucide-react";
+import { ChevronDown, Github, LogIn, LogOut, ShieldCheck, WalletCards } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useAuthStore } from "../../store/useAuthStore";
 import "./AccountMenu.css";
@@ -16,18 +16,6 @@ type PopoverPosition = {
   left: number;
   arrowLeft: number;
 };
-
-function humanizeToken(value: string | null | undefined, fallback: string): string {
-  const normalized = value?.trim();
-  if (!normalized) {
-    return fallback;
-  }
-  return normalized
-    .replace(/[_-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
 
 function getDisplayName(email: string | null | undefined, displayName: string | null | undefined): string {
   const normalizedName = displayName?.trim();
@@ -53,62 +41,61 @@ function getInitials(label: string): string {
   return words.map((word) => word.slice(0, 1).toUpperCase()).join("");
 }
 
-function getCreditsTone(quotaStatus: string | null | undefined): CreditsTone {
-  const normalized = quotaStatus?.trim().toLowerCase() ?? "";
-  if (!normalized) {
-    return "neutral";
+function formatCreditsBalance(balance: number | null | undefined): string {
+  const safe = Math.max(0, Math.floor(balance ?? 0));
+  if (safe >= 1_000_000) {
+    return `${(safe / 1_000_000).toFixed(safe % 1_000_000 === 0 ? 0 : 1)}M`;
   }
-  if (/(exhaust|empty|deplet|limit_reached|blocked)/.test(normalized)) {
+  if (safe >= 10_000) {
+    return `${Math.floor(safe / 1_000)}k`;
+  }
+  if (safe >= 1_000) {
+    return `${(safe / 1_000).toFixed(1)}k`;
+  }
+  return `${safe}`;
+}
+
+function getCreditsTone(balance: number | null | undefined): CreditsTone {
+  const safe = Math.max(0, Math.floor(balance ?? 0));
+  if (safe <= 0) {
     return "danger";
   }
-  if (/(warn|limit|low|near|trial)/.test(normalized)) {
+  if (safe < 5_000) {
     return "warning";
   }
-  if (/(ok|active|available|healthy|ready)/.test(normalized)) {
-    return "healthy";
-  }
-  return "neutral";
+  return "healthy";
 }
 
 function getCreditsSummary(
   authStatus: string,
-  plan: string | null | undefined,
-  quotaStatus: string | null | undefined
+  creditsBalance: number | null | undefined
 ): { label: string; detail: string; tone: CreditsTone } {
   if (authStatus !== "authenticated") {
     return {
       label: "Guest mode",
-      detail: "Sign in to unlock cloud features",
+      detail: "Sign in to unlock cloud features and credits",
       tone: "neutral",
     };
   }
-  const tone = getCreditsTone(quotaStatus);
-  const quotaLabel = humanizeToken(quotaStatus, "Not synced");
-  const planLabel = humanizeToken(plan, "Standard");
+  const tone = getCreditsTone(creditsBalance);
+  const balanceLabel = formatCreditsBalance(creditsBalance);
   if (tone === "danger") {
     return {
-      label: "Action needed",
-      detail: `${quotaLabel} on ${planLabel}`,
+      label: balanceLabel,
+      detail: "Credits depleted",
       tone,
     };
   }
   if (tone === "warning") {
     return {
-      label: "Monitor usage",
-      detail: `${quotaLabel} on ${planLabel}`,
-      tone,
-    };
-  }
-  if (tone === "healthy") {
-    return {
-      label: "Available",
-      detail: `${planLabel} plan`,
+      label: balanceLabel,
+      detail: "Credits running low",
       tone,
     };
   }
   return {
-    label: quotaLabel,
-    detail: `${planLabel} plan`,
+    label: balanceLabel,
+    detail: "Credits available",
     tone,
   };
 }
@@ -121,6 +108,7 @@ function AccountMenu({ variant = "workspace" }: AccountMenuProps) {
   const authStatus = useAuthStore((state) => state.status);
   const authUser = useAuthStore((state) => state.user);
   const startGoogleLogin = useAuthStore((state) => state.startGoogleLogin);
+  const startGithubLogin = useAuthStore((state) => state.startGithubLogin);
   const logout = useAuthStore((state) => state.logout);
 
   const displayName = useMemo(
@@ -129,8 +117,8 @@ function AccountMenu({ variant = "workspace" }: AccountMenuProps) {
   );
   const initials = useMemo(() => getInitials(displayName), [displayName]);
   const credits = useMemo(
-    () => getCreditsSummary(authStatus, authUser?.plan, authUser?.quota_status),
-    [authStatus, authUser?.plan, authUser?.quota_status]
+    () => getCreditsSummary(authStatus, authUser?.credits_balance),
+    [authStatus, authUser?.credits_balance]
   );
   const profileLabel = authStatus === "authenticated" ? "Signed in" : "Guest session";
   const profileDetail =
@@ -222,6 +210,11 @@ function AccountMenu({ variant = "workspace" }: AccountMenuProps) {
     await startGoogleLogin();
   }
 
+  async function handleGithubLogin() {
+    setIsOpen(false);
+    await startGithubLogin();
+  }
+
   const popoverStyle: (CSSProperties & Record<"--account-popover-arrow-left", string>) | undefined = popoverPosition
     ? {
         top: popoverPosition.top,
@@ -251,9 +244,9 @@ function AccountMenu({ variant = "workspace" }: AccountMenuProps) {
 
             <div className="account-summary-grid">
               <article className="account-summary-card">
-                <span>Plan</span>
-                <strong>{humanizeToken(authUser?.plan, authStatus === "authenticated" ? "Standard" : "Guest")}</strong>
-                <small>{authStatus === "authenticated" ? "Current account tier" : "Local-first workspace"}</small>
+                <span>Account</span>
+                <strong>{authStatus === "authenticated" ? "Connected" : "Guest"}</strong>
+                <small>{authStatus === "authenticated" ? "OAuth session is active" : "Local-first workspace"}</small>
               </article>
               <article className={`account-summary-card account-summary-card-${credits.tone}`}>
                 <span>Credits</span>
@@ -283,25 +276,43 @@ function AccountMenu({ variant = "workspace" }: AccountMenuProps) {
               </div>
             </div>
 
-            <button
-              type="button"
-              className={`account-primary-action ${
-                authStatus === "authenticated" ? "account-primary-action-danger" : ""
-              }`}
-              onClick={() => {
-                void handlePrimaryAction();
-              }}
-              disabled={authStatus === "authenticating"}
-            >
-              {authStatus === "authenticated" ? <LogOut size={15} /> : <LogIn size={15} />}
-              <span>
-                {authStatus === "authenticated"
-                  ? "Sign out"
-                  : authStatus === "authenticating"
-                    ? "Connecting..."
-                    : "Continue with Google"}
-              </span>
-            </button>
+            {authStatus === "authenticated" ? (
+              <button
+                type="button"
+                className="account-primary-action account-primary-action-danger"
+                onClick={() => {
+                  void handlePrimaryAction();
+                }}
+              >
+                <LogOut size={15} />
+                <span>Sign out</span>
+              </button>
+            ) : (
+              <div className="account-action-stack">
+                <button
+                  type="button"
+                  className="account-primary-action"
+                  onClick={() => {
+                    void handlePrimaryAction();
+                  }}
+                  disabled={authStatus === "authenticating"}
+                >
+                  <LogIn size={15} />
+                  <span>{authStatus === "authenticating" ? "Connecting..." : "Continue with Google"}</span>
+                </button>
+                <button
+                  type="button"
+                  className="account-secondary-action"
+                  onClick={() => {
+                    void handleGithubLogin();
+                  }}
+                  disabled={authStatus === "authenticating"}
+                >
+                  <Github size={15} />
+                  <span>Continue with GitHub</span>
+                </button>
+              </div>
+            )}
           </div>,
           document.body
         )
