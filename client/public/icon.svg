@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <!-- 品牌渐变: Indigo → Purple → Cyan -->
+    <linearGradient id="brandGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#6d63ff"/>
+      <stop offset="50%" style="stop-color:#9a63ff"/>
+      <stop offset="100%" style="stop-color:#4ad3f5"/>
+    </linearGradient>
+
+    <!-- 闪光渐变 -->
+    <linearGradient id="sparkleGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ffffff"/>
+      <stop offset="100%" style="stop-color:#4ad3f5"/>
+    </linearGradient>
+
+    <!-- 光晕效果 -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="8" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- 圆角矩形背景 -->
+  <rect x="64" y="64" width="896" height="896" rx="180" ry="180" fill="url(#brandGradient)"/>
+
+  <!-- 切割线装饰 - 左侧 -->
+  <line x1="200" y1="200" x2="200" y2="824" stroke="rgba(255,255,255,0.15)" stroke-width="3"/>
+
+  <!-- 切割线装饰 - 右侧 -->
+  <line x1="824" y1="200" x2="824" y2="824" stroke="rgba(255,255,255,0.15)" stroke-width="3"/>
+
+  <!-- 切割线装饰 - 横向 -->
+  <line x1="280" y1="512" x2="744" y2="512" stroke="rgba(255,255,255,0.2)" stroke-width="4"/>
+
+  <!-- 中心魔法闪光 - 四角星 -->
+  <g filter="url(#glow)" transform="translate(512, 460)">
+    <!-- 主闪光 -->
+    <polygon
+      points="0,-140 20,-20 140,0 20,20 0,140 -20,20 -140,0 -20,-20"
+      fill="url(#sparkleGradient)"
+      opacity="0.95"
+    />
+    <!-- 内部小闪光 -->
+    <polygon
+      points="0,-70 10,-10 70,0 10,10 0,70 -10,10 -70,0 -10,-10"
+      fill="#ffffff"
+      opacity="0.9"
+    />
+  </g>
+
+  <!-- 辅助闪光点 - 左上 -->
+  <g filter="url(#glow)" transform="translate(280, 300)">
+    <polygon
+      points="0,-35 5,-5 35,0 5,5 0,35 -5,5 -35,0 -5,-5"
+      fill="#ffffff"
+      opacity="0.8"
+    />
+  </g>
+
+  <!-- 辅助闪光点 - 右下 -->
+  <g filter="url(#glow)" transform="translate(744, 680)">
+    <polygon
+      points="0,-28 4,-4 28,0 4,4 0,28 -4,4 -28,0 -4,-4"
+      fill="#4ad3f5"
+      opacity="0.75"
+    />
+  </g>
+
+  <!-- 辅助闪光点 - 右上小点 -->
+  <g transform="translate(720, 260)">
+    <polygon
+      points="0,-18 3,-3 18,0 3,3 0,18 -3,3 -18,0 -3,-3"
+      fill="#ffffff"
+      opacity="0.6"
+    />
+  </g>
+
+  <!-- 底部品牌文字区域 -->
+  <text x="512" y="780" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="52" font-weight="600" fill="rgba(255,255,255,0.9)">EntroCut</text>
+</svg>

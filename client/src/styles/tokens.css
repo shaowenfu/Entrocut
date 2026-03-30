@@ -1,0 +1,246 @@
+/**
+ * EntroCut Design Tokens
+ * Professional Workstation Style - Inspired by DaVinci Resolve
+ *
+ * Design Principles:
+ * 1. 高信息密度: 在有限空间内展示更多内容
+ * 2. 紧凑布局: 减少不必要的留白，优化空间利用
+ * 3. 专业配色: 更暗的背景色，提高对比度
+ * 4. 快速访问: 常用功能一键可达
+ * 5. 一致性: 统一的组件和交互模式
+ */
+
+:root {
+  /* ============================================
+   * COLOR SYSTEM
+   * 简化的调色板：主色 + 强调色 + 语义色
+   * ============================================ */
+
+  /* Background Colors - 更深的专业背景 */
+  --color-bg-base: #020204;
+  --color-bg-panel: #08080c;
+  --color-bg-panel-soft: #0c0c12;
+  --color-bg-elevated: #101016;
+  --color-bg-hover: rgba(255, 255, 255, 0.04);
+  --color-bg-active: rgba(255, 255, 255, 0.08);
+
+  /* Primary Colors - Indigo 主色 */
+  --color-primary: #6d63ff;
+  --color-primary-hover: #7d73ff;
+  --color-primary-active: #5d53ef;
+  --color-primary-subtle: rgba(109, 99, 255, 0.15);
+  --color-primary-border: rgba(109, 99, 255, 0.4);
+
+  /* Accent Colors - Cyan 强调色 */
+  --color-accent: #4ad3f5;
+  --color-accent-hover: #5ae3ff;
+  --color-accent-active: #3ac3e5;
+  --color-accent-subtle: rgba(74, 211, 245, 0.15);
+  --color-accent-border: rgba(74, 211, 245, 0.4);
+
+  /* Text Colors */
+  --color-text-primary: #edf0ff;
+  --color-text-secondary: #b8bdd4;
+  --color-text-muted: #8e94aa;
+  --color-text-faint: #6b7188;
+  --color-text-disabled: #4a4f62;
+
+  /* Border Colors */
+  --color-border-subtle: rgba(255, 255, 255, 0.08);
+  --color-border-default: rgba(255, 255, 255, 0.12);
+  --color-border-strong: rgba(255, 255, 255, 0.18);
+
+  /* Semantic Colors */
+  --color-success: #44de8a;
+  --color-success-subtle: rgba(68, 222, 138, 0.15);
+  --color-success-border: rgba(68, 222, 138, 0.36);
+
+  --color-warning: #f0cd78;
+  --color-warning-subtle: rgba(240, 205, 120, 0.15);
+  --color-warning-border: rgba(240, 205, 120, 0.36);
+
+  --color-error: #f15b5b;
+  --color-error-subtle: rgba(241, 91, 91, 0.12);
+  --color-error-border: rgba(241, 91, 91, 0.4);
+
+  --color-info: #71d8f5;
+  --color-info-subtle: rgba(113, 216, 245, 0.12);
+  --color-info-border: rgba(113, 216, 245, 0.28);
+
+  /* Gradient */
+  --gradient-primary: linear-gradient(110deg, var(--color-primary), #9a63ff, var(--color-accent));
+  --gradient-glow: linear-gradient(115deg, var(--color-primary), #9a63ff, var(--color-accent));
+
+  /* ============================================
+   * SPACING SYSTEM
+   * 基于 8px 网格的间距系统
+   * ============================================ */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  /* ============================================
+   * TYPOGRAPHY SYSTEM
+   * 7 级字体大小
+   * ============================================ */
+
+  /* Font Sizes */
+  --text-xs: 11px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-lg: 18px;
+  --text-xl: 24px;
+  --text-2xl: 32px;
+  --text-3xl: 44px;
+
+  /* Font Weights */
+  --font-regular: 400;
+  --font-medium: 500;
+  --font-semibold: 600;
+  --font-bold: 700;
+
+  /* Line Heights */
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.65;
+
+  /* Letter Spacing */
+  --tracking-tight: -0.01em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.02em;
+  --tracking-wider: 0.05em;
+
+  /* ============================================
+   * BORDER RADIUS
+   * ============================================ */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-2xl: 24px;
+  --radius-full: 999px;
+
+  /* ============================================
+   * SHADOWS
+   * ============================================ */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.32);
+  --shadow-lg: 0 22px 48px rgba(0, 0, 0, 0.42);
+  --shadow-accent: 0 0 22px rgba(109, 99, 255, 0.22);
+  --shadow-glow: 0 0 30px rgba(109, 99, 255, 0.35);
+
+  /* ============================================
+   * TRANSITIONS
+   * ============================================ */
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.2s ease;
+  --transition-slow: 0.3s ease;
+
+  /* ============================================
+   * Z-INDEX LAYERS
+   * ============================================ */
+  --z-base: 0;
+  --z-elevated: 10;
+  --z-sticky: 100;
+  --z-overlay: 200;
+  --z-modal: 300;
+  --z-tooltip: 400;
+
+  /* ============================================
+   * COMPONENT TOKENS
+   * ============================================ */
+
+  /* Buttons */
+  --button-height-sm: 32px;
+  --button-height-md: 38px;
+  --button-height-lg: 44px;
+  --button-padding-sm: var(--space-2) var(--space-3);
+  --button-padding-md: var(--space-2) var(--space-4);
+  --button-padding-lg: var(--space-3) var(--space-5);
+  --button-radius: var(--radius-md);
+  --button-gap: var(--space-2);
+
+  /* Cards */
+  --card-radius: var(--radius-xl);
+  --card-padding: var(--space-4);
+  --card-gap: var(--space-4);
+  --card-border: 1px solid var(--color-border-subtle);
+
+  /* Inputs */
+  --input-height: var(--button-height-md);
+  --input-radius: var(--radius-md);
+  --input-padding: var(--space-2) var(--space-3);
+  --input-border: 1px solid var(--color-border-default);
+  --input-bg: rgba(0, 0, 0, 0.42);
+
+  /* Panels */
+  --panel-radius: var(--radius-xl);
+  --panel-padding: var(--space-3);
+  --panel-bg: rgba(8, 8, 12, 0.86);
+  --panel-border: 1px solid var(--color-border-subtle);
+
+  /* Topbar */
+  --topbar-height: 52px;
+  --topbar-padding: var(--space-5);
+
+  /* Scrubber */
+  --scrubber-height: 48px;
+  --scrubber-track-height: 6px;
+  --scrubber-thumb-size: 12px;
+
+  /* Storyboard */
+  --storyboard-height: 35%;
+  --storyboard-min-height: 200px;
+  --story-card-min-width: 180px;
+  --story-card-max-width: 220px;
+
+  /* Media Column */
+  --media-column-width: 320px;
+  --media-column-min-width: 220px;
+  --media-column-max-width: 450px;
+
+  /* Copilot Column */
+  --copilot-column-width: 440px;
+  --copilot-column-min-width: 320px;
+  --copilot-column-max-width: 600px;
+
+  /* Drop Zone */
+  --drop-zone-height: 280px;
+  --drop-zone-icon-size: 64px;
+
+  /* Grid */
+  --grid-gap-sm: var(--space-2);
+  --grid-gap-md: var(--space-3);
+  --grid-gap-lg: var(--space-4);
+  --grid-gap-xl: var(--space-5);
+}
+
+/* ============================================
+ * MEDIA QUERIES BREAKPOINTS
+ * ============================================ */
+@media (max-width: 1600px) {
+  :root {
+    --media-column-width: 280px;
+    --copilot-column-width: 400px;
+  }
+}
+
+@media (max-width: 1200px) {
+  :root {
+    --storyboard-height: 30%;
+    --storyboard-min-height: 180px;
+  }
+}
+
+@media (max-width: 900px) {
+  :root {
+    --topbar-height: 48px;
+    --drop-zone-height: 220px;
+    --drop-zone-icon-size: 48px;
+  }
+}

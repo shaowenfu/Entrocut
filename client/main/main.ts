@@ -96,6 +96,7 @@ function createMainWindow(): BrowserWindow {
     minWidth: 1180,
     minHeight: 760,
     autoHideMenuBar: true,
+    icon: path.join(__dirname, "../public/icon.svg"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,

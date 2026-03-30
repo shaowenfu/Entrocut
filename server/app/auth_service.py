@@ -199,10 +199,7 @@ class UserService:
                 "avatar_url": profile.get("avatar_url"),
                 "status": "active",
                 "primary_provider": provider,
-                "plan": "free",
-                "quota_total": self._settings.quota_free_total_tokens,
-                "remaining_quota": self._settings.quota_free_total_tokens,
-                "quota_status": "healthy",
+                "credits_balance": 100_000,
                 "created_at": to_iso(current_time),
                 "updated_at": to_iso(current_time),
                 "last_login_at": to_iso(current_time),
@@ -235,10 +232,7 @@ class UserService:
             "display_name": user.get("display_name"),
             "avatar_url": user.get("avatar_url"),
             "status": user.get("status", "active"),
-            "plan": user.get("plan", "free"),
-            "quota_status": user.get("quota_status", "healthy"),
-            "quota_total": user.get("quota_total"),
-            "remaining_quota": user.get("remaining_quota"),
+            "credits_balance": int(user.get("credits_balance") or 0),
         }
 
     def usage_snapshot(self, user: dict[str, Any]) -> dict[str, Any]:
@@ -248,14 +242,11 @@ class UserService:
         today_summary = self._store.mongo.summarize_user_usage(user_id=user["_id"], period_start=day_start)
         month_summary = self._store.mongo.summarize_user_usage(user_id=user["_id"], period_start=month_start)
         return {
-            "remaining_quota": user.get("remaining_quota"),
-            "quota_total": user.get("quota_total"),
-            "quota_status": user.get("quota_status", "healthy"),
+            "credits_balance": int(user.get("credits_balance") or 0),
             "consumed_tokens_today": today_summary["total_tokens"],
             "consumed_tokens_this_month": month_summary["total_tokens"],
             "request_count_today": today_summary["request_count"],
             "request_count_this_month": month_summary["request_count"],
-            "membership_plan": user.get("plan", "free"),
             "subscription_status": "active" if user.get("status", "active") == "active" else "inactive",
             "rate_limit_requests_per_minute": self._settings.rate_limit_requests_per_minute,
             "rate_limit_tokens_per_minute": self._settings.rate_limit_tokens_per_minute,
@@ -268,28 +259,47 @@ class OAuthService:
         self._store = store
 
     def _provider_config(self, provider: str) -> ProviderConfig:
-        if provider != "google":
-            raise ServerApiError(
-                status_code=400,
-                code="INVALID_REQUEST",
-                message=f"Unsupported OAuth provider: {provider}.",
-                error_type="invalid_request_error",
+        if provider == "google":
+            if not self._settings.auth_google_client_id or not self._settings.auth_google_client_secret:
+                raise ServerApiError(
+                    status_code=503,
+                    code="OAUTH_PROVIDER_NOT_CONFIGURED",
+                    message="Google OAuth is not configured on the server.",
+                    error_type="server_error",
+                )
+            return ProviderConfig(
+                name="google",
+                authorize_url="https://accounts.google.com/o/oauth2/v2/auth",
+                token_url="https://oauth2.googleapis.com/token",
+                userinfo_url="https://openidconnect.googleapis.com/v1/userinfo",
+                client_id=self._settings.auth_google_client_id,
+                client_secret=self._settings.auth_google_client_secret,
+                scope=self._settings.auth_google_scope,
             )
-        if not self._settings.auth_google_client_id or not self._settings.auth_google_client_secret:
-            raise ServerApiError(
-                status_code=503,
-                code="OAUTH_PROVIDER_NOT_CONFIGURED",
-                message="Google OAuth is not configured on the server.",
-                error_type="server_error",
+
+        if provider == "github":
+            if not self._settings.auth_github_client_id or not self._settings.auth_github_client_secret:
+                raise ServerApiError(
+                    status_code=503,
+                    code="OAUTH_PROVIDER_NOT_CONFIGURED",
+                    message="GitHub OAuth is not configured on the server.",
+                    error_type="server_error",
+                )
+            return ProviderConfig(
+                name="github",
+                authorize_url="https://github.com/login/oauth/authorize",
+                token_url="https://github.com/login/oauth/access_token",
+                userinfo_url="https://api.github.com/user",
+                client_id=self._settings.auth_github_client_id,
+                client_secret=self._settings.auth_github_client_secret,
+                scope="read:user user:email",
             )
-        return ProviderConfig(
-            name="google",
-            authorize_url="https://accounts.google.com/o/oauth2/v2/auth",
-            token_url="https://oauth2.googleapis.com/token",
-            userinfo_url="https://openidconnect.googleapis.com/v1/userinfo",
-            client_id=self._settings.auth_google_client_id,
-            client_secret=self._settings.auth_google_client_secret,
-            scope=self._settings.auth_google_scope,
+
+        raise ServerApiError(
+            status_code=400,
+            code="INVALID_REQUEST",
+            message=f"Unsupported OAuth provider: {provider}.",
+            error_type="invalid_request_error",
         )
 
     def _callback_url(self, provider: str) -> str:
@@ -411,13 +421,26 @@ class OAuthService:
                 error_type="provider_error",
             )
         payload = userinfo_response.json()
+        if provider == "google":
+            provider_user_id = payload.get("sub")
+            avatar_url = payload.get("picture")
+            display_name = payload.get("name")
+        elif provider == "github":
+            provider_user_id = str(payload.get("id")) if payload.get("id") is not None else None
+            avatar_url = payload.get("avatar_url")
+            display_name = payload.get("name") or payload.get("login")
+        else:
+            provider_user_id = None
+            avatar_url = None
+            display_name = None
+
         return {
             "login_session": login_session,
             "profile": {
-                "provider_user_id": payload["sub"],
+                "provider_user_id": provider_user_id,
                 "email": payload.get("email"),
-                "display_name": payload.get("name"),
-                "avatar_url": payload.get("picture"),
+                "display_name": display_name,
+                "avatar_url": avatar_url,
             },
         }
 
