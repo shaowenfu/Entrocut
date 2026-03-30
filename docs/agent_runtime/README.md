@@ -29,6 +29,10 @@
 17. [13_context_assembler_design.md](./13_context_assembler_design.md)
 18. [14_planner_output_schema.md](./14_planner_output_schema.md)
 19. [15_execution_loop_design.md](./15_execution_loop_design.md)
+20. [16_context_engineering_first_principles.md](./16_context_engineering_first_principles.md)
+   - 从第一性原理定义当前项目的上下文工程原材料、运行时状态与最小决策上下文
+21. [17_context_engineering_module_design.md](./17_context_engineering_module_design.md)
+   - 说明 `core/context_engineering.py` 的模块边界、当前设计与未来演进顺序
 
 ## 阅读建议
 
@@ -36,3 +40,5 @@
 2. 想看运行时骨架，看 `03 -> 05`
 3. 想看上下文工程，看 `11 -> 13`
 4. 想看规划与执行闭环，看 `14 -> 15`
+5. 想看上下文工程怎么从运行时状态裁剪出来，看 `11 -> 13 -> 16`
+6. 想看代码层上下文模块怎么演进，看 `16 -> 17`

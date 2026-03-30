@@ -6,6 +6,23 @@
 2. `Client -> Core` 本地契约落点
 3. `planner-first（先规划）` 的 `chat` 主链骨架
 
+## 为什么是 Core
+
+从第一性原理看，视频剪辑的本质不是“操作时间线”，而是：
+
+`从候选片段集合里，围绕用户 intent（意图）不断做 select -> compose -> evaluate -> revise，直到形成可执行的 EditDraft。`
+
+这也意味着 `core` 的真实职责不是“暴露几个本地接口”，而是：
+
+1. 保存当前剪辑事实
+2. 给 `planner` 提供决策所需的最小上下文
+3. 驱动 `retrieve / inspect / patch / preview` 这些高层能力
+4. 把每一步结果回写成新的 `EditDraft`
+
+所以 `core` 本质上是：
+
+`本地剪辑状态中心 + agent 执行闭环承载层`
+
 ## 当前定位
 
 当前 `core` 不是“只剩 health 的壳层”，也不是最终完整 `agent engine（智能体引擎）`。
@@ -68,6 +85,10 @@
 这意味着：
 
 `core/chat` 的框架方向已经正确，但真实的 planner -> tool -> replanning 闭环仍是下一步重点。`
+
+换句话说，`/chat` 的真正目标不是“回复一句话”，而是：
+
+`让一次对话成为一次围绕 EditDraft 的收敛推进。`
 
 ## 当前事实源
 

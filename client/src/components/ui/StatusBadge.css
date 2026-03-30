@@ -1,0 +1,132 @@
+/**
+ * StatusBadge Component Styles
+ * 状态指示器样式
+ */
+
+/* ============================================
+ * BASE STYLES
+ * ============================================ */
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: "IBM Plex Sans", "MiSans", sans-serif;
+  letter-spacing: var(--tracking-wider);
+  text-transform: uppercase;
+}
+
+/* ============================================
+ * SIZE VARIANTS
+ * ============================================ */
+
+.status-sm {
+  font-size: 10px;
+  padding: var(--space-1) var(--space-2);
+}
+
+.status-md {
+  font-size: var(--text-xs);
+  padding: var(--space-2) var(--space-3);
+}
+
+/* ============================================
+ * VARIANT STYLES
+ * ============================================ */
+
+/* Pill - 圆角药丸形状 */
+.status-pill {
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-hover);
+}
+
+/* Default - 简洁样式 */
+.status-default {
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+/* ============================================
+ * STATE COLORS
+ * ============================================ */
+
+/* Online */
+.status-online {
+  color: #b7f3d5;
+}
+
+.status-pill.status-online {
+  border-color: var(--color-success-border);
+}
+
+.status-online .status-dot {
+  background: var(--color-success);
+  box-shadow: 0 0 8px rgba(68, 222, 138, 0.6);
+  animation: status-breathe 1.6s ease-in-out infinite;
+}
+
+/* Offline */
+.status-offline {
+  color: #f7b0b0;
+}
+
+.status-pill.status-offline {
+  border-color: var(--color-error-border);
+}
+
+.status-offline .status-dot {
+  background: var(--color-error);
+  box-shadow: 0 0 6px rgba(241, 91, 91, 0.48);
+}
+
+/* Checking */
+.status-checking {
+  color: #f0de9d;
+}
+
+.status-pill.status-checking {
+  border-color: var(--color-warning-border);
+}
+
+.status-checking .status-dot {
+  background: var(--color-warning);
+  box-shadow: 0 0 8px rgba(240, 205, 120, 0.64);
+  animation: status-breathe 1.4s ease-in-out infinite;
+}
+
+/* ============================================
+ * DOT STYLES
+ * ============================================ */
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ============================================
+ * LABEL STYLES
+ * ============================================ */
+
+.status-label {
+  white-space: nowrap;
+}
+
+/* ============================================
+ * ANIMATIONS
+ * ============================================ */
+
+@keyframes status-breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}

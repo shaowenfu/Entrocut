@@ -1,0 +1,213 @@
+/**
+ * Card Component Styles
+ * 统一的卡片样式系统
+ */
+
+/* ============================================
+ * BASE CARD
+ * ============================================ */
+
+.card {
+  background: var(--color-bg-panel);
+  border: var(--card-border);
+  border-radius: var(--card-radius);
+  overflow: hidden;
+  transition:
+    border-color var(--transition-normal),
+    background var(--transition-normal),
+    box-shadow var(--transition-normal),
+    transform var(--transition-normal);
+}
+
+/* ============================================
+ * PADDING VARIANTS
+ * ============================================ */
+
+.card-padding-none {
+  padding: 0;
+}
+
+.card-padding-sm {
+  padding: var(--space-2);
+}
+
+.card-padding-md {
+  padding: var(--space-3);
+}
+
+.card-padding-lg {
+  padding: var(--space-4);
+}
+
+/* ============================================
+ * VARIANT STYLES
+ * ============================================ */
+
+/* Default - 静态卡片 */
+.card-default {
+  background: var(--color-bg-panel);
+}
+
+/* Elevated - 提升卡片 */
+.card-elevated {
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-md);
+}
+
+/* Interactive - 可交互卡片 */
+.card-interactive {
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.card-interactive:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--color-border-default);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.card-interactive:active {
+  transform: translateY(0);
+}
+
+/* ============================================
+ * ACTIVE STATE
+ * ============================================ */
+
+.card-active {
+  border-color: rgba(104, 180, 255, 0.54);
+  background: rgba(53, 94, 201, 0.14);
+}
+
+/* ============================================
+ * CARD HEADER
+ * ============================================ */
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.card-header-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.card-title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--font-semibold);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-subtitle {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-header-action {
+  flex-shrink: 0;
+}
+
+/* ============================================
+ * CARD BODY
+ * ============================================ */
+
+.card-body {
+  padding: var(--space-3) var(--space-4);
+}
+
+.card-body-flex {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ============================================
+ * CARD FOOTER
+ * ============================================ */
+
+.card-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--color-border-subtle);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+/* ============================================
+ * SPECIALIZED CARD STYLES
+ * 用于特定场景的卡片变体
+ * ============================================ */
+
+/* Thumbnail Card - 带缩略图的卡片 */
+.card-thumb {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: rgba(0, 0, 0, 0.42);
+  overflow: hidden;
+}
+
+.card-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.card-thumb-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.72));
+  pointer-events: none;
+}
+
+.card-thumb-badge {
+  position: absolute;
+  right: var(--space-1);
+  bottom: var(--space-1);
+  padding: 1px var(--space-1);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.8);
+  color: var(--color-text-secondary);
+  font-size: 9px;
+  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+}
+
+/* Meta Card - 带元数据的卡片 */
+.card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.card-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.card-meta-label {
+  color: var(--color-text-faint);
+}
+
+.card-meta-value {
+  color: var(--color-text-secondary);
+}
