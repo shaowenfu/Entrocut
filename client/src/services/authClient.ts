@@ -104,9 +104,10 @@ export async function createGoogleLoginSession(): Promise<LoginSessionCreateResp
 }
 
 export async function createGithubLoginSession(): Promise<LoginSessionCreateResponse> {
-  const clientRedirectUri = isElectronEnvironment()
-    ? undefined
-    : endpoint("/api/v1/auth/dev/fallback");
+  const clientRedirectUri =
+    isElectronEnvironment() || typeof window === "undefined"
+      ? undefined
+      : `${window.location.origin}/`;
   return requestJson<LoginSessionCreateResponse>(endpoint("/api/v1/auth/login-sessions"), {
     method: "POST",
     authRequired: false,
