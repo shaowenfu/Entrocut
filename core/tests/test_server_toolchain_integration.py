@@ -26,6 +26,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
     def setUp(self) -> None:
         core_server.store._projects.clear()
         core_server.store._subscribers.clear()
+        core_server.store._background_tasks.clear()
         self.client = TestClient(core_server.app)
         self.client.__enter__()
 
@@ -129,6 +130,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self.assertIn("planner_decision_finalized", op_actions)
         self.assertIn("agent_tool_execution_loop", op_actions)
         self.assertIn("placeholder_edit_draft_applied", op_actions)
+        self.assertEqual(core_server.store.pending_background_task_count(project_id), 0)
 
     def test_chat_runs_tool_step_then_replans_to_final(self) -> None:
         project_id, _ = self._create_project()
@@ -173,6 +175,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self.assertGreaterEqual(len(workspace["edit_draft"]["shots"]), 1)
         assistant_turn = [turn for turn in workspace["chat_turns"] if turn.get("role") == "assistant"][-1]
         self.assertIn("检索完成", assistant_turn["reasoning_summary"])
+        self.assertEqual(core_server.store.pending_background_task_count(project_id), 0)
 
     def test_chat_fails_when_tool_execution_invalid(self) -> None:
         project_id, _ = self._create_project()
@@ -207,6 +210,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             workspace = self._poll_task_idle(project_id)
         self.assertEqual(len([turn for turn in workspace["chat_turns"] if turn.get("role") == "assistant"]), 0)
         self.assertEqual(workspace["project"]["workflow_state"], "media_ready")
+        self.assertEqual(core_server.store.pending_background_task_count(project_id), 0)
 
     def test_chat_tool_patch_writeback_updates_draft(self) -> None:
         project_id, _ = self._create_project()
@@ -246,6 +250,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             )
             workspace = self._poll_workspace(project_id)
         self.assertGreaterEqual(len(workspace["edit_draft"]["shots"]), 1)
+        self.assertEqual(core_server.store.pending_background_task_count(project_id), 0)
 
     def test_chat_fails_when_loop_exhausts_iterations(self) -> None:
         project_id, _ = self._create_project()
@@ -280,6 +285,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
                 workspace = self._poll_task_idle(project_id)
         self.assertEqual(len([turn for turn in workspace["chat_turns"] if turn.get("role") == "assistant"]), 0)
         self.assertEqual(workspace["project"]["workflow_state"], "media_ready")
+        self.assertEqual(core_server.store.pending_background_task_count(project_id), 0)
 
     def test_chat_planner_context_contains_structured_tools_and_scope(self) -> None:
         project_id, _ = self._create_project()

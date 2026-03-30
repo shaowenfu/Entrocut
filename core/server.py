@@ -1009,7 +1009,25 @@ class InMemoryProjectStore:
     def __init__(self) -> None:
         self._projects: dict[str, dict[str, Any]] = {}
         self._subscribers: dict[str, set[asyncio.Queue[dict[str, Any]]]] = {}
+        self._background_tasks: dict[str, set[asyncio.Task[Any]]] = {}
         self._lock = asyncio.Lock()
+
+    def _register_background_task(self, project_id: str, task: asyncio.Task[Any]) -> None:
+        tasks = self._background_tasks.setdefault(project_id, set())
+        tasks.add(task)
+
+        def _cleanup(done_task: asyncio.Task[Any]) -> None:
+            project_tasks = self._background_tasks.get(project_id)
+            if project_tasks is None:
+                return
+            project_tasks.discard(done_task)
+            if not project_tasks:
+                self._background_tasks.pop(project_id, None)
+
+        task.add_done_callback(_cleanup)
+
+    def pending_background_task_count(self, project_id: str) -> int:
+        return len(self._background_tasks.get(project_id, set()))
 
     def list_projects(self, limit: int) -> list[ProjectModel]:
         ordered = sorted(self._projects.values(), key=lambda item: item["project"]["updated_at"], reverse=True)
@@ -1065,6 +1083,7 @@ class InMemoryProjectStore:
         async with self._lock:
             self._projects[project_id] = record
             self._subscribers.setdefault(project_id, set())
+            self._background_tasks.setdefault(project_id, set())
         return record
 
     def workspace_snapshot(self, project_id: str) -> WorkspaceSnapshotModel:
@@ -1143,7 +1162,8 @@ class InMemoryProjectStore:
             "task.updated",
             {"task": task.model_dump(), "workflow_state": "media_processing"},
         )
-        asyncio.create_task(self._run_assets_import(project_id, media, task))
+        background_task = asyncio.create_task(self._run_assets_import(project_id, media, task))
+        self._register_background_task(project_id, background_task)
         return task
 
     async def _run_assets_import(self, project_id: str, media: MediaReference, task: TaskModel) -> None:
@@ -1248,8 +1268,37 @@ class InMemoryProjectStore:
             "task.updated",
             {"task": task.model_dump(), "workflow_state": "chat_thinking"},
         )
-        asyncio.create_task(self._run_chat(project_id, normalized_prompt, target, task))
+        background_task = asyncio.create_task(self._run_chat(project_id, normalized_prompt, target, task))
+        self._register_background_task(project_id, background_task)
         return task
+
+    async def _finalize_chat_success(
+        self,
+        *,
+        project_id: str,
+        running_task: TaskModel,
+        assistant_turn: AssistantDecisionTurnModel,
+        next_draft: EditDraftModel,
+    ) -> None:
+        record = self.get_project_or_raise(project_id)
+        record["edit_draft"] = next_draft.model_dump()
+        record["chat_turns"].append(assistant_turn.model_dump())
+        record["project"]["workflow_state"] = "ready"
+        record["project"]["updated_at"] = next_draft.updated_at
+        record["active_task"] = None
+
+        await self.emit(project_id, "chat.turn.created", {"turn": assistant_turn.model_dump()})
+        await self.emit(project_id, "edit_draft.updated", {"edit_draft": next_draft.model_dump()})
+        await self.emit(project_id, "project.updated", {"project": record["project"]})
+
+        succeeded = running_task.model_copy(
+            update={"status": "succeeded", "message": "Chat completed", "updated_at": _now_iso()}
+        )
+        await self.emit(
+            project_id,
+            "task.updated",
+            {"task": succeeded.model_dump(), "workflow_state": "ready"},
+        )
 
     async def _run_chat(self, project_id: str, prompt: str, target: ChatTarget | None, task: TaskModel) -> None:
         record = self.get_project_or_raise(project_id)
@@ -1342,21 +1391,11 @@ class InMemoryProjectStore:
                 reasoning_summary=reply_text,
                 ops=ops,
             )
-            record["edit_draft"] = next_draft.model_dump()
-            record["chat_turns"].append(assistant_turn.model_dump())
-            record["project"]["workflow_state"] = "ready"
-            record["project"]["updated_at"] = next_draft.updated_at
-            record["active_task"] = None
-
-            await self.emit(project_id, "chat.turn.created", {"turn": assistant_turn.model_dump()})
-            await self.emit(project_id, "edit_draft.updated", {"edit_draft": next_draft.model_dump()})
-            await self.emit(project_id, "project.updated", {"project": record["project"]})
-
-            succeeded = running.model_copy(update={"status": "succeeded", "message": "Chat completed", "updated_at": _now_iso()})
-            await self.emit(
-                project_id,
-                "task.updated",
-                {"task": succeeded.model_dump(), "workflow_state": "ready"},
+            await self._finalize_chat_success(
+                project_id=project_id,
+                running_task=running,
+                assistant_turn=assistant_turn,
+                next_draft=next_draft,
             )
         except CoreApiError as exc:
             await _mark_chat_failed(
@@ -1413,7 +1452,8 @@ class InMemoryProjectStore:
             "task.updated",
             {"task": task.model_dump(), "workflow_state": "rendering"},
         )
-        asyncio.create_task(self._run_export(project_id, payload, task))
+        background_task = asyncio.create_task(self._run_export(project_id, payload, task))
+        self._register_background_task(project_id, background_task)
         return task
 
     async def _run_export(self, project_id: str, payload: ExportRequest, task: TaskModel) -> None:
