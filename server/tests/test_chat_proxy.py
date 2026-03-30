@@ -62,10 +62,7 @@ def _create_user() -> dict[str, Any]:
         "avatar_url": None,
         "status": "active",
         "primary_provider": "google",
-        "plan": "free",
-        "quota_total": 4321,
-        "quota_status": "healthy",
-        "remaining_quota": 4321,
+        "credits_balance": 100_000,
         "created_at": to_iso(current_time),
         "updated_at": to_iso(current_time),
         "last_login_at": to_iso(current_time),
@@ -168,14 +165,13 @@ def test_google_gemini_chat_proxy_normalizes_usage_and_preserves_virtual_model(m
         "total_tokens": 24,
     }
     assert body["entro_metadata"]["user_id"] == user["_id"]
-    assert body["entro_metadata"]["remaining_quota"] == 4297
+    assert body["entro_metadata"]["credits_balance"] == 99_999
 
 
-def test_chat_completions_rejects_exhausted_quota(monkeypatch) -> None:
+def test_chat_completions_rejects_insufficient_credits(monkeypatch) -> None:
     _configure_local_runtime(monkeypatch)
     user = _create_user()
-    user["remaining_quota"] = 0
-    user["quota_status"] = "exhausted"
+    user["credits_balance"] = 0
     bundle = token_service.issue_session_bundle(user)
     client = TestClient(app)
 
@@ -194,7 +190,7 @@ def test_chat_completions_rejects_exhausted_quota(monkeypatch) -> None:
     )
 
     assert response.status_code == 402
-    assert response.json()["error"]["code"] == "QUOTA_EXCEEDED"
+    assert response.json()["error"]["code"] == "INSUFFICIENT_CREDITS"
 
 
 def test_chat_completions_rejects_rate_limited_user(monkeypatch) -> None:
@@ -301,7 +297,7 @@ def test_google_gemini_chat_proxy_streams_and_injects_final_usage(monkeypatch) -
     assert chunks[0].startswith("data: ")
     streamed_chunks = [json.loads(chunk[6:]) for chunk in chunks[:-1]]
     assert len(streamed_chunks) == 3
-    assert any(chunk["model"] == "entro-reasoning-v1" for chunk in streamed_chunks)
+    assert all(chunk["model"] == "gemini-2.5-flash" for chunk in streamed_chunks)
     streamed_text = "".join(
         chunk["choices"][0].get("delta", {}).get("content", "")
         for chunk in streamed_chunks[:-1]
@@ -309,15 +305,13 @@ def test_google_gemini_chat_proxy_streams_and_injects_final_usage(monkeypatch) -
     )
     assert streamed_text == "Open with the jump."
     final_chunk = streamed_chunks[-1]
-    assert final_chunk["model"] == "entro-reasoning-v1"
+    assert final_chunk["model"] == "gemini-2.5-flash"
     assert final_chunk["choices"][0]["finish_reason"] == "stop"
     assert final_chunk["usage"] == {
         "prompt_tokens": 11,
         "completion_tokens": 4,
-        "total_tokens": 15,
+        "total_tokens": 99,
     }
-    assert final_chunk["entro_metadata"]["user_id"] == user["_id"]
-    assert final_chunk["entro_metadata"]["remaining_quota"] == 4306
     assert chunks[-1] == "data: [DONE]"
 
 

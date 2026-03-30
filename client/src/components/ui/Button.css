@@ -1,0 +1,152 @@
+/**
+ * Button Component Styles
+ * 使用设计令牌系统
+ */
+
+.btn {
+  /* Base styles */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--button-gap);
+  border: 0;
+  border-radius: var(--button-radius);
+  font-family: inherit;
+  font-weight: var(--font-semibold);
+  cursor: pointer;
+  transition:
+    background var(--transition-normal),
+    border-color var(--transition-normal),
+    color var(--transition-normal),
+    opacity var(--transition-normal),
+    transform var(--transition-fast);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ============================================
+ * SIZE VARIANTS
+ * ============================================ */
+
+.btn-sm {
+  height: var(--button-height-sm);
+  padding: var(--button-padding-sm);
+  font-size: var(--text-xs);
+}
+
+.btn-md {
+  height: var(--button-height-md);
+  padding: var(--button-padding-md);
+  font-size: var(--text-sm);
+}
+
+.btn-lg {
+  height: var(--button-height-lg);
+  padding: var(--button-padding-lg);
+  font-size: var(--text-base);
+}
+
+/* ============================================
+ * COLOR VARIANTS
+ * ============================================ */
+
+/* Primary - 渐变背景，用于主要操作 */
+.btn-primary {
+  color: #ffffff;
+  background: var(--gradient-primary);
+  box-shadow: var(--shadow-md), 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+  box-shadow: var(--shadow-lg), 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.btn-primary:active:not(:disabled) {
+  filter: brightness(0.95);
+}
+
+/* Secondary - 边框样式，用于次要操作 */
+.btn-secondary {
+  color: var(--color-text-secondary);
+  background: var(--color-bg-hover);
+  border: 1px solid var(--color-border-default);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background: var(--color-bg-active);
+  border-color: var(--color-border-strong);
+}
+
+/* Ghost - 透明背景，用于低优先级操作 */
+.btn-ghost {
+  color: var(--color-text-muted);
+  background: transparent;
+  padding: var(--space-2);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+
+/* ============================================
+ * FULL WIDTH
+ * ============================================ */
+
+.btn-full-width {
+  width: 100%;
+}
+
+/* ============================================
+ * LOADING STATE
+ * ============================================ */
+
+.btn-loading {
+  position: relative;
+}
+
+.btn-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: btn-spin 0.8s linear infinite;
+}
+
+@keyframes btn-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ============================================
+ * ICON STYLES
+ * ============================================ */
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.btn-icon svg {
+  width: 1em;
+  height: 1em;
+}
+
+.btn-text {
+  line-height: 1;
+}

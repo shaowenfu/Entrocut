@@ -38,6 +38,7 @@ class InMemoryCollectionStore:
         self.login_sessions: dict[str, dict[str, Any]] = {}
         self.oauth_states: dict[str, str] = {}
         self.quota_ledgers: list[dict[str, Any]] = []
+        self.credit_ledgers: list[dict[str, Any]] = []
         self.lock = Lock()
 
 
@@ -91,6 +92,8 @@ class MongoRepository:
             refresh_tokens = self._collection("refresh_tokens")
             sessions = self._collection("auth_sessions")
             quota_ledgers = self._collection("quota_ledgers")
+            credit_ledgers = self._collection("credit_ledgers")
+            rate_cards = self._collection("rate_cards")
             if users is None or identities is None or refresh_tokens is None or sessions is None:
                 self._indexes_ready = True
                 return
@@ -102,6 +105,11 @@ class MongoRepository:
             if quota_ledgers is not None:
                 quota_ledgers.create_index([("user_id", ASCENDING), ("created_at", ASCENDING)])
                 quota_ledgers.create_index([("request_id", ASCENDING)], unique=True, sparse=True)
+            if credit_ledgers is not None:
+                credit_ledgers.create_index([("user_id", ASCENDING), ("created_at", ASCENDING)])
+                credit_ledgers.create_index([("request_id", ASCENDING)], unique=True, sparse=True)
+            if rate_cards is not None:
+                rate_cards.create_index([("model", ASCENDING)], unique=True)
             self._indexes_ready = True
         except PyMongoError:
             self._indexes_ready = False
@@ -262,6 +270,38 @@ class MongoRepository:
                 }
             )
         return updated_user or users.find_one({"_id": user_id}) or user
+
+
+    def deduct_credits(self, user_id: str, amount: int) -> int:
+        if amount < 0:
+            raise ValueError("amount must be non-negative")
+        users = self._collection("users")
+        if users is None:
+            with self._fallback.lock:
+                user = self._fallback.users.get(user_id)
+                if user is None:
+                    raise KeyError(user_id)
+                next_balance = int(user.get("credits_balance") or 0) - amount
+                user["credits_balance"] = next_balance
+                user["updated_at"] = to_iso(now_utc())
+                return next_balance
+
+        updated_user = users.find_one_and_update(
+            {"_id": user_id},
+            {"$inc": {"credits_balance": -amount}, "$set": {"updated_at": to_iso(now_utc())}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if updated_user is None:
+            raise KeyError(user_id)
+        return int(updated_user.get("credits_balance") or 0)
+
+    def record_ledger(self, ledger_doc: dict[str, Any]) -> None:
+        credit_ledgers = self._collection("credit_ledgers")
+        if credit_ledgers is None:
+            with self._fallback.lock:
+                self._fallback.credit_ledgers.append(dict(ledger_doc))
+            return
+        credit_ledgers.insert_one(dict(ledger_doc))
 
     def summarize_user_usage(
         self,

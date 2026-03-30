@@ -2,6 +2,7 @@ import { create } from "zustand";
 import {
   claimLoginSession,
   clearCoreAuthSessionState,
+  createGithubLoginSession,
   createGoogleLoginSession,
   fetchCurrentUser,
   getRefreshToken,
@@ -17,15 +18,57 @@ import { getAuthToken, initializeAuthTokenStorage, persistAuthToken } from "../s
 
 type AuthStatus = "idle" | "authenticating" | "authenticated" | "anonymous" | "error";
 
+type RoutingMode = "Platform" | "BYOK";
+
+interface ModelPreferences {
+  selectedModel: string;
+  routingMode: RoutingMode;
+  byokKey: string;
+  byokBaseUrl: string;
+}
+
 interface AuthStoreState {
   status: AuthStatus;
   user: AuthUser | null;
   lastError: string | null;
+  modelPrefs: ModelPreferences;
   bootstrap: () => Promise<void>;
   startGoogleLogin: () => Promise<void>;
+  startGithubLogin: () => Promise<void>;
   completeLoginFromDeepLink: (loginSessionId: string) => Promise<void>;
   logout: () => Promise<void>;
   clearError: () => void;
+  setModelPrefs: (patch: Partial<ModelPreferences>) => void;
+}
+
+const MODEL_PREFS_KEY = "ENTROCUT_MODEL_PREFS";
+
+function loadModelPrefs(): ModelPreferences {
+  if (typeof window === "undefined") {
+    return { selectedModel: "gpt-4o-mini", routingMode: "Platform", byokKey: "", byokBaseUrl: "https://api.openai.com" };
+  }
+  try {
+    const raw = window.localStorage.getItem(MODEL_PREFS_KEY);
+    if (!raw) {
+      return { selectedModel: "gpt-4o-mini", routingMode: "Platform", byokKey: "", byokBaseUrl: "https://api.openai.com" };
+    }
+    const parsed = JSON.parse(raw) as Partial<ModelPreferences>;
+    return {
+      selectedModel: parsed.selectedModel?.trim() || "gpt-4o-mini",
+      routingMode: parsed.routingMode === "BYOK" ? "BYOK" : "Platform",
+      byokKey: parsed.byokKey?.trim() || "",
+      byokBaseUrl: parsed.byokBaseUrl?.trim() || "https://api.openai.com",
+    };
+  } catch {
+    return { selectedModel: "gpt-4o-mini", routingMode: "Platform", byokKey: "", byokBaseUrl: "https://api.openai.com" };
+  }
+}
+
+function persistModelPrefs(prefs: ModelPreferences): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(MODEL_PREFS_KEY, JSON.stringify(prefs));
 }
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -39,6 +82,7 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
   status: "idle",
   user: null,
   lastError: null,
+  modelPrefs: loadModelPrefs(),
 
   bootstrap: async () => {
     await initializeAuthTokenStorage();
@@ -93,6 +137,19 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
     }
   },
 
+  startGithubLogin: async () => {
+    set({ status: "authenticating", lastError: null });
+    try {
+      const session = await createGithubLoginSession();
+      await openExternalUrl(session.authorize_url);
+    } catch (error) {
+      set({
+        status: "error",
+        lastError: errorMessage(error, "github_login_start_failed"),
+      });
+    }
+  },
+
   completeLoginFromDeepLink: async (loginSessionId: string) => {
     set({ status: "authenticating", lastError: null });
     try {
@@ -127,5 +184,13 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
 
   clearError: () => {
     set({ lastError: null });
+  },
+
+  setModelPrefs: (patch) => {
+    set((state) => {
+      const next = { ...state.modelPrefs, ...patch };
+      persistModelPrefs(next);
+      return { modelPrefs: next };
+    });
   },
 }));

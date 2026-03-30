@@ -6,18 +6,20 @@ import {
   Cloud,
   FileVideo,
   FolderUp,
+  Github,
   HardDrive,
-  LogOut,
   MoreVertical,
   Plus,
   Search,
   Sparkles,
 } from "lucide-react";
+import AccountMenu from "../components/account/AccountMenu";
+import { BrandIcon } from "../components/icons/BrandIcon";
 import { useLaunchpadStore } from "../store/useLaunchpadStore";
-import { useAuthStore } from "../store/useAuthStore";
 import {
   isElectronEnvironment,
 } from "../services/electronBridge";
+import "../styles/launchpad.css";
 
 const PROMPT_HINTS = [
   "A fast-paced recap of my Tokyo trip",
@@ -42,12 +44,6 @@ function LaunchpadPage() {
   const createEmptyProject = useLaunchpadStore((state) => state.createEmptyProject);
   const openWorkspace = useLaunchpadStore((state) => state.openWorkspace);
   const clearLastError = useLaunchpadStore((state) => state.clearLastError);
-  const authStatus = useAuthStore((state) => state.status);
-  const authUser = useAuthStore((state) => state.user);
-  const authError = useAuthStore((state) => state.lastError);
-  const startGoogleLogin = useAuthStore((state) => state.startGoogleLogin);
-  const logout = useAuthStore((state) => state.logout);
-  const clearAuthError = useAuthStore((state) => state.clearError);
 
   const isLoadingProjects = projectsLoadState === "loading";
   const isCreating = createState === "creating";
@@ -142,9 +138,7 @@ function LaunchpadPage() {
     <div className="launchpad-root">
       <header className="launchpad-topbar">
         <div className="launchpad-brand">
-          <span className="launchpad-brand-icon">
-            <Sparkles size={15} />
-          </span>
+          <BrandIcon size={22} />
           <span>EntroCut</span>
         </div>
 
@@ -159,41 +153,14 @@ function LaunchpadPage() {
           <kbd>Ctrl+K</kbd>
         </label>
 
-        <button
-          type="button"
-          className="launchpad-user"
-          onClick={() => {
-            if (authStatus === "authenticated") {
-              void logout();
-              return;
-            }
-            void startGoogleLogin();
-          }}
-          title={
-            authStatus === "authenticated"
-              ? `Sign out ${authUser?.email ?? authUser?.display_name ?? "current user"}`
-              : "Continue with Google"
-          }
-          disabled={authStatus === "authenticating"}
-        >
-          {authStatus === "authenticated" ? (
-            <>
-              {authUser?.display_name ?? authUser?.email ?? "ME"}
-              <LogOut size={14} />
-            </>
-          ) : authStatus === "authenticating" ? (
-            "Connecting..."
-          ) : (
-            "Sign In"
-          )}
-        </button>
+        <AccountMenu variant="launchpad" />
       </header>
 
       <main className="launchpad-main">
         <section className="intent-zone">
           <div className="intent-heading">
-            <h1>早上好。</h1>
-            <p>描述你的想法，或直接拖入素材文件夹/视频文件来唤醒 AI Copilot。</p>
+            <h1>创建你的视频项目</h1>
+            <p>描述你的想法，或直接拖入素材文件夹/视频文件来唤醒 AI Copilot 进行智能剪辑。</p>
           </div>
 
           <div className={`intent-drop-shell ${isDropHovering ? "is-hovering" : ""}`}>
@@ -213,7 +180,7 @@ function LaunchpadPage() {
               onDrop={handleDrop}
             >
               <div className="intent-drop-icon">
-                <FolderUp size={22} />
+                <FolderUp size={64} />
               </div>
               <h3>{dropZoneText.title}</h3>
               <p>{dropZoneText.subtitle}</p>
@@ -242,7 +209,7 @@ function LaunchpadPage() {
                 aria-label="create workspace"
                 disabled={isCreating || isImporting}
               >
-                <Plus size={16} />
+                <Plus size={18} />
               </button>
             </div>
           </div>
@@ -261,11 +228,6 @@ function LaunchpadPage() {
             <p className="launchpad-error-banner" role="alert" onClick={clearLastError}>
               {lastError.code}: {lastError.message}
               {lastError.requestId ? ` (request_id=${lastError.requestId})` : ""}
-            </p>
-          ) : null}
-          {authError ? (
-            <p className="launchpad-error-banner" role="alert" onClick={clearAuthError}>
-              auth_error: {authError}
             </p>
           ) : null}
         </section>

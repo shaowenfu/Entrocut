@@ -22,7 +22,7 @@ class RuntimeCapabilitiesResponse(BaseModel):
 
 
 class LoginSessionCreateRequest(BaseModel):
-    provider: Literal["google"] = "google"
+    provider: Literal["google", "github"] = "google"
     client_redirect_uri: str | None = None
 
 
@@ -38,10 +38,7 @@ class UserProfile(BaseModel):
     display_name: str | None = None
     avatar_url: str | None = None
     status: str
-    plan: str = "free"
-    quota_status: str = "healthy"
-    quota_total: int | None = None
-    remaining_quota: int | None = None
+    credits_balance: int = 0
 
 
 class TokenBundle(BaseModel):
@@ -69,7 +66,7 @@ class LoginSessionStatusResponse(BaseModel):
 
 class StagingBootstrapLoginSessionRequest(BaseModel):
     login_session_id: str = Field(min_length=8)
-    provider: Literal["google"] = "google"
+    provider: Literal["google", "github"] = "google"
     email: str | None = None
     display_name: str | None = None
 
@@ -101,14 +98,11 @@ class UserProfileResponse(BaseModel):
 
 
 class UserUsageSnapshot(BaseModel):
-    remaining_quota: int | None = None
-    quota_total: int | None = None
-    quota_status: str = "healthy"
+    credits_balance: int = 0
     consumed_tokens_today: int = 0
     consumed_tokens_this_month: int = 0
     request_count_today: int = 0
     request_count_this_month: int = 0
-    membership_plan: str = "free"
     subscription_status: str = "active"
     rate_limit_requests_per_minute: int
     rate_limit_tokens_per_minute: int
