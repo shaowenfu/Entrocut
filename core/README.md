@@ -104,6 +104,28 @@
 2. 导出产物写入项目工作目录
 3. `client` 不直接感知数据库
 
+## 当前状态模型
+
+当前公开契约已经不再把项目状态压缩成单一 `workflow_state`。
+
+现在前后端共享的权威事实分成四层：
+
+1. `summary_state`
+   - 项目级摘要状态，只回答“当前整体看起来处于什么阶段”
+   - 当前取值：`blank / planning / media_processing / editing / exporting / attention_required`
+2. `media_summary`
+   - 素材聚合事实，例如 `asset_count / ready_asset_count / indexed_clip_count / retrieval_ready`
+3. `runtime_state`
+   - `agent runtime（智能体运行时）` 事实，例如 `goal / focus / conversation / retrieval / execution`
+4. `capabilities`
+   - UI 与 `agent` 的 `gating（准入开关）`，例如 `chat_mode / can_retrieve / can_export`
+
+另外：
+
+1. `active_tasks` 是权威任务集合
+2. `active_task` 只是给旧调用方保留的便利字段
+3. `SQLite` 里仍保留 `workflow_state` 列，但仅用于内部兼容持久化，不再属于公开 API/WS 契约
+
 ## 当前真实能力
 
 ### HTTP
@@ -129,10 +151,14 @@
 1. `task.updated`
 2. `workspace.snapshot`
 3. `edit_draft.updated`
-4. `project.updated`
-5. `chat.turn.created`
-6. `error.occurred`
-7. `agent.step.updated`
+4. `asset.updated`
+5. `project.updated`
+6. `project.summary.updated`
+7. `capabilities.updated`
+8. `chat.turn.created`
+9. `export.completed`
+10. `error.occurred`
+11. `agent.step.updated`
 
 ## chat 主链的当前状态
 
@@ -198,12 +224,12 @@
 5. [schemas.py](./schemas.py)
 6. [state.py](./state.py)
 7. [context.py](./context.py)
-8. [manager.py](./manager.py)
+8. [workspace_manager.py](./workspace_manager.py)
 9. [tests/test_server_toolchain_integration.py](./tests/test_server_toolchain_integration.py)
 
 如果想先理解契约和设计背景，建议同时看：
 
-1. [docs/data&contract/01_core_api_ws_contract.md](../docs/data&contract/01_core_api_ws_contract.md)
+1. [docs/store/01_core_api_ws_contract.md](../docs/store/01_core_api_ws_contract.md)
 2. [docs/editing/01_edit_draft_schema.md](../docs/editing/01_edit_draft_schema.md)
 3. [docs/agent_runtime/02_editing_agent_runtime_architecture.md](../docs/agent_runtime/02_editing_agent_runtime_architecture.md)
 4. [docs/develop_diary/2026-03-30_core_module_reconstruct_journal.md](../docs/develop_diary/2026-03-30_core_module_reconstruct_journal.md)
@@ -225,7 +251,7 @@ uvicorn server:app --host 127.0.0.1 --port 8000 --reload
 ```bash
 cd core
 source venv/bin/activate
-python -m unittest discover tests -v
+PYTHONPATH=.. pytest tests -q
 ```
 
 ## 当前最应该做的事

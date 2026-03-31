@@ -26,6 +26,7 @@
 12. [2026-03-30 本地数据层落地日志](./2026-03-30_local_data_layer_implementation_journal.md)
 13. [2026-03-30 ui_ux 分支合并 server 最新账户能力](./2026-03-30_ui_ux_server_merge_followup_journal.md)
 14. [2026-03-30 Core 模块重构日志](./2026-03-30_core_module_reconstruct_journal.md)
+15. [2026-03-31 项目状态管理收口日志](./2026-03-31_project_state_management_wrapup_journal.md)
 
 ## 当前这组日记主要覆盖的主题
 
@@ -34,6 +35,7 @@
 3. `server auth / credits / BYOK` 相关迭代
 4. 本地数据层、项目工作目录与 `SQLite`
 5. `core` 模块边界和代码结构收口
+6. 项目状态管理从 `workflow_state` 向事实分层模型收口
 
 ## 命名约定
 

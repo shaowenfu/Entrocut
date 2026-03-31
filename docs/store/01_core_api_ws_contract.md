@@ -1,106 +1,115 @@
 # Core API/WS Contract
 
-本文档定义当前重构阶段 `Client -> Core` 的最小本地契约：
+本文档定义当前 `Client -> Core` 的真实本地契约，目标是让前端、`core`、测试和文档对同一套状态模型达成一致。
 
-1. `HTTP API contract（HTTP 接口契约）`
-2. `WebSocket event contract（WebSocket 事件契约）`
-3. `schema（数据结构）`
-4. 错误语义
-5. 与当前前端状态机的映射关系
+当前版本的核心结论只有一条：
 
-目标不是一次性设计完整系统，而是支撑当前已经稳定下来的：
+`公开契约已经不再暴露单一 workflow_state，而是改成 summary_state + media_summary + runtime_state + capabilities + active_tasks。`
 
-1. `Launchpad（启动台）` 状态机
-2. `Workspace（工作台）` 状态机
-3. 最小 `Chat-to-Cut` 本地闭环
-
-本文档中涉及剪辑结构的部分，以 [EditDraft Schema](../editing/01_edit_draft_schema.md) 为准。
-
-因此：
-
-1. `clip` 是分析/检索单元
-2. `shot` 是最小可编辑语义单元
-3. `scene` 是可选工作分组层
-4. 当前原型 UI 中的 `storyboard` 应视为 `EditDraft.scenes` 的展示视图，而不是最终执行层
+`SQLite` 中仍保留 `workflow_state` 列，但它只用于内部兼容持久化，不属于公开 `API/WS contract（接口/事件契约）`。
 
 ## 1. 设计目标
 
-当前 `Core contract` 只覆盖以下能力：
+当前 `core` 只对前端提供以下能力：
 
-1. 健康检查与运行能力探测
-2. 创建项目
-3. 查询项目
-4. 导入素材
-5. 发送 chat
-6. 导出项目
-7. 订阅项目级事件流
+1. 创建和查询项目
+2. 导入素材
+3. 发送 `chat` 指令并驱动最小 `planner-driven loop（规划驱动循环）`
+4. 导出 `EditDraft`
+5. 通过 `WebSocket event stream（事件流）` 推送状态变化
 
 当前明确 `Non-goals（非目标）`：
 
-1. 不定义真实 `LLM provider（大模型供应商）` 细节
-2. 不定义真实 `Embedding（向量化）` 细节
-3. 不定义真实 `DashVector search（向量检索）` 细节
-4. 不暴露内部 `FFmpeg` 实现细节
-5. 不在 `Core API` 里泄露内部任务编排细节
+1. 不暴露底层 `LLM / Embedding / FFmpeg` 实现细节
+2. 不用一个总状态字段替代真实业务事实
+3. 不把 `WebSocket` 当命令入口
 
-## 2. 设计原则
+## 2. 顶层原则
 
-1. 先定义契约，再替换实现
-2. 前端只依赖稳定 `schema`
-3. 后端通过统一 `task + event` 语义表达异步过程
-4. 错误必须结构化，不能只返回裸字符串
-5. `HTTP` 负责命令入口，`WebSocket` 负责过程推进与结果同步
+### 2.1 状态分层
 
-## 3. Core 能力边界
+前端应把状态理解为五层事实：
 
-`Core` 对前端暴露的本质能力只有两类：
+1. `project`
+   - 项目元数据
+2. `summary_state`
+   - 项目级摘要状态
+3. `media_summary`
+   - 素材处理聚合状态
+4. `runtime_state`
+   - `agent runtime（智能体运行时）` 事实
+5. `capabilities`
+   - 动作准入开关
 
-1. 接受命令
-   例如创建项目、导入素材、发送 chat、发起导出
-2. 推送状态变化
-   例如任务开始、任务进度、剪辑草案更新、导出完成、失败
+### 2.2 任务分层
 
-所以：
+异步过程不再依赖单一项目状态驱动，而是通过 `Task.slot` 表达资源占用范围：
 
-1. 不是所有结果都要同步阻塞返回
-2. 绝大多数“过程中的变化”应走 `WebSocket`
+1. `media`
+2. `agent`
+3. `export`
 
-## 4. 顶层资源模型
+`active_tasks` 是权威任务集合。  
+`active_task` 仅为兼容旧调用方保留的便利字段。
 
-当前最小资源模型定义如下。
+### 2.3 空项目合法
 
-### 4.1 Project
+`POST /api/v1/projects` 允许创建空项目。  
+空项目可以进入 `planning_only` 的 `chat mode（聊天模式）`，但不能执行依赖素材索引的工具。
+
+## 3. 顶层资源模型
+
+### 3.1 Project
 
 ```ts
+type ProjectSummaryState =
+  | "blank"
+  | "planning"
+  | "media_processing"
+  | "editing"
+  | "exporting"
+  | "attention_required";
+
+type ProjectLifecycleState = "active" | "archived";
+
 interface Project {
   id: string;
   title: string;
-  workflow_state:
-    | "prompt_input_required"
-    | "awaiting_media"
-    | "media_ready"
-    | "media_processing"
-    | "chat_thinking"
-    | "ready"
-    | "rendering"
-    | "failed";
+  summary_state?: ProjectSummaryState | null;
+  lifecycle_state?: ProjectLifecycleState;
   created_at: string;
   updated_at: string;
 }
 ```
 
-### 4.2 Asset
+说明：
+
+1. `Project` 只保留项目元信息
+2. `summary_state` 是公开摘要状态
+3. 公开模型中不再包含 `workflow_state`
+
+### 3.2 Asset
 
 ```ts
+type AssetType = "video" | "audio";
+type AssetProcessingStage = "pending" | "segmenting" | "vectorizing" | "ready" | "failed";
+
 interface Asset {
   id: string;
   name: string;
-  type: "video" | "audio";
   duration_ms: number;
+  type: AssetType;
+  source_path?: string | null;
+  processing_stage?: AssetProcessingStage;
+  processing_progress?: number | null;
+  clip_count?: number;
+  indexed_clip_count?: number;
+  last_error?: Record<string, unknown> | null;
+  updated_at?: string | null;
 }
 ```
 
-### 4.3 Clip
+### 3.3 Clip / Shot / Scene / EditDraft
 
 ```ts
 interface Clip {
@@ -113,11 +122,7 @@ interface Clip {
   confidence?: number | null;
   thumbnail_ref?: string | null;
 }
-```
 
-### 4.4 Shot
-
-```ts
 interface Shot {
   id: string;
   clip_id: string;
@@ -130,11 +135,7 @@ interface Shot {
   note?: string | null;
   locked_fields?: Array<"source_range" | "order" | "clip_id" | "enabled">;
 }
-```
 
-### 4.5 Scene
-
-```ts
 interface Scene {
   id: string;
   shot_ids: string[];
@@ -145,11 +146,7 @@ interface Scene {
   note?: string | null;
   locked_fields?: Array<"shot_ids" | "order" | "enabled" | "intent">;
 }
-```
 
-### 4.6 EditDraft
-
-```ts
 interface EditDraft {
   id: string;
   project_id: string;
@@ -166,7 +163,7 @@ interface EditDraft {
 }
 ```
 
-### 4.7 ChatTurn
+### 3.4 ChatTurn
 
 ```ts
 type ChatTurn =
@@ -174,52 +171,147 @@ type ChatTurn =
       id: string;
       role: "user";
       content: string;
-      created_at: string;
     }
   | {
       id: string;
       role: "assistant";
       type: "decision";
-      decision_type: "EDIT_DRAFT_PATCH" | "APPLY_PATCH_ONLY" | "ASK_USER_CLARIFICATION";
+      decision_type: "EDIT_DRAFT_PATCH";
       reasoning_summary: string;
-      ops: AgentOperation[];
-      created_at: string;
+      ops: Array<{
+        id: string;
+        action: string;
+        target: string;
+        summary: string;
+      }>;
     };
 ```
 
-### 4.8 Task
+### 3.5 Task
 
 ```ts
+type TaskSlot = "media" | "agent" | "export";
+type TaskType = "ingest" | "index" | "chat" | "render";
+type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+
 interface Task {
   id: string;
-  type: "ingest" | "index" | "chat" | "render";
-  status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
-  progress?: number | null;
-  message?: string | null;
+  slot?: TaskSlot;
+  type: TaskType;
+  status: TaskStatus;
+  owner_type?: "project" | "asset" | "draft";
+  owner_id?: string | null;
+  progress: number | null;
+  message: string | null;
+  result?: Record<string, unknown>;
+  error?: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }
 ```
 
-### 4.9 WorkspaceSnapshot
+### 3.6 ProjectMediaSummary
+
+```ts
+interface ProjectMediaSummary {
+  asset_count: number;
+  pending_asset_count: number;
+  processing_asset_count: number;
+  ready_asset_count: number;
+  failed_asset_count: number;
+  total_clip_count: number;
+  indexed_clip_count: number;
+  retrieval_ready: boolean;
+}
+```
+
+### 3.7 ProjectRuntimeState
+
+```ts
+type ChatMode = "planning_only" | "editing";
+type ConversationFeedbackState = "unknown" | "clarify" | "approve" | "reject" | "revise";
+type ExecutionAgentRunState = "idle" | "planning" | "executing_tool" | "waiting_user" | "failed";
+
+interface ProjectRuntimeState {
+  goal_state: {
+    brief?: string | null;
+    constraints: string[];
+    preferences: string[];
+    open_questions: string[];
+    updated_at?: string | null;
+  };
+  focus_state: {
+    scope_type: "project" | "scene" | "shot";
+    scene_id?: string | null;
+    shot_id?: string | null;
+    updated_at?: string | null;
+  };
+  conversation_state: {
+    pending_questions: string[];
+    confirmed_facts: string[];
+    latest_user_feedback: ConversationFeedbackState;
+    updated_at?: string | null;
+  };
+  retrieval_state: {
+    last_query?: string | null;
+    candidate_clip_ids: string[];
+    retrieval_ready: boolean;
+    blocking_reason?: string | null;
+    updated_at?: string | null;
+  };
+  execution_state: {
+    agent_run_state: ExecutionAgentRunState;
+    current_task_id?: string | null;
+    last_tool_name?: string | null;
+    last_error?: Record<string, unknown> | null;
+    updated_at?: string | null;
+  };
+  updated_at?: string | null;
+}
+```
+
+### 3.8 ProjectCapabilities
+
+```ts
+interface ProjectCapabilities {
+  can_send_chat: boolean;
+  chat_mode: ChatMode;
+  can_retrieve: boolean;
+  can_inspect: boolean;
+  can_patch_draft: boolean;
+  can_preview: boolean;
+  can_export: boolean;
+  blocking_reasons: string[];
+}
+```
+
+### 3.9 WorkspaceSnapshot
 
 ```ts
 interface WorkspaceSnapshot {
   project: Project;
   edit_draft: EditDraft;
   chat_turns: ChatTurn[];
+  summary_state?: ProjectSummaryState | null;
+  media_summary: ProjectMediaSummary;
+  runtime_state: ProjectRuntimeState;
+  capabilities: ProjectCapabilities;
+  active_tasks: Task[];
   active_task: Task | null;
 }
 ```
 
 说明：
 
-1. `WorkspaceSnapshot` 里的真实剪辑结构以 `edit_draft` 为准
-2. 若原型阶段 UI 仍展示 `storyboard`，应把它视为 `edit_draft.scenes` 的派生视图
+1. `edit_draft` 是剪辑事实源
+2. `summary_state` 是项目级摘要状态
+3. `runtime_state` 是 `agent` 决策事实源
+4. `capabilities` 是前端和 `agent` 的准入依据
+5. `active_tasks` 是异步过程事实源
 
-## 5. 通用 Envelope
+## 4. 通用 Envelope
 
-## 5.1 ErrorEnvelope
+### 4.1 HTTP ErrorEnvelope
 
 ```ts
 interface ErrorEnvelope {
@@ -234,17 +326,24 @@ interface ErrorEnvelope {
 
 规则：
 
-1. `code` 供前端分支判断
+1. `code` 供前端分支处理
 2. `message` 供用户展示
-3. `details` 供调试和补充上下文
-4. 不暴露内部实现栈
+3. `details` 只携带必要上下文
+4. 不暴露内部栈信息
 
-## 5.2 Success Envelope
+### 4.2 WebSocket EventEnvelope
 
-当前 `HTTP` 可直接返回业务对象，不强制外层统一 `data` 包裹。  
-原则是保持最小、直接、稳定。
+```ts
+interface EventEnvelope<T = unknown> {
+  sequence: number;
+  event: string;
+  project_id: string;
+  emitted_at: string;
+  data: T;
+}
+```
 
-## 6. HTTP API Contract
+## 5. HTTP API Contract
 
 接口前缀统一为：
 
@@ -252,63 +351,49 @@ interface ErrorEnvelope {
 /api/v1
 ```
 
-## 6.1 Runtime
-
-### `GET /health`
+### 5.1 `GET /health`
 
 用途：
 
-1. 启动台检测 `Core` 是否可用
-2. 工作台健康轮询
+1. 检查服务是否存活
+2. 返回运行阶段与模式
 
-响应示例：
+示例：
 
 ```json
 {
   "status": "ok",
   "service": "core",
   "version": "0.7.0",
-  "phase": "clean_room_rewrite"
-}
-```
-
-### `GET /api/v1/runtime/capabilities`
-
-用途：
-
-1. 前端探测当前 `Core` 支持哪些表面能力
-2. 原型阶段可用于 `feature gating（能力开关）`
-
-响应示例：
-
-```json
-{
-  "service": "core",
-  "version": "0.7.0",
   "phase": "clean_room_rewrite",
   "mode": "prototype_backed",
-  "retained_surfaces": [
-    "health",
-    "projects",
-    "project_events",
-    "chat",
-    "asset_import",
-    "export"
+  "timestamp": "2026-03-31T10:00:00Z",
+  "notes": [
+    "Legacy business logic has been removed.",
+    "This service now bootstraps local SQLite persistence and per-project workspaces."
   ]
 }
 ```
 
-## 6.2 Launchpad
-
-### `GET /api/v1/projects`
+### 5.2 `GET /api/v1/runtime/capabilities`
 
 用途：
 
-1. 启动台加载最近项目
+1. 前端探测 `core` 暴露的表面能力
+2. 原型期做 `feature gating（能力开关）`
+
+### 5.3 `GET /api/v1/projects`
+
+用途：
+
+1. 启动台加载项目列表
 
 查询参数：
 
-1. `limit` 可选，默认 `20`
+1. `limit`
+   - 可选
+   - 默认 `20`
+   - 取值范围 `1..100`
 
 响应示例：
 
@@ -318,7 +403,8 @@ interface ErrorEnvelope {
     {
       "id": "proj_001",
       "title": "Japan Ski Trip",
-      "workflow_state": "ready",
+      "summary_state": "editing",
+      "lifecycle_state": "active",
       "created_at": "2026-03-07T09:00:00Z",
       "updated_at": "2026-03-07T09:05:00Z"
     }
@@ -326,13 +412,14 @@ interface ErrorEnvelope {
 }
 ```
 
-### `POST /api/v1/projects`
+### 5.4 `POST /api/v1/projects`
 
 用途：
 
 1. 创建空项目
-2. 用 `prompt`
-3. 用 `prompt + 素材引用`
+2. 创建带 `prompt` 的项目
+3. 创建带 `media reference（素材引用）` 的项目
+4. 创建带 `prompt + media` 的项目
 
 请求：
 
@@ -354,8 +441,9 @@ interface CreateProjectRequest {
 
 规则：
 
-1. `prompt` 和 `media` 至少要有一个
-2. 真实实现里，浏览器环境文件对象不会直接通过 HTTP 发二进制；这里约定的是“媒体引用”
+1. 空请求合法
+2. `media` 传的是引用，不是二进制上传
+3. 若没有任何输入，项目会以 `blank + planning_only` 起步
 
 响应：
 
@@ -363,18 +451,20 @@ interface CreateProjectRequest {
 {
   "project": {
     "id": "proj_001",
-    "title": "Japan Ski Trip",
-    "workflow_state": "media_ready",
-    "created_at": "2026-03-07T09:00:00Z",
-    "updated_at": "2026-03-07T09:00:00Z"
+    "title": "Untitled Project",
+    "summary_state": "blank",
+    "lifecycle_state": "active",
+    "created_at": "2026-03-31T10:00:00Z",
+    "updated_at": "2026-03-31T10:00:00Z"
   },
   "workspace": {
     "project": {
       "id": "proj_001",
-      "title": "Japan Ski Trip",
-      "workflow_state": "media_ready",
-      "created_at": "2026-03-07T09:00:00Z",
-      "updated_at": "2026-03-07T09:00:00Z"
+      "title": "Untitled Project",
+      "summary_state": "blank",
+      "lifecycle_state": "active",
+      "created_at": "2026-03-31T10:00:00Z",
+      "updated_at": "2026-03-31T10:00:00Z"
     },
     "edit_draft": {
       "id": "draft_001",
@@ -387,28 +477,79 @@ interface CreateProjectRequest {
       "scenes": null,
       "selected_scene_id": null,
       "selected_shot_id": null,
-      "created_at": "2026-03-07T09:00:00Z",
-      "updated_at": "2026-03-07T09:00:00Z"
+      "created_at": "2026-03-31T10:00:00Z",
+      "updated_at": "2026-03-31T10:00:00Z"
     },
     "chat_turns": [],
+    "summary_state": "blank",
+    "media_summary": {
+      "asset_count": 0,
+      "pending_asset_count": 0,
+      "processing_asset_count": 0,
+      "ready_asset_count": 0,
+      "failed_asset_count": 0,
+      "total_clip_count": 0,
+      "indexed_clip_count": 0,
+      "retrieval_ready": false
+    },
+    "runtime_state": {
+      "goal_state": {
+        "brief": null,
+        "constraints": [],
+        "preferences": [],
+        "open_questions": [],
+        "updated_at": "2026-03-31T10:00:00Z"
+      },
+      "focus_state": {
+        "scope_type": "project",
+        "scene_id": null,
+        "shot_id": null,
+        "updated_at": "2026-03-31T10:00:00Z"
+      },
+      "conversation_state": {
+        "pending_questions": [],
+        "confirmed_facts": [],
+        "latest_user_feedback": "unknown",
+        "updated_at": "2026-03-31T10:00:00Z"
+      },
+      "retrieval_state": {
+        "last_query": null,
+        "candidate_clip_ids": [],
+        "retrieval_ready": false,
+        "blocking_reason": "media_index_not_ready",
+        "updated_at": "2026-03-31T10:00:00Z"
+      },
+      "execution_state": {
+        "agent_run_state": "idle",
+        "current_task_id": null,
+        "last_tool_name": null,
+        "last_error": null,
+        "updated_at": "2026-03-31T10:00:00Z"
+      },
+      "updated_at": "2026-03-31T10:00:00Z"
+    },
+    "capabilities": {
+      "can_send_chat": true,
+      "chat_mode": "planning_only",
+      "can_retrieve": false,
+      "can_inspect": false,
+      "can_patch_draft": false,
+      "can_preview": false,
+      "can_export": false,
+      "blocking_reasons": ["media_index_not_ready"]
+    },
+    "active_tasks": [],
     "active_task": null
   }
 }
 ```
 
-为什么创建项目时直接返回 `workspace snapshot`：
-
-1. 启动台创建后会立即进入工作台
-2. 避免前端再多打一跳查询
-
-## 6.3 Workspace
-
-### `GET /api/v1/projects/{project_id}`
+### 5.5 `GET /api/v1/projects/{project_id}`
 
 用途：
 
 1. 工作台初始化读取
-2. 刷新当前项目完整状态
+2. 获取完整 `WorkspaceSnapshot`
 
 响应：
 
@@ -418,7 +559,8 @@ interface CreateProjectRequest {
     "project": {
       "id": "proj_001",
       "title": "Japan Ski Trip",
-      "workflow_state": "ready",
+      "summary_state": "editing",
+      "lifecycle_state": "active",
       "created_at": "2026-03-07T09:00:00Z",
       "updated_at": "2026-03-07T09:10:00Z"
     },
@@ -437,12 +579,70 @@ interface CreateProjectRequest {
       "updated_at": "2026-03-07T09:10:00Z"
     },
     "chat_turns": [],
+    "summary_state": "editing",
+    "media_summary": {
+      "asset_count": 2,
+      "pending_asset_count": 0,
+      "processing_asset_count": 0,
+      "ready_asset_count": 2,
+      "failed_asset_count": 0,
+      "total_clip_count": 4,
+      "indexed_clip_count": 4,
+      "retrieval_ready": true
+    },
+    "runtime_state": {
+      "goal_state": {
+        "brief": "做一个旅行开头",
+        "constraints": [],
+        "preferences": [],
+        "open_questions": [],
+        "updated_at": "2026-03-07T09:10:00Z"
+      },
+      "focus_state": {
+        "scope_type": "project",
+        "scene_id": null,
+        "shot_id": null,
+        "updated_at": "2026-03-07T09:10:00Z"
+      },
+      "conversation_state": {
+        "pending_questions": [],
+        "confirmed_facts": [],
+        "latest_user_feedback": "unknown",
+        "updated_at": "2026-03-07T09:10:00Z"
+      },
+      "retrieval_state": {
+        "last_query": null,
+        "candidate_clip_ids": [],
+        "retrieval_ready": true,
+        "blocking_reason": null,
+        "updated_at": "2026-03-07T09:10:00Z"
+      },
+      "execution_state": {
+        "agent_run_state": "idle",
+        "current_task_id": null,
+        "last_tool_name": null,
+        "last_error": null,
+        "updated_at": "2026-03-07T09:10:00Z"
+      },
+      "updated_at": "2026-03-07T09:10:00Z"
+    },
+    "capabilities": {
+      "can_send_chat": true,
+      "chat_mode": "editing",
+      "can_retrieve": true,
+      "can_inspect": true,
+      "can_patch_draft": true,
+      "can_preview": false,
+      "can_export": true,
+      "blocking_reasons": []
+    },
+    "active_tasks": [],
     "active_task": null
   }
 }
 ```
 
-### `POST /api/v1/projects/{project_id}/assets:import`
+### 5.6 `POST /api/v1/projects/{project_id}/assets:import`
 
 用途：
 
@@ -470,32 +670,33 @@ interface ImportAssetsRequest {
 {
   "task": {
     "id": "task_ingest_001",
+    "slot": "media",
     "type": "ingest",
     "status": "queued",
+    "owner_type": "project",
+    "owner_id": "proj_001",
     "progress": 0,
     "message": "Media ingest queued",
-    "created_at": "2026-03-07T09:10:00Z",
-    "updated_at": "2026-03-07T09:10:00Z"
+    "result": {},
+    "error": null,
+    "created_at": "2026-03-31T10:01:00Z",
+    "updated_at": "2026-03-31T10:01:00Z"
   }
 }
 ```
 
-说明：
-
-1. 这是异步任务入口，不同步返回最终结果
-2. 真正的推进和结果通过 `WS event stream`
-
-### `POST /api/v1/projects/{project_id}/chat`
+### 5.7 `POST /api/v1/projects/{project_id}/chat`
 
 用途：
 
-1. 发送用户 chat 指令
+1. 发送用户 `chat` 指令
 
 请求：
 
 ```ts
 interface ChatRequest {
   prompt: string;
+  model?: string;
   target?: {
     scene_id?: string | null;
     shot_id?: string | null;
@@ -503,32 +704,47 @@ interface ChatRequest {
 }
 ```
 
+请求头：
+
+1. `X-Routing-Mode`
+   - `Platform` 或 `BYOK`
+2. `X-BYOK-Key`
+   - 当 `X-Routing-Mode = BYOK` 时使用
+3. `X-BYOK-BaseURL`
+   - 可选，自定义 `BYOK` 上游地址
+
+规则：
+
+1. `Platform` 模式要求已同步本地 `auth session`
+2. 空项目允许发起 `chat`
+3. `planning_only` 只禁止依赖素材索引的工具，不禁止需求澄清
+
 响应：
 
 ```json
 {
   "task": {
     "id": "task_chat_001",
+    "slot": "agent",
     "type": "chat",
     "status": "queued",
+    "owner_type": "project",
+    "owner_id": "proj_001",
     "progress": null,
     "message": "Chat queued",
-    "created_at": "2026-03-07T09:12:00Z",
-    "updated_at": "2026-03-07T09:12:00Z"
+    "result": {},
+    "error": null,
+    "created_at": "2026-03-31T10:02:00Z",
+    "updated_at": "2026-03-31T10:02:00Z"
   }
 }
 ```
 
-说明：
-
-1. 前端发出命令后立刻切 `chatState -> responding`
-2. 最终结果由 `WS` 推送：`chat turn + edit draft patch + task status`
-
-### `POST /api/v1/projects/{project_id}/export`
+### 5.8 `POST /api/v1/projects/{project_id}/export`
 
 用途：
 
-1. 触发导出
+1. 导出当前 `EditDraft`
 
 请求：
 
@@ -539,23 +755,12 @@ interface ExportRequest {
 }
 ```
 
-响应：
+规则：
 
-```json
-{
-  "task": {
-    "id": "task_render_001",
-    "type": "render",
-    "status": "queued",
-    "progress": 0,
-    "message": "Export queued",
-    "created_at": "2026-03-07T09:15:00Z",
-    "updated_at": "2026-03-07T09:15:00Z"
-  }
-}
-```
+1. 至少需要一个 `shot`
+2. `agent` 或 `export` 任务运行时会拒绝新的导出
 
-## 7. WebSocket Event Contract
+## 6. WebSocket Event Contract
 
 连接地址：
 
@@ -563,122 +768,44 @@ interface ExportRequest {
 GET /api/v1/projects/{project_id}/events
 ```
 
-`WebSocket` 只负责项目级实时事件，不承担命令入口。
+`WebSocket` 只负责项目级状态推进，不承担命令入口。
 
-## 7.1 EventEnvelope
+### 6.1 `workspace.snapshot`
+
+用途：
+
+1. 连接建立后推送完整快照
+2. 重连后做状态重同步
+
+载荷：
 
 ```ts
-interface EventEnvelope<T = unknown> {
-  sequence: number;
-  event: string;
-  project_id: string;
-  emitted_at: string;
-  data: T;
+interface WorkspaceSnapshotEventData {
+  workspace: WorkspaceSnapshot;
 }
 ```
 
-字段说明：
-
-1. `sequence`
-   单项目内严格递增，用于重连恢复
-2. `event`
-   事件类型
-3. `project_id`
-   项目标识
-4. `emitted_at`
-   事件发出时间
-5. `data`
-   事件载荷
-
-## 7.2 事件类型
-
-当前最小事件集合如下。
-
-### `workspace.snapshot`
+### 6.2 `task.updated`
 
 用途：
 
-1. 连接建立后一次性推送当前完整状态
-2. 重连后重同步
+1. 推送任务状态变化
+2. 更新 `active_tasks`
 
-```json
-{
-  "sequence": 1,
-  "event": "workspace.snapshot",
-  "project_id": "proj_001",
-  "emitted_at": "2026-03-07T09:00:00Z",
-  "data": {
-    "workspace": {
-      "project": {
-        "id": "proj_001",
-        "title": "Japan Ski Trip",
-        "workflow_state": "ready",
-        "created_at": "2026-03-07T09:00:00Z",
-        "updated_at": "2026-03-07T09:05:00Z"
-      },
-      "edit_draft": {
-        "id": "draft_001",
-        "project_id": "proj_001",
-        "version": 3,
-        "status": "ready",
-        "assets": [],
-        "clips": [],
-        "shots": [],
-        "scenes": null,
-        "selected_scene_id": null,
-        "selected_shot_id": null,
-        "created_at": "2026-03-07T09:00:00Z",
-        "updated_at": "2026-03-07T09:05:00Z"
-      },
-      "chat_turns": [],
-      "active_task": null
-    }
-  }
-}
-```
-
-### `task.updated`
-
-用途：
-
-1. 通知任务状态变化
-2. 驱动前端 `activeTask`
+载荷：
 
 ```ts
 interface TaskUpdatedEventData {
   task: Task;
-  workflow_state: Project["workflow_state"];
 }
 ```
 
-示例：
+说明：
 
-```json
-{
-  "sequence": 11,
-  "event": "task.updated",
-  "project_id": "proj_001",
-  "emitted_at": "2026-03-07T09:12:03Z",
-  "data": {
-    "task": {
-      "id": "task_chat_001",
-      "type": "chat",
-      "status": "running",
-      "progress": null,
-      "message": "Analyzing footage and generating edit...",
-      "created_at": "2026-03-07T09:12:00Z",
-      "updated_at": "2026-03-07T09:12:03Z"
-    },
-    "workflow_state": "chat_thinking"
-  }
-}
-```
+1. 不再附带 `workflow_state`
+2. 前端应基于 `task.slot + task.status` 推导局部加载态
 
-### `chat.turn.created`
-
-用途：
-
-1. 推送新的用户消息或 `assistant` 决策消息
+### 6.3 `chat.turn.created`
 
 ```ts
 interface ChatTurnCreatedEventData {
@@ -686,11 +813,7 @@ interface ChatTurnCreatedEventData {
 }
 ```
 
-### `edit_draft.updated`
-
-用途：
-
-1. 推送最新剪辑草案结果
+### 6.4 `edit_draft.updated`
 
 ```ts
 interface EditDraftUpdatedEventData {
@@ -698,26 +821,23 @@ interface EditDraftUpdatedEventData {
 }
 ```
 
-### `assets.updated`
+### 6.5 `asset.updated`
 
 用途：
 
-1. 推送素材和候选 `clip` 变化
-2. 作为增量更新优化事件使用
-3. 权威事实源仍然是最新 `edit_draft`
+1. 推送发生变化的素材子集
 
 ```ts
-interface AssetsUpdatedEventData {
+interface AssetUpdatedEventData {
   assets: Asset[];
-  clips: Clip[];
 }
 ```
 
-### `project.updated`
+### 6.6 `project.updated`
 
 用途：
 
-1. 推送项目元信息和 `workflow_state`
+1. 推送项目元数据变化
 
 ```ts
 interface ProjectUpdatedEventData {
@@ -725,11 +845,31 @@ interface ProjectUpdatedEventData {
 }
 ```
 
-### `export.completed`
+### 6.7 `project.summary.updated`
 
 用途：
 
-1. 推送导出完成结果
+1. 推送项目摘要状态变化
+
+```ts
+interface ProjectSummaryUpdatedEventData {
+  summary_state: ProjectSummaryState;
+}
+```
+
+### 6.8 `capabilities.updated`
+
+用途：
+
+1. 推送动作准入变化
+
+```ts
+interface CapabilitiesUpdatedEventData {
+  capabilities: ProjectCapabilities;
+}
+```
+
+### 6.9 `export.completed`
 
 ```ts
 interface ExportCompletedEventData {
@@ -746,7 +886,7 @@ interface ExportCompletedEventData {
 }
 ```
 
-### `error.occurred`
+### 6.10 `error.occurred`
 
 用途：
 
@@ -756,139 +896,131 @@ interface ExportCompletedEventData {
 interface ErrorOccurredEventData {
   code: string;
   message: string;
-  task_id?: string | null;
-  recoverable: boolean;
-  workflow_state: Project["workflow_state"];
+  details?: Record<string, unknown>;
 }
 ```
 
-## 8. HTTP 与 WS 的职责分工
+说明：
 
-最佳实践是：
+1. 当前 `WS` 错误事件不再携带 `workflow_state`
+2. 当前 `WS` 错误事件也不保证携带 `request_id`
+3. 错误后的项目摘要状态通常会转入 `attention_required`
 
-1. `HTTP` 只做“命令入口”和“快照读取”
-2. `WS` 只做“状态推进”和“结果广播”
+### 6.11 `agent.step.updated`
 
-具体分工：
+用途：
+
+1. 推送 `agent loop` 的阶段性进度
+2. 便于调试和未来的细粒度 UI
+
+```ts
+interface AgentStepUpdatedEventData {
+  phase: string;
+  summary: string;
+  details: Record<string, unknown>;
+}
+```
+
+## 7. HTTP 与 WS 的职责分工
 
 ### HTTP 负责
 
 1. 创建项目
-2. 获取项目快照
+2. 读取快照
 3. 发起导入
-4. 发起 chat
+4. 发起 `chat`
 5. 发起导出
 
 ### WS 负责
 
-1. 推任务状态
-2. 推剪辑草案更新
-3. 推素材更新
-4. 推 chat 消息
-5. 推导出完成
-6. 推流程错误
+1. 推送任务状态
+2. 推送草案变化
+3. 推送素材变化
+4. 推送项目摘要状态
+5. 推送 `capabilities`
+6. 推送导出结果
+7. 推送流程级错误
 
-## 9. 错误语义
+## 8. 错误语义
 
-推荐最小错误码集合如下。
+当前高频错误码包括：
 
 ### 通用
 
-1. `INVALID_REQUEST`
-2. `RESOURCE_NOT_FOUND`
-3. `WORKSPACE_NOT_READY`
-4. `CONFLICTING_TASK_ALREADY_RUNNING`
-5. `INTERNAL_ERROR`
+1. `PROJECT_NOT_FOUND`
+2. `TASK_ALREADY_RUNNING`
+3. `CORE_UNHANDLED`
 
 ### 素材导入
 
-1. `MEDIA_INPUT_REQUIRED`
-2. `MEDIA_PATH_NOT_FOUND`
-3. `UNSUPPORTED_MEDIA_TYPE`
-4. `INGEST_FAILED`
+1. `MEDIA_REFERENCE_REQUIRED`
+2. `MEDIA_IMPORT_FAILED`
 
 ### Chat
 
-1. `PROMPT_REQUIRED`
-2. `CHAT_ALREADY_RUNNING`
-3. `CHAT_FAILED`
+1. `CHAT_PROMPT_REQUIRED`
+2. `AUTH_SESSION_REQUIRED`
+3. `BYOK_KEY_REQUIRED`
+4. `PLANNER_DECISION_INVALID`
+5. `PLANNER_REQUESTED_BLOCKED_TOOL`
+6. `TOOL_NOT_AVAILABLE_IN_CHAT_MODE`
+7. `CHAT_ORCHESTRATION_FAILED`
 
 ### 导出
 
-1. `EXPORT_ALREADY_RUNNING`
-2. `EXPORT_FAILED`
+1. `EDIT_DRAFT_REQUIRED`
 
-错误返回示例：
+规则：
 
-```json
-{
-  "error": {
-    "code": "CONFLICTING_TASK_ALREADY_RUNNING",
-    "message": "Another task is already running for this project.",
-    "details": {
-      "project_id": "proj_001",
-      "active_task_type": "chat"
-    },
-    "request_id": "req_ab12cd34ef56"
-  }
-}
-```
+1. `HTTP` 错误统一走 `ErrorEnvelope`
+2. `WS` 错误统一走 `error.occurred`
+3. 错误码应可分支处理，消息只做展示
 
-## 10. 前端状态机映射
+## 9. 前端状态机映射
 
-## 10.1 Launchpad
+### 9.1 Launchpad
 
-`Launchpad` 对 `Core` 的依赖映射：
+`Launchpad` 当前主要依赖：
 
-1. `projectsLoadState`
-   <- `GET /api/v1/projects`
-2. `systemStatus`
-   <- `GET /health`
-3. `createState / importState`
-   <- `POST /api/v1/projects`
-4. `navigationState`
-   <- 创建成功后前端本地跳转
+1. `GET /api/v1/projects`
+2. `GET /health`
+3. `POST /api/v1/projects`
 
-## 10.2 Workspace
+核心映射：
 
-`Workspace` 对 `Core` 的依赖映射：
+1. 列表卡片主状态
+   <- `project.summary_state`
 
-1. `loadState`
-   <- `GET /api/v1/projects/{project_id}` 或 `workspace.snapshot`
-2. `workflowState`
-   <- `project.updated` / `task.updated`
-3. `chatState`
-   <- `task.updated` 中 `type=chat`
-4. `activeTask`
-   <- `task.updated`
-5. `editDraft`
-   <- `GET /api/v1/projects/{project_id}` / `workspace.snapshot` / `edit_draft.updated`
-6. `assets / clips / shots / scenes`
-   <- `editDraft`
+### 9.2 Workspace
+
+`Workspace` 当前主要依赖：
+
+1. `summaryState`
+   <- `workspace.summary_state` 或 `project.summary.updated`
+2. `coreMediaSummary`
+   <- `workspace.media_summary`
+3. `coreRuntimeState`
+   <- `workspace.runtime_state`
+4. `coreCapabilities`
+   <- `workspace.capabilities` 或 `capabilities.updated`
+5. `activeTasks`
+   <- `workspace.active_tasks` 或 `task.updated`
+6. `editDraft`
+   <- `workspace.edit_draft` 或 `edit_draft.updated`
 7. `chatTurns`
-   <- `chat.turn.created`
+   <- `workspace.chat_turns` 或 `chat.turn.created`
 8. `exportResult`
    <- `export.completed`
 9. `lastError`
    <- `HTTP ErrorEnvelope` 或 `error.occurred`
 
-## 11. 最小实现建议
+前端不应再依赖：
 
-为了避免再次偏航，建议按这个顺序落地：
+1. `project.workflow_state`
+2. `task.updated` 中的 `workflow_state`
 
-1. 先在 `core/server.py` 定义 `Pydantic schema`
-2. 先实现：
-   - `GET /api/v1/projects`
-   - `POST /api/v1/projects`
-   - `GET /api/v1/projects/{project_id}`
-   - `POST /api/v1/projects/{project_id}/chat`
-   - `WS /api/v1/projects/{project_id}/events`
-3. 先用 `in-memory（内存态）` 或极简本地存储
-4. 先用假任务和假事件，把前端闭环跑通
-5. 再替换为真实 `ingest / chat / export` 实现
-
-## 12. 一句话总结
+## 10. 一句话总结
 
 `Core API/WS contract` 的本质是：
 
-把当前已经稳定下来的前端状态机，翻译成 `Core` 必须提供的最小命令入口、快照读取和事件流语义，并把剪辑过程稳定到 `EditDraft` 这一层，而不是退回传统 `timeline` 或停留在展示型 `storyboard`。
+`用 Project + EditDraft + media_summary + runtime_state + capabilities + active_tasks 这组正交事实，取代过去单一 workflow_state 的粗粒度驱动。`
