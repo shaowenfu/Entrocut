@@ -18,6 +18,28 @@
 
 ---
 
+## 实现状态（2026-03-31）
+
+本文档是本轮状态管理重构的设计基线，当前已经基本落地。  
+当前真实公开契约请以 [01_core_api_ws_contract.md](./01_core_api_ws_contract.md) 为准。
+
+已落地：
+
+1. `Project` 公开模型已移除权威 `workflow_state`
+2. `WorkspaceSnapshot` 已暴露 `summary_state / media_summary / runtime_state / capabilities / active_tasks`
+3. 空项目创建已经合法
+4. 无素材时已支持 `planning_only chat`
+5. 前端已切到新状态模型，不再依赖 `project.workflow_state`
+6. `task.updated` 与 `error.occurred` 已去掉 `workflow_state` 公开载荷
+
+仍保留的兼容层：
+
+1. `SQLite` 物理表中仍保留 `workflow_state` 列
+2. `core/state.py` 仍通过 `_legacy_workflow_state` 做内部兼容持久化
+3. `WorkspaceSnapshot.active_task` 仍保留为便利兼容字段
+
+---
+
 ## 1. 问题定义
 
 当前实现把下列信息压进了单一 `Project.workflow_state`：

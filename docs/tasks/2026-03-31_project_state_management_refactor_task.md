@@ -8,6 +8,39 @@
 
 ---
 
+## 执行状态（2026-03-31）
+
+本文档对应的改造任务已经完成主要实现，当前应视为“历史任务文档 + 收尾参考”，而不是最新公开契约。
+
+当前落地情况：
+
+1. `Phase 1：Schema 与 SQLite 骨架升级`
+   - 已完成
+2. `Phase 2：Store 与 Repository 重构`
+   - 已完成
+3. `Phase 3：素材处理状态重构`
+   - 已完成
+4. `Phase 4：Chat / Agent / Context 重构`
+   - 已完成
+5. `兼容层收口`
+   - 已完成公开 API、前端与事件层的切换
+
+当前真实结果：
+
+1. 公开 `Project` 模型已不再暴露 `workflow_state`
+2. 公开 `WorkspaceSnapshot` 已以 `summary_state / media_summary / runtime_state / capabilities / active_tasks` 为核心
+3. 前端已停止依赖 `project.workflow_state` 与 `task.updated.workflow_state`
+4. `workflow_state` 只剩 `SQLite` 内部兼容持久化用途
+
+剩余可选收尾：
+
+1. 在确认不再需要旧库兼容后，删除 `SQLite workflow_state` 物理列
+2. 进一步弱化 `active_task` 兼容字段的存在感
+
+最新公开契约请以 [docs/store/01_core_api_ws_contract.md](/home/sherwen/MyProjects/Entrocut/docs/store/01_core_api_ws_contract.md) 为准。
+
+---
+
 ## 1. Context
 
 当前 `core` 的状态管理存在 4 个结构性问题：

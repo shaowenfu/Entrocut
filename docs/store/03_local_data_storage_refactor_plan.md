@@ -241,10 +241,14 @@ app_data_root/
 
 1. `id`
 2. `title`
-3. `workflow_state`
-4. `workspace_dir`
-5. `created_at`
-6. `updated_at`
+3. `summary_state`
+4. `lifecycle_state`
+5. `workflow_state`
+   - 仅作为 `SQLite` 内部兼容列保留
+   - 不代表当前公开 API 契约
+6. `workspace_dir`
+7. `created_at`
+8. `updated_at`
 
 ### 6.2 `edit_drafts`
 
