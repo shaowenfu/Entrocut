@@ -8,10 +8,10 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.config import Settings
-from app.errors import ServerApiError
+from app.core.config import Settings
+from app.core.errors import ServerApiError
 from app.main import app, metrics, rate_limit_service, settings
-from app.runtime_guard import validate_runtime_settings
+from app.core.runtime_guard import validate_runtime_settings
 
 
 def _configure_local_runtime(monkeypatch) -> None:
