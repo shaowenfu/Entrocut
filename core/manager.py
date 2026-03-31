@@ -3,7 +3,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from storage_paths import ensure_app_data_layout, project_workspace_dir, resolve_app_data_root
+from core.storage import ensure_app_data_layout, project_workspace_dir, resolve_app_data_root
 
 
 class WorkspaceManager:

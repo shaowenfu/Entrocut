@@ -16,7 +16,7 @@ from helpers import (
     _trimmed,
     _bump_draft,
 )
-from local_state_repository import LocalStateRepository
+from core.state import LocalStateRepository
 from schemas import (
     AssistantDecisionOperationModel,
     AssistantDecisionTurnModel,
@@ -33,7 +33,7 @@ from schemas import (
     UserTurnModel,
     WorkspaceSnapshotModel,
 )
-from workspace_manager import WorkspaceManager
+from core.manager import WorkspaceManager
 
 
 class InMemoryProjectStore:

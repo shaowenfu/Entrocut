@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from context_engineering import (
+from core.context import (
     build_goal_state,
     build_planner_context_packet,
     build_scope_state,

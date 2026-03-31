@@ -12,7 +12,7 @@ from config import (
     SERVER_CHAT_MODEL,
     SERVER_CHAT_TIMEOUT_SECONDS,
 )
-from context_engineering import build_planner_context_packet, build_planner_system_prompt
+from core.context import build_planner_context_packet, build_planner_system_prompt
 from helpers import (
     _bump_draft,
     _chat_history_summary,

@@ -70,13 +70,13 @@
    - `projects.py`
    - `auth.py`
    - `system.py`
-8. [local_state_repository.py](./local_state_repository.py)
+8. [state.py](./state.py)
    - 本地 `SQLite repository`
 9. [workspace_manager.py](./workspace_manager.py)
    - 项目工作目录与导出落点管理
 10. [storage_paths.py](./storage_paths.py)
     - 本地存储路径解析
-11. [context_engineering.py](./context_engineering.py)
+11. [context.py](./context.py)
     - `planner context packet` 组装
 
 当前依赖方向大致是：
@@ -196,9 +196,10 @@
 3. [store.py](./store.py)
 4. [agent.py](./agent.py)
 5. [schemas.py](./schemas.py)
-6. [local_state_repository.py](./local_state_repository.py)
-7. [workspace_manager.py](./workspace_manager.py)
-8. [tests/test_server_toolchain_integration.py](./tests/test_server_toolchain_integration.py)
+6. [state.py](./state.py)
+7. [context.py](./context.py)
+8. [manager.py](./manager.py)
+9. [tests/test_server_toolchain_integration.py](./tests/test_server_toolchain_integration.py)
 
 如果想先理解契约和设计背景，建议同时看：
 
