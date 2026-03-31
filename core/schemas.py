@@ -4,17 +4,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-ProjectWorkflowState = Literal[
-    "prompt_input_required",
-    "awaiting_media",
-    "media_ready",
-    "media_processing",
-    "chat_thinking",
-    "ready",
-    "rendering",
-    "failed",
-]
+ProjectLifecycleState = Literal["active", "archived"]
+AssetProcessingStage = Literal["pending", "segmenting", "vectorizing", "ready", "failed"]
 AssetType = Literal["video", "audio"]
+TaskSlot = Literal["media", "agent", "export"]
 TaskType = Literal["ingest", "index", "chat", "render"]
 TaskStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 EditDraftStatus = Literal["draft", "ready", "rendering", "failed"]
@@ -24,6 +17,10 @@ DecisionType = Literal["EDIT_DRAFT_PATCH"]
 PlannerDecisionStatus = Literal["final", "requires_tool"]
 PlannerDraftStrategy = Literal["placeholder_first_cut", "no_change"]
 ToolName = Literal["read", "retrieve", "inspect", "patch", "preview"]
+ChatMode = Literal["planning_only", "editing"]
+ProjectSummaryState = Literal["blank", "planning", "media_processing", "editing", "exporting", "attention_required"]
+ConversationFeedbackState = Literal["unknown", "clarify", "approve", "reject", "revise"]
+ExecutionAgentRunState = Literal["idle", "planning", "executing_tool", "waiting_user", "failed"]
 SUPPORTED_TOOL_NAMES: set[str] = {"read", "retrieve", "inspect", "patch", "preview"}
 
 
@@ -87,9 +84,19 @@ class MediaReference(BaseModel):
 class ProjectModel(BaseModel):
     id: str
     title: str
-    workflow_state: ProjectWorkflowState
+    summary_state: ProjectSummaryState | None = None
+    lifecycle_state: ProjectLifecycleState = "active"
     created_at: str
     updated_at: str
+
+
+class AssetProcessingState(BaseModel):
+    stage: AssetProcessingStage = "pending"
+    progress: int | None = None
+    clip_count: int = 0
+    indexed_clip_count: int = 0
+    last_error: dict[str, Any] | None = None
+    updated_at: str | None = None
 
 
 class AssetModel(BaseModel):
@@ -98,6 +105,12 @@ class AssetModel(BaseModel):
     duration_ms: int
     type: AssetType
     source_path: str | None = None
+    processing_stage: AssetProcessingStage = "pending"
+    processing_progress: int | None = None
+    clip_count: int = 0
+    indexed_clip_count: int = 0
+    last_error: dict[str, Any] | None = None
+    updated_at: str | None = None
 
 
 class ClipModel(BaseModel):
@@ -175,12 +188,86 @@ class AssistantDecisionTurnModel(BaseModel):
 ChatTurnModel = UserTurnModel | AssistantDecisionTurnModel
 
 
+class ProjectMediaSummary(BaseModel):
+    asset_count: int = 0
+    pending_asset_count: int = 0
+    processing_asset_count: int = 0
+    ready_asset_count: int = 0
+    failed_asset_count: int = 0
+    total_clip_count: int = 0
+    indexed_clip_count: int = 0
+    retrieval_ready: bool = False
+
+
+class GoalState(BaseModel):
+    brief: str | None = None
+    constraints: list[str] = Field(default_factory=list)
+    preferences: list[str] = Field(default_factory=list)
+    open_questions: list[str] = Field(default_factory=list)
+    updated_at: str | None = None
+
+
+class FocusState(BaseModel):
+    scope_type: Literal["project", "scene", "shot"] = "project"
+    scene_id: str | None = None
+    shot_id: str | None = None
+    updated_at: str | None = None
+
+
+class ConversationState(BaseModel):
+    pending_questions: list[str] = Field(default_factory=list)
+    confirmed_facts: list[str] = Field(default_factory=list)
+    latest_user_feedback: ConversationFeedbackState = "unknown"
+    updated_at: str | None = None
+
+
+class RetrievalState(BaseModel):
+    last_query: str | None = None
+    candidate_clip_ids: list[str] = Field(default_factory=list)
+    retrieval_ready: bool = False
+    blocking_reason: str | None = None
+    updated_at: str | None = None
+
+
+class ExecutionState(BaseModel):
+    agent_run_state: ExecutionAgentRunState = "idle"
+    current_task_id: str | None = None
+    last_tool_name: str | None = None
+    last_error: dict[str, Any] | None = None
+    updated_at: str | None = None
+
+
+class ProjectRuntimeState(BaseModel):
+    goal_state: GoalState = Field(default_factory=GoalState)
+    focus_state: FocusState = Field(default_factory=FocusState)
+    conversation_state: ConversationState = Field(default_factory=ConversationState)
+    retrieval_state: RetrievalState = Field(default_factory=RetrievalState)
+    execution_state: ExecutionState = Field(default_factory=ExecutionState)
+    updated_at: str | None = None
+
+
+class ProjectCapabilities(BaseModel):
+    can_send_chat: bool = False
+    chat_mode: ChatMode = "planning_only"
+    can_retrieve: bool = False
+    can_inspect: bool = False
+    can_patch_draft: bool = False
+    can_preview: bool = False
+    can_export: bool = False
+    blocking_reasons: list[str] = Field(default_factory=list)
+
+
 class TaskModel(BaseModel):
     id: str
+    slot: TaskSlot = "agent"
     type: TaskType
     status: TaskStatus
+    owner_type: Literal["project", "asset", "draft"] = "project"
+    owner_id: str | None = None
     progress: int | None = None
     message: str | None = None
+    result: dict[str, Any] = Field(default_factory=dict)
+    error: dict[str, Any] | None = None
     created_at: str
     updated_at: str
 
@@ -189,6 +276,11 @@ class WorkspaceSnapshotModel(BaseModel):
     project: ProjectModel
     edit_draft: EditDraftModel
     chat_turns: list[ChatTurnModel]
+    summary_state: ProjectSummaryState | None = None
+    media_summary: ProjectMediaSummary = Field(default_factory=ProjectMediaSummary)
+    runtime_state: ProjectRuntimeState = Field(default_factory=ProjectRuntimeState)
+    capabilities: ProjectCapabilities = Field(default_factory=ProjectCapabilities)
+    active_tasks: list[TaskModel] = Field(default_factory=list)
     active_task: TaskModel | None = None
 
 
@@ -252,6 +344,7 @@ class AgentLoopResultModel(BaseModel):
     final_decision: PlannerDecisionModel
     draft: EditDraftModel
     observations: list[ToolObservationModel] = Field(default_factory=list)
+    runtime_state: ProjectRuntimeState = Field(default_factory=ProjectRuntimeState)
 
 
 class ExportRequest(BaseModel):

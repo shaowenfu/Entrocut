@@ -53,15 +53,16 @@ async def import_assets(project_id: str, payload: ImportAssetsRequest) -> TaskRe
 
 @router.post("/api/v1/projects/{project_id}/chat", response_model=TaskResponse)
 async def chat(project_id: str, payload: ChatRequest, request: Request) -> TaskResponse:
-    auth_session = await auth_session_store.snapshot()
-    if not auth_session.get("access_token"):
-        raise CoreApiError(
-            status_code=401,
-            code="AUTH_SESSION_REQUIRED",
-            message="Sign in is required before chat can run.",
-        )
     routing_mode = (request.headers.get("X-Routing-Mode") or "Platform").strip()
     normalized_mode = "BYOK" if routing_mode.upper() == "BYOK" else "Platform"
+    if normalized_mode != "BYOK":
+        auth_session = await auth_session_store.snapshot()
+        if not auth_session.get("access_token"):
+            raise CoreApiError(
+                status_code=401,
+                code="AUTH_SESSION_REQUIRED",
+                message="Sign in is required before chat can run.",
+            )
     task = await store.queue_chat(
         project_id,
         payload.prompt,

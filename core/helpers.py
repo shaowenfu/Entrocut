@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from schemas import (
     AssetModel,
+    AssetProcessingStage,
     AssetType,
     ClipModel,
     EditDraftModel,
@@ -72,7 +73,13 @@ def _media_file_refs(media: MediaReference) -> list[MediaFileReference]:
     return []
 
 
-def _build_assets(media: MediaReference) -> list[AssetModel]:
+def _build_assets(
+    media: MediaReference,
+    *,
+    processing_stage: AssetProcessingStage = "pending",
+    processing_progress: int | None = None,
+    updated_at: str | None = None,
+) -> list[AssetModel]:
     assets: list[AssetModel] = []
     for index, file_ref in enumerate(_media_file_refs(media), start=1):
         name = file_ref.name.strip()
@@ -87,9 +94,44 @@ def _build_assets(media: MediaReference) -> list[AssetModel]:
                 duration_ms=duration_seconds * 1000,
                 type=asset_type,
                 source_path=file_ref.path.strip() if file_ref.path and file_ref.path.strip() else None,
+                processing_stage=processing_stage,
+                processing_progress=processing_progress,
+                clip_count=0,
+                indexed_clip_count=0,
+                last_error=None,
+                updated_at=updated_at,
             )
         )
     return assets
+
+
+def _asset_clip_counts(clips: list[ClipModel]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for clip in clips:
+        counts[clip.asset_id] = counts.get(clip.asset_id, 0) + 1
+    return counts
+
+
+def _mark_assets_ready(
+    assets: list[AssetModel],
+    clips: list[ClipModel],
+    *,
+    updated_at: str,
+) -> list[AssetModel]:
+    clip_counts = _asset_clip_counts(clips)
+    return [
+        asset.model_copy(
+            update={
+                "processing_stage": "ready" if clip_counts.get(asset.id, 0) > 0 else asset.processing_stage,
+                "processing_progress": 100 if clip_counts.get(asset.id, 0) > 0 else asset.processing_progress,
+                "clip_count": clip_counts.get(asset.id, 0),
+                "indexed_clip_count": clip_counts.get(asset.id, 0),
+                "last_error": None,
+                "updated_at": updated_at,
+            }
+        )
+        for asset in assets
+    ]
 
 
 def _build_clips(assets: list[AssetModel]) -> list[ClipModel]:
@@ -122,8 +164,9 @@ def _build_clips(assets: list[AssetModel]) -> list[ClipModel]:
 
 
 def _draft_from_payload(project_id: str, created_at: str, media: MediaReference | None) -> EditDraftModel:
-    assets = _build_assets(media) if media else []
+    assets = _build_assets(media, updated_at=created_at) if media else []
     clips = _build_clips(assets)
+    assets = _mark_assets_ready(assets, clips, updated_at=created_at)
     return EditDraftModel(
         id=_entity_id("draft"),
         project_id=project_id,

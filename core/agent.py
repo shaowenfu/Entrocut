@@ -12,7 +12,12 @@ from config import (
     SERVER_CHAT_MODEL,
     SERVER_CHAT_TIMEOUT_SECONDS,
 )
-from core.context import build_planner_context_packet, build_planner_system_prompt
+from core.context import (
+    build_goal_state,
+    build_planner_context_packet,
+    build_planner_system_prompt,
+    build_scope_state,
+)
 from helpers import (
     _bump_draft,
     _chat_history_summary,
@@ -20,6 +25,7 @@ from helpers import (
     _entity_id,
     _extract_first_json_object,
     _extract_text_content,
+    _now_iso,
     _request_id,
     _trimmed,
 )
@@ -30,6 +36,7 @@ from schemas import (
     CoreApiError,
     EditDraftModel,
     PlannerDecisionModel,
+    ProjectRuntimeState,
     SceneModel,
     ShotModel,
     SUPPORTED_TOOL_NAMES,
@@ -57,24 +64,151 @@ async def _emit_agent_progress(
     )
 
 
+def _tool_is_enabled(tool_name: str, capabilities: dict[str, Any]) -> bool:
+    if tool_name == "read":
+        return True
+    capability_map = {
+        "retrieve": "can_retrieve",
+        "inspect": "can_inspect",
+        "patch": "can_patch_draft",
+        "preview": "can_preview",
+    }
+    capability_name = capability_map.get(tool_name)
+    if capability_name is None:
+        return False
+    return bool(capabilities.get(capability_name))
+
+
+def _planner_workspace_state(
+    *,
+    record: dict[str, Any],
+    draft: EditDraftModel,
+    runtime_state: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], str]:
+    planner_record = {
+        **record,
+        "edit_draft": draft.model_dump(),
+        "runtime_state": ProjectRuntimeState.model_validate(runtime_state).model_dump(),
+    }
+    media_summary = store._derive_media_summary(planner_record)
+    store._sync_runtime_retrieval_state(planner_record, media_summary=media_summary)
+    capabilities = store._derive_project_capabilities(planner_record, media_summary=media_summary)
+    summary_state = store._derive_summary_state(
+        planner_record,
+        media_summary=media_summary,
+        capabilities=capabilities,
+    )
+    return planner_record, media_summary, capabilities, summary_state
+
+
+def _seed_loop_runtime_state(
+    *,
+    record: dict[str, Any],
+    prompt: str,
+    target: ChatTarget | None,
+    draft: EditDraftModel,
+) -> dict[str, Any]:
+    current_runtime_state = ProjectRuntimeState.model_validate(record.get("runtime_state") or {}).model_dump()
+    now = _now_iso()
+    goal_state = build_goal_state(prompt=prompt, runtime_goal_state=current_runtime_state.get("goal_state"))
+    current_runtime_state["goal_state"].update(
+        {
+            "brief": goal_state["goal_summary"],
+            "open_questions": goal_state["open_questions"],
+            "updated_at": now,
+        }
+    )
+    scope_state = build_scope_state(
+        target=target.model_dump() if target else None,
+        draft_summary=_draft_summary(draft),
+        focus_state=current_runtime_state.get("focus_state"),
+    )
+    current_runtime_state["focus_state"].update(
+        {
+            "scope_type": scope_state["scope_type"],
+            "scene_id": scope_state["selected_scene_id"],
+            "shot_id": scope_state["selected_shot_id"],
+            "updated_at": now,
+        }
+    )
+    current_runtime_state["conversation_state"].update(
+        {
+            "pending_questions": goal_state["open_questions"],
+            "updated_at": now,
+        }
+    )
+    current_runtime_state["execution_state"].update(
+        {
+            "agent_run_state": "planning",
+            "last_error": None,
+            "updated_at": now,
+        }
+    )
+    current_runtime_state["updated_at"] = now
+    return current_runtime_state
+
+
+def _apply_runtime_state_update(
+    runtime_state: dict[str, Any],
+    runtime_state_update: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = ProjectRuntimeState.model_validate(runtime_state).model_dump()
+    for section in ("goal_state", "focus_state", "conversation_state", "retrieval_state", "execution_state"):
+        update_payload = runtime_state_update.get(section)
+        if isinstance(update_payload, dict):
+            normalized[section].update(update_payload)
+    if runtime_state_update.get("updated_at") is not None:
+        normalized["updated_at"] = runtime_state_update["updated_at"]
+    return ProjectRuntimeState.model_validate(normalized).model_dump()
+
+
+def _apply_tool_observation_to_runtime_state(
+    runtime_state: dict[str, Any],
+    observation: ToolObservationModel,
+) -> dict[str, Any]:
+    runtime_state_update = observation.state_delta.get("runtime_state_update")
+    normalized = ProjectRuntimeState.model_validate(runtime_state).model_dump()
+    now = _now_iso()
+    normalized["execution_state"].update(
+        {
+            "last_tool_name": observation.tool_name,
+            "updated_at": now,
+        }
+    )
+    normalized["updated_at"] = now
+    if isinstance(runtime_state_update, dict):
+        normalized = _apply_runtime_state_update(normalized, runtime_state_update)
+    return normalized
+
+
 def _build_planner_messages(
     *,
     record: dict[str, Any],
     project_id: str,
     prompt: str,
     draft: EditDraftModel,
+    runtime_state: dict[str, Any],
     target: ChatTarget | None,
     iteration: int,
     observations: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
+    planner_record, media_summary, capabilities, summary_state = _planner_workspace_state(
+        record=record,
+        draft=draft,
+        runtime_state=runtime_state,
+    )
     context_packet = build_planner_context_packet(
         project_id=project_id,
         iteration=iteration,
         prompt=prompt,
         target=target.model_dump() if target else None,
-        project=record["project"],
+        project=planner_record["project"],
+        summary_state=summary_state,
+        runtime_state=planner_record["runtime_state"],
+        media_summary=media_summary,
+        capabilities=capabilities,
         draft_summary=_draft_summary(draft),
-        chat_history_summary=_chat_history_summary(record),
+        chat_history_summary=_chat_history_summary(planner_record),
         tool_observations=observations or [],
     )
     system_prompt = build_planner_system_prompt()
@@ -94,6 +228,7 @@ async def _request_server_planner_decision(
     project_id: str,
     prompt: str,
     draft: EditDraftModel,
+    runtime_state: dict[str, Any],
     target: ChatTarget | None,
     model: str | None,
     routing_mode: str,
@@ -112,6 +247,7 @@ async def _request_server_planner_decision(
             project_id=project_id,
             prompt=prompt,
             draft=draft,
+            runtime_state=runtime_state,
             target=target,
             iteration=iteration,
             observations=observations,
@@ -212,6 +348,7 @@ def _validate_planner_decision(
     *,
     iteration: int,
     draft: EditDraftModel,
+    capabilities: dict[str, Any],
 ) -> PlannerDecisionModel:
     if decision.status == "requires_tool":
         normalized_tool_name = _trimmed(decision.tool_name)
@@ -228,6 +365,19 @@ def _validate_planner_decision(
                 code="TOOL_NAME_NOT_SUPPORTED",
                 message="Planner requested a tool that is not supported in Core loop.",
                 details={"iteration": iteration, "tool_name": normalized_tool_name},
+            )
+        if not _tool_is_enabled(normalized_tool_name, capabilities):
+            raise CoreApiError(
+                status_code=502,
+                code="PLANNER_REQUESTED_BLOCKED_TOOL",
+                message="Planner requested a tool that is unavailable under current workspace capabilities.",
+                details={
+                    "iteration": iteration,
+                    "tool_name": normalized_tool_name,
+                    "chat_mode": capabilities.get("chat_mode"),
+                    "blocking_reasons": capabilities.get("blocking_reasons", []),
+                    "draft_version": draft.version,
+                },
             )
     return decision
 
@@ -275,8 +425,23 @@ async def _execute_tool_call_todo(
     iteration: int,
     decision: PlannerDecisionModel,
     draft: EditDraftModel,
+    runtime_state: dict[str, Any],
+    capabilities: dict[str, Any],
 ) -> ToolObservationModel:
     tool_call = _build_tool_call_or_raise(decision)
+    if not _tool_is_enabled(tool_call.tool_name, capabilities):
+        raise CoreApiError(
+            status_code=409,
+            code="TOOL_NOT_AVAILABLE_IN_CHAT_MODE",
+            message="Requested tool is blocked by current chat mode or workspace capabilities.",
+            details={
+                "project_id": project_id,
+                "iteration": iteration,
+                "tool_name": tool_call.tool_name,
+                "chat_mode": capabilities.get("chat_mode"),
+                "blocking_reasons": capabilities.get("blocking_reasons", []),
+            },
+        )
     try:
         if tool_call.tool_name == "read":
             output = {
@@ -288,6 +453,12 @@ async def _execute_tool_call_todo(
                 success=True,
                 summary="Read current draft state for planner.",
                 output=output,
+                state_delta={
+                    "runtime_state_update": {
+                        "execution_state": {"last_tool_name": "read", "updated_at": _now_iso()},
+                        "updated_at": _now_iso(),
+                    }
+                },
             )
 
         if tool_call.tool_name == "retrieve":
@@ -299,15 +470,34 @@ async def _execute_tool_call_todo(
                 or query in clip.visual_desc.lower()
                 or any(query in tag.lower() for tag in clip.semantic_tags)
             ][:5]
+            if not matched_clip_ids and draft.clips:
+                matched_clip_ids = [clip.id for clip in draft.clips[:5]]
             return ToolObservationModel(
                 tool_name="retrieve",
                 success=True,
                 summary="Retrieved candidate clips from local draft catalog.",
                 output={"query": query, "matched_clip_ids": matched_clip_ids},
+                state_delta={
+                    "runtime_state_update": {
+                        "retrieval_state": {
+                            "last_query": query or None,
+                            "candidate_clip_ids": matched_clip_ids,
+                            "retrieval_ready": bool(runtime_state.get("retrieval_state", {}).get("retrieval_ready")),
+                            "blocking_reason": None,
+                            "updated_at": _now_iso(),
+                        },
+                        "execution_state": {"last_tool_name": "retrieve", "updated_at": _now_iso()},
+                        "updated_at": _now_iso(),
+                    }
+                },
             )
 
         if tool_call.tool_name == "inspect":
             clip_id = _trimmed(str(tool_call.tool_input.get("clip_id") or ""))
+            if not clip_id:
+                candidate_clip_ids = runtime_state.get("retrieval_state", {}).get("candidate_clip_ids") or []
+                if candidate_clip_ids:
+                    clip_id = str(candidate_clip_ids[0])
             target_clip = next((clip for clip in draft.clips if clip.id == clip_id), None)
             if target_clip is None and draft.clips:
                 target_clip = draft.clips[0]
@@ -323,10 +513,24 @@ async def _execute_tool_call_todo(
                 success=True,
                 summary="Inspected clip details for reasoning.",
                 output={"clip": target_clip.model_dump()},
+                state_delta={
+                    "runtime_state_update": {
+                        "retrieval_state": {
+                            "candidate_clip_ids": [target_clip.id],
+                            "updated_at": _now_iso(),
+                        },
+                        "execution_state": {"last_tool_name": "inspect", "updated_at": _now_iso()},
+                        "updated_at": _now_iso(),
+                    }
+                },
             )
 
         if tool_call.tool_name == "patch":
             clip_id = _trimmed(str(tool_call.tool_input.get("clip_id") or ""))
+            if not clip_id:
+                candidate_clip_ids = runtime_state.get("retrieval_state", {}).get("candidate_clip_ids") or []
+                if candidate_clip_ids:
+                    clip_id = str(candidate_clip_ids[0])
             target_clip = next((clip for clip in draft.clips if clip.id == clip_id), None)
             if target_clip is None and draft.clips:
                 target_clip = draft.clips[0]
@@ -372,7 +576,21 @@ async def _execute_tool_call_todo(
                         "selected_shot_id": shot.id,
                         "selected_scene_id": scene.id,
                         "status": "ready",
-                    }
+                    },
+                    "runtime_state_update": {
+                        "focus_state": {
+                            "scope_type": "shot",
+                            "scene_id": scene.id,
+                            "shot_id": shot.id,
+                            "updated_at": _now_iso(),
+                        },
+                        "conversation_state": {
+                            "confirmed_facts": [f"已将片段 {target_clip.id} 写入草案"],
+                            "updated_at": _now_iso(),
+                        },
+                        "execution_state": {"last_tool_name": "patch", "updated_at": _now_iso()},
+                        "updated_at": _now_iso(),
+                    },
                 },
             )
 
@@ -385,6 +603,12 @@ async def _execute_tool_call_todo(
                     "shot_count": len(draft.shots),
                     "scene_count": len(draft.scenes or []),
                     "estimated_duration_ms": sum(max(0, shot.source_out_ms - shot.source_in_ms) for shot in draft.shots),
+                },
+                state_delta={
+                    "runtime_state_update": {
+                        "execution_state": {"last_tool_name": "preview", "updated_at": _now_iso()},
+                        "updated_at": _now_iso(),
+                    }
                 },
             )
     except CoreApiError:
@@ -410,6 +634,8 @@ def _apply_tool_observation_to_draft_todo(draft: EditDraftModel, observation: To
     if not state_delta:
         return draft
     draft_update = state_delta.get("draft_update")
+    if draft_update is None:
+        return draft
     if not isinstance(draft_update, dict):
         raise CoreApiError(
             status_code=502,
@@ -449,8 +675,19 @@ async def _run_chat_agent_loop(
         details={"max_iterations": agent_loop_max_iterations},
     )
     current_draft = draft
+    current_runtime_state = _seed_loop_runtime_state(
+        record=record,
+        prompt=prompt,
+        target=target,
+        draft=current_draft,
+    )
     observations: list[ToolObservationModel] = []
     for iteration in range(1, agent_loop_max_iterations + 1):
+        planner_record, media_summary, capabilities, summary_state = _planner_workspace_state(
+            record=record,
+            draft=current_draft,
+            runtime_state=current_runtime_state,
+        )
         await _emit_agent_progress(
             project_id,
             phase="planner_context_assembled",
@@ -459,14 +696,18 @@ async def _run_chat_agent_loop(
                 "iteration": iteration,
                 "draft_version": current_draft.version,
                 "observation_count": len(observations),
+                "chat_mode": capabilities.get("chat_mode"),
+                "summary_state": summary_state,
+                "retrieval_ready": media_summary.get("retrieval_ready"),
             },
         )
         decision = await _request_server_planner_decision(
             access_token=access_token,
-            record=record,
+            record=planner_record,
             project_id=project_id,
             prompt=prompt,
             draft=current_draft,
+            runtime_state=current_runtime_state,
             target=target,
             model=model,
             routing_mode=routing_mode,
@@ -479,6 +720,7 @@ async def _run_chat_agent_loop(
             decision,
             iteration=iteration,
             draft=current_draft,
+            capabilities=capabilities,
         )
         await _emit_agent_progress(
             project_id,
@@ -492,13 +734,33 @@ async def _run_chat_agent_loop(
             },
         )
         if not _should_continue_agent_loop(decision=decision):
+            current_runtime_state["conversation_state"].update(
+                {
+                    "pending_questions": current_runtime_state["goal_state"].get("open_questions", []),
+                    "updated_at": _now_iso(),
+                }
+            )
+            current_runtime_state["execution_state"].update(
+                {
+                    "agent_run_state": "waiting_user"
+                    if current_runtime_state["goal_state"].get("open_questions") and not current_draft.shots
+                    else "planning",
+                    "updated_at": _now_iso(),
+                }
+            )
+            current_runtime_state["updated_at"] = _now_iso()
             await _emit_agent_progress(
                 project_id,
                 phase="loop_finalized",
                 summary="Planner returned a final decision.",
                 details={"iteration": iteration, "draft_version": current_draft.version},
             )
-            return AgentLoopResultModel(final_decision=decision, draft=current_draft, observations=observations)
+            return AgentLoopResultModel(
+                final_decision=decision,
+                draft=current_draft,
+                observations=observations,
+                runtime_state=ProjectRuntimeState.model_validate(current_runtime_state),
+            )
         await _emit_agent_progress(
             project_id,
             phase="tool_execution_requested",
@@ -507,6 +769,7 @@ async def _run_chat_agent_loop(
                 "iteration": iteration,
                 "tool_name": decision.tool_name,
                 "tool_input_summary": decision.tool_input_summary,
+                "chat_mode": capabilities.get("chat_mode"),
             },
         )
         observation = await _execute_tool_call_todo(
@@ -514,6 +777,8 @@ async def _run_chat_agent_loop(
             iteration=iteration,
             decision=decision,
             draft=current_draft,
+            runtime_state=current_runtime_state,
+            capabilities=capabilities,
         )
         observations.append(observation)
         await _emit_agent_progress(
@@ -527,6 +792,14 @@ async def _run_chat_agent_loop(
                 "observation_count": len(observations),
             },
         )
+        current_runtime_state = _apply_tool_observation_to_runtime_state(current_runtime_state, observation)
+        current_runtime_state["execution_state"].update(
+            {
+                "agent_run_state": "planning",
+                "updated_at": _now_iso(),
+            }
+        )
+        current_runtime_state["updated_at"] = _now_iso()
         current_draft = _apply_tool_observation_to_draft_todo(current_draft, observation)
         await _emit_agent_progress(
             project_id,
