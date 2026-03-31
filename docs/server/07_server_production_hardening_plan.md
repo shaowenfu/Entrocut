@@ -18,23 +18,26 @@
 
 ### 2.1 已有基础
 
-1. [server/app/main.py](/home/sherwen/MyProjects/Entrocut_server/server/app/main.py)
+1. [server/app/bootstrap/app.py](/home/sherwen/MyProjects/Entrocut_server/server/app/bootstrap/app.py)
+   - 已有 `FastAPI app` 装配与 `CORS`
+2. [server/app/bootstrap/middleware.py](/home/sherwen/MyProjects/Entrocut_server/server/app/bootstrap/middleware.py)
    - 已有 `request_id middleware`
+3. [server/app/bootstrap/exception_handlers.py](/home/sherwen/MyProjects/Entrocut_server/server/app/bootstrap/exception_handlers.py)
    - 已有统一异常处理注册
+4. [server/app/api/routes/health.py](/home/sherwen/MyProjects/Entrocut_server/server/app/api/routes/health.py)
    - 已有 `/health` 与 `/api/v1/runtime/capabilities`
-   - 已有 `CORS`
-2. [server/app/errors.py](/home/sherwen/MyProjects/Entrocut_server/server/app/errors.py)
+5. [server/app/core/errors.py](/home/sherwen/MyProjects/Entrocut_server/server/app/core/errors.py)
    - 已有稳定错误包络 `ErrorEnvelope`
    - 已有 `ServerApiError`
    - 已对外隐藏 `500` 内部异常原文
-3. [server/app/quota_service.py](/home/sherwen/MyProjects/Entrocut_server/server/app/quota_service.py)
+6. [server/app/services/quota.py](/home/sherwen/MyProjects/Entrocut_server/server/app/services/quota.py)
    - 已有 `QuotaService`
    - 已有 `RateLimitService`
    - 已有 `Redis unavailable -> memory fallback（Redis 不可用降级到内存）`
-4. [server/app/auth_store.py](/home/sherwen/MyProjects/Entrocut_server/server/app/auth_store.py)
+7. [server/app/repositories/mongo_repository.py](/home/sherwen/MyProjects/Entrocut_server/server/app/repositories/mongo_repository.py)
    - 已有 `MongoRepository`
    - 已有 `Mongo unavailable -> in-memory fallback（Mongo 不可用降级到内存）`
-5. [server/app/vector_service.py](/home/sherwen/MyProjects/Entrocut_server/server/app/vector_service.py)
+8. [server/app/services/vector.py](/home/sherwen/MyProjects/Entrocut_server/server/app/services/vector.py)
    - 已有外部依赖调用
    - 已有少量 `logger.exception`
 
@@ -55,7 +58,7 @@
    - `MongoDB/Redis` 的 `fallback` 更适合开发，不适合生产默认启用
    - 缺少“生产环境允许什么降级、不允许什么降级”的明确边界
 6. 安全收尾未完成
-   - [server/app/config.py](/home/sherwen/MyProjects/Entrocut_server/server/app/config.py) 仍保留开发默认 `AUTH_JWT_SECRET`
+   - [server/app/core/config.py](/home/sherwen/MyProjects/Entrocut_server/server/app/core/config.py) 仍保留开发默认 `AUTH_JWT_SECRET`
    - [server/.env.example](/home/sherwen/MyProjects/Entrocut_server/server/.env.example) 没有区分 `required / optional / dev-only`
    - `auth_dev_fallback_enabled` 默认仍是 `true`
    - `CORS_ALLOW_ORIGINS` 仍是本地开发白名单
@@ -86,11 +89,11 @@
 
 建议新增：
 
-1. `server/app/observability.py`
+1. `server/app/core/observability.py`
    - `configure_logging(settings)`
    - `bind_request_context(request_id, user_id, route, method)`
    - `log_dependency_event(...)`
-2. `server/app/logging_middleware.py`
+2. `server/app/bootstrap/middleware.py`
    - 记录 `request_started`
    - 记录 `request_completed`
    - 记录 `latency_ms`
@@ -307,7 +310,7 @@
 
 当前需要收口的问题：
 
-1. [server/app/config.py](/home/sherwen/MyProjects/Entrocut_server/server/app/config.py) 里仍有开发默认 `AUTH_JWT_SECRET`
+1. [server/app/core/config.py](/home/sherwen/MyProjects/Entrocut_server/server/app/core/config.py) 里仍有开发默认 `AUTH_JWT_SECRET`
 2. [server/.env.example](/home/sherwen/MyProjects/Entrocut_server/server/.env.example) 还没有区分生产必填项
 3. `GOOGLE_API_KEY / DASHSCOPE_API_KEY / DASHVECTOR_API_KEY / MONGODB_URI` 都属于高敏感密钥
 
@@ -336,7 +339,7 @@
 
 ### 6.2 CORS 白名单
 
-当前 [server/app/config.py](/home/sherwen/MyProjects/Entrocut_server/server/app/config.py) 已经改为白名单模式，但还需要生产收口：
+当前 [server/app/core/config.py](/home/sherwen/MyProjects/Entrocut_server/server/app/core/config.py) 已经改为白名单模式，但还需要生产收口：
 
 1. 本地开发白名单与生产白名单分离
 2. 生产只允许正式 `web origin`
