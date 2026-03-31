@@ -1,5 +1,7 @@
 # Server 端三大模块设计方案及原理：
 
+> `2026-03-31` 注：本文档的业务分层判断仍然成立，但当前代码目录已经不再是早期扁平 `app/*.py` 结构，而是落位为 `bootstrap / api / core / repositories / schemas / services / shared` 七层结构。阅读代码时，请优先以当前目录现实为准。
+
 一、 鉴权中心 (Authentication)
 核心原理：无状态校验 (Stateless Verification)
 
@@ -66,6 +68,34 @@ Server 收到请求后，不需要查数据库，只需用自己的密钥（Secr
 它当前主要做四件事：“证明你是谁”、“看你还有没有钱”、“帮你安全地把话带给大模型”、“把向量检索与图像级 inspect 这类专用云端能力稳定中转给 Core”。
 
 这种极简的 Server 架构非常利于快速上线，并且日后极易横向扩展（只需要多加几台机器跑 FastAPI 即可）。
+
+## 当前代码目录映射
+
+为了让“鉴权中心 / 用户与额度管理 / 模型中转站”这三大模块真正能在代码里被看清，当前 `server/app` 已经按下面的方式落位：
+
+1. `bootstrap/`
+   - `FastAPI app` 装配、依赖单例、健康探针、异常处理、中间件
+2. `api/routes/`
+   - `auth / user / chat / assets / inspect / runtime / health`
+3. `core/`
+   - `config / errors / observability / runtime_guard`
+4. `repositories/`
+   - `mongo_repository / login_session_repository / auth_store`
+5. `schemas/`
+   - `auth / user / runtime / assets / inspect`
+6. `services/auth/`
+   - `oauth / tokens / users`
+7. `services/gateway/`
+   - `provider_routing / chat_proxy / streaming / billing`
+8. `services/vector.py`
+9. `services/inspect.py`
+10. `services/quota.py`
+
+也就是说，本文档里的三大业务模块并没有变化，只是现在已经能和真实目录形成稳定映射：
+
+1. 鉴权中心 -> `api/routes/auth.py` + `services/auth/` + `repositories/`
+2. 用户与额度管理 -> `services/quota.py` + `repositories/mongo_repository.py`
+3. 模型中转站 -> `api/routes/chat.py` + `services/gateway/`
 
 # server 与 core 的通信契约
 

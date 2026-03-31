@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import json
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from threading import Lock
 from typing import Any
 
@@ -9,24 +8,10 @@ from pymongo import ASCENDING, MongoClient, ReturnDocument
 from pymongo.collection import Collection
 from pymongo.database import Database
 from pymongo.errors import PyMongoError
-import redis
-from redis import Redis
-from redis.exceptions import RedisError
 
-from .config import Settings
-from .errors import ServerApiError
-
-
-def now_utc() -> datetime:
-    return datetime.now(tz=UTC)
-
-
-def to_iso(value: datetime | None) -> str | None:
-    return value.isoformat() if value else None
-
-
-def from_iso(value: str | None) -> datetime | None:
-    return datetime.fromisoformat(value) if value else None
+from ..core.config import Settings
+from ..core.errors import ServerApiError
+from ..shared.time import from_iso, now_utc, to_iso
 
 
 class InMemoryCollectionStore:
@@ -53,6 +38,10 @@ class MongoRepository:
     @property
     def is_persistent(self) -> bool:
         return bool(self._settings.mongodb_uri)
+
+    @property
+    def fallback(self) -> InMemoryCollectionStore:
+        return self._fallback
 
     def _db_or_none(self) -> Database[Any] | None:
         if not self._settings.mongodb_uri:
@@ -163,12 +152,7 @@ class MongoRepository:
                 if user is not None:
                     user.update(update_fields)
             return
-        users.update_one(
-            {"_id": user_id},
-            {
-                "$set": update_fields,
-            },
-        )
+        users.update_one({"_id": user_id}, {"$set": update_fields})
 
     def consume_user_quota(
         self,
@@ -186,13 +170,6 @@ class MongoRepository:
     ) -> dict[str, Any]:
         updated_at = to_iso(now_utc())
         if total_tokens <= 0:
-            user = self.find_user_by_id(user_id)
-            if user is None:
-                raise KeyError(user_id)
-            return user
-        if total_tokens < 0:
-            raise ValueError("total_tokens must be non-negative")
-        if total_tokens == 0:
             user = self.find_user_by_id(user_id)
             if user is None:
                 raise KeyError(user_id)
@@ -271,7 +248,6 @@ class MongoRepository:
             )
         return updated_user or users.find_one({"_id": user_id}) or user
 
-
     def deduct_credits(self, user_id: str, amount: int) -> int:
         if amount < 0:
             raise ValueError("amount must be non-negative")
@@ -303,12 +279,7 @@ class MongoRepository:
             return
         credit_ledgers.insert_one(dict(ledger_doc))
 
-    def summarize_user_usage(
-        self,
-        *,
-        user_id: str,
-        period_start: datetime,
-    ) -> dict[str, int]:
+    def summarize_user_usage(self, *, user_id: str, period_start: datetime) -> dict[str, int]:
         period_start_iso = to_iso(period_start)
         if period_start_iso is None:
             raise ValueError("period_start is required")
@@ -321,39 +292,20 @@ class MongoRepository:
             for ledger in ledgers:
                 created_at_raw = ledger.get("created_at")
                 created_at = from_iso(created_at_raw) if isinstance(created_at_raw, str) else None
-                if created_at is None:
-                    continue
-                if created_at < period_start:
+                if created_at is None or created_at < period_start:
                     continue
                 total_tokens = int((ledger.get("usage") or {}).get("total_tokens") or 0)
                 consumed_tokens += total_tokens
                 request_count += 1
-            return {
-                "request_count": request_count,
-                "total_tokens": consumed_tokens,
-            }
+            return {"request_count": request_count, "total_tokens": consumed_tokens}
 
         summary_pipeline = [
-            {
-                "$match": {
-                    "user_id": user_id,
-                    "created_at": {"$gte": period_start_iso},
-                }
-            },
-            {
-                "$group": {
-                    "_id": None,
-                    "request_count": {"$sum": 1},
-                    "total_tokens": {"$sum": "$usage.total_tokens"},
-                }
-            },
+            {"$match": {"user_id": user_id, "created_at": {"$gte": period_start_iso}}},
+            {"$group": {"_id": None, "request_count": {"$sum": 1}, "total_tokens": {"$sum": "$usage.total_tokens"}}},
         ]
         result = list(quota_ledgers.aggregate(summary_pipeline))
         if not result:
-            return {
-                "request_count": 0,
-                "total_tokens": 0,
-            }
+            return {"request_count": 0, "total_tokens": 0}
         summary = result[0]
         return {
             "request_count": int(summary.get("request_count") or 0),
@@ -454,123 +406,3 @@ class MongoRepository:
                         token.update(update_doc["$set"])
             return
         refresh_tokens.update_many({"session_id": session_id, "revoked_at": None}, update_doc)
-
-
-class LoginSessionStore:
-    def __init__(self, settings: Settings, memory_store: InMemoryCollectionStore) -> None:
-        self._settings = settings
-        self._memory_store = memory_store
-        self._redis: Redis | None = None
-        self._redis_ready: bool | None = None
-
-    def _session_key(self, login_session_id: str) -> str:
-        return f"entrocut:server:login_session:{login_session_id}"
-
-    def _state_key(self, state: str) -> str:
-        return f"entrocut:server:oauth_state:{state}"
-
-    def _get_redis(self) -> Redis | None:
-        if not self._settings.redis_url:
-            self._redis_ready = False
-            if not self._settings.allow_inmemory_redis_fallback:
-                raise RedisError("Redis fallback is disabled and REDIS_URL is missing.")
-            return None
-        if self._redis_ready is False:
-            if not self._settings.allow_inmemory_redis_fallback:
-                raise RedisError("Redis is unavailable and fallback is disabled.")
-            return None
-        if self._redis is None:
-            self._redis = redis.from_url(self._settings.redis_url, decode_responses=True)
-        redis_client = self._redis
-        if self._redis_ready is None:
-            try:
-                if redis_client is None:
-                    return None
-                redis_client.ping()
-                self._redis_ready = True
-            except RedisError:
-                self._redis_ready = False
-                if not self._settings.allow_inmemory_redis_fallback:
-                    raise
-                return None
-        return redis_client
-
-    def ensure_connection(self) -> None:
-        redis_client = self._get_redis()
-        if self._settings.redis_url and redis_client is None:
-            raise RedisError("Redis is configured but unavailable.")
-
-    def create(self, login_session: dict[str, Any]) -> dict[str, Any]:
-        redis_client = self._get_redis()
-        if redis_client is None:
-            with self._memory_store.lock:
-                self._memory_store.login_sessions[login_session["login_session_id"]] = login_session
-            return login_session
-        redis_client.setex(
-            self._session_key(login_session["login_session_id"]),
-            self._settings.auth_login_session_ttl_seconds,
-            json.dumps(login_session),
-        )
-        return login_session
-
-    def get(self, login_session_id: str) -> dict[str, Any] | None:
-        redis_client = self._get_redis()
-        if redis_client is None:
-            record = self._memory_store.login_sessions.get(login_session_id)
-            return dict(record) if record else None
-        raw = redis_client.get(self._session_key(login_session_id))
-        return json.loads(raw) if raw else None
-
-    def save(self, login_session: dict[str, Any]) -> dict[str, Any]:
-        redis_client = self._get_redis()
-        if redis_client is None:
-            with self._memory_store.lock:
-                self._memory_store.login_sessions[login_session["login_session_id"]] = login_session
-            return login_session
-        redis_client.setex(
-            self._session_key(login_session["login_session_id"]),
-            self._settings.auth_login_session_ttl_seconds,
-            json.dumps(login_session),
-        )
-        return login_session
-
-    def bind_state(self, login_session_id: str, state: str) -> None:
-        redis_client = self._get_redis()
-        if redis_client is None:
-            with self._memory_store.lock:
-                self._memory_store.oauth_states[state] = login_session_id
-            return
-        redis_client.setex(self._state_key(state), self._settings.auth_login_session_ttl_seconds, login_session_id)
-
-    def find_by_state(self, state: str) -> dict[str, Any] | None:
-        redis_client = self._get_redis()
-        if redis_client is None:
-            login_session_id = self._memory_store.oauth_states.get(state)
-            return self.get(login_session_id) if login_session_id else None
-        login_session_id = redis_client.get(self._state_key(state))
-        return self.get(login_session_id) if login_session_id else None
-
-    def consume_once(self, login_session_id: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-        record = self.get(login_session_id)
-        if record is None:
-            return None, None
-
-        claimed_result = None
-        if record["status"] == "authenticated":
-            claimed_result = record.get("result")
-            record["status"] = "consumed"
-            record["consumed_at"] = to_iso(now_utc())
-            record["result"] = None
-            self.save(record)
-        return record, claimed_result
-
-
-class AuthStore:
-    def __init__(self, settings: Settings) -> None:
-        self.mongo = MongoRepository(settings)
-        self.login_sessions = LoginSessionStore(settings, self.mongo._fallback)
-
-    def ensure_indexes(self) -> None:
-        self.mongo.ensure_connection()
-        self.mongo.ensure_indexes()
-        self.login_sessions.ensure_connection()

@@ -10,8 +10,8 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.auth_service import new_id
-from app.auth_store import now_utc, to_iso
+from app.services.auth import new_id
+from app.shared.time import now_utc, to_iso
 from app.main import app, quota_service, rate_limit_service, settings, store, token_service
 
 

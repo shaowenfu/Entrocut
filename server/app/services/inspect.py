@@ -6,14 +6,14 @@ from typing import Any
 import httpx
 from pydantic import ValidationError
 
-from .config import Settings
-from .errors import (
+from ..core.config import Settings
+from ..core.errors import (
     inspect_evidence_missing,
     inspect_provider_invalid_response,
     inspect_provider_unavailable,
     invalid_inspect_request,
 )
-from .models import InspectRequest, InspectResponse
+from ..schemas.inspect import InspectRequest, InspectResponse
 
 
 class InspectService:
