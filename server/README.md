@@ -10,6 +10,71 @@
 2. `OpenAI-compatible chat proxy（兼容 OpenAI 的聊天代理）`
 3. 为后续 `credits / BYOK / retrieval / inspect` 保留稳定扩展点
 
+## 文件目录体系
+
+当前 `server` 方向建议按下面这条最小路径读：
+
+1. `server/README.md`
+   - `server` 当前定位、能力边界、阅读入口
+2. `docs/server/README.md`
+   - `server` 文档总索引，适合先看全局目录
+3. `docs/server/01_server_module_design.md`
+   - 模块边界与职责拆分
+4. `docs/server/02_server_api_inventory.md`
+   - 接口清单与 API 面收口
+5. `docs/server/03_server_auth_system_design.md`
+   - 鉴权、登录、用户链路
+6. `docs/server/04_server_openai_compatible_contract.md`
+   - `Core -> Server` 云端契约
+7. `docs/server/05_auth_implementation_spec.md`
+   - 已落地鉴权实现规范
+8. `docs/server/06_server_vector_rag_design.md`
+   - 向量、检索、`RAG（检索增强生成）`
+9. `docs/server/06a_server_retrieve_inspect_gateway_design.md`
+   - `retrieve / inspect` 网关方案
+10. `docs/server/07_server_production_hardening_plan.md`
+    - 生产加固
+11. `docs/server/08_server_staging_runbook.md`
+    - `staging（预发布）` 运维说明
+
+代码侧建议重点看：
+
+1. [`server/app/main.py`](./app/main.py)
+   - 稳定入口，重新导出 `app` 与核心单例
+2. [`server/app/bootstrap/dependencies.py`](./app/bootstrap/dependencies.py)
+   - 依赖装配、运行态对象、健康探针
+3. [`server/app/api/routes/auth.py`](./app/api/routes/auth.py)
+   - OAuth、login session、refresh、logout、`me`
+4. [`server/app/services/gateway/chat_proxy.py`](./app/services/gateway/chat_proxy.py)
+   - `OpenAI-compatible chat proxy`
+5. [`server/app/services/vector.py`](./app/services/vector.py)
+   - `vectorize / retrieval`
+6. [`server/app/services/inspect.py`](./app/services/inspect.py)
+   - `inspect` 判定链
+7. [`server/app/schemas/`](./app/schemas)
+   - 请求 / 响应 `schema（模式）`
+
+## 推荐代码阅读顺序
+
+如果目标是先把 `server` 主链梳理清楚，建议按这个顺序读代码：
+
+1. [`server/app/schemas/`](./app/schemas)
+   - 先看请求和响应 `schema（模式）`
+2. [`server/app/core/errors.py`](./app/core/errors.py)
+   - 再看错误语义
+3. [`server/app/services/auth/`](./app/services/auth)
+   - 了解登录、token、用户如何成立
+4. [`server/app/services/quota.py`](./app/services/quota.py)
+   - 了解 `credits` 和限流如何介入主链
+5. [`server/app/services/vector.py`](./app/services/vector.py)
+   - 了解向量化与检索
+6. [`server/app/services/inspect.py`](./app/services/inspect.py)
+   - 了解候选精判
+7. [`server/app/bootstrap/`](./app/bootstrap)
+   - 最后串起路由、依赖注入、日志、指标和异常处理
+
+如果只想快速抓主干，直接读 `server/app/bootstrap/dependencies.py`，再回头补 `services/gateway/chat_proxy.py` 和 `services/vector.py`。
+
 ## 当前已落地能力
 
 ### 鉴权与用户链路
