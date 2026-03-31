@@ -4,8 +4,8 @@ from typing import Any, Callable
 
 from fastapi import APIRouter, Depends
 
-from .auth_service import UserService
-from .models import UserProfileResponse, UserUsageResponse, UserUsageSnapshot
+from ...schemas.user import UserProfileResponse, UserUsageResponse, UserUsageSnapshot
+from ...services.auth.users import UserService
 
 
 def build_user_router(
