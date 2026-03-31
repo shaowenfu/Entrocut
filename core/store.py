@@ -100,12 +100,8 @@ class InMemoryProjectStore:
     async def create_project(self, payload: CreateProjectRequest) -> dict[str, Any]:
         normalized_prompt = _trimmed(payload.prompt)
         normalized_title = _trimmed(payload.title)
-        if normalized_prompt is None and payload.media is None and normalized_title is None:
-            raise CoreApiError(
-                status_code=422,
-                code="PROJECT_INPUT_REQUIRED",
-                message="At least one of title, prompt, or media is required to create a project.",
-            )
+        if normalized_title is None and normalized_prompt is None and payload.media is None:
+            normalized_title = "Untitled Project"
 
         now = _now_iso()
         project_id = _entity_id("proj")

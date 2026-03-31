@@ -78,7 +78,7 @@ def root() -> dict[str, Any]:
         "service": "core",
         "phase": REWRITE_PHASE,
         "mode": CORE_MODE,
-        "message": "EntroCut core serves an in-memory EditDraft contract for Launchpad, Workspace, chat, and project events.",
+        "message": "EntroCut core serves a local EditDraft contract backed by SQLite, per-project workspaces, chat, and project events.",
         "env": {
             "core_db_path": os.getenv("CORE_DB_PATH", "not_configured"),
             "server_base_url": SERVER_BASE_URL,

@@ -13,7 +13,7 @@ from routers.projects import set_agent_loop_max_iterations_resolver
 from schemas import CoreApiError, ErrorBody, ErrorEnvelope
 from store import CoreAuthSessionStore, InMemoryProjectStore, auth_session_store, store
 
-app = FastAPI(title="EntroCut Core In-Memory", version=APP_VERSION)
+app = FastAPI(title="EntroCut Core", version=APP_VERSION)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -61,8 +61,8 @@ async def unhandled_error_handler(request: Request, exc: Exception) -> JSONRespo
         status_code=500,
         content=ErrorEnvelope(
             error=ErrorBody(
-                code="CORE_IN_MEMORY_UNHANDLED",
-                message=str(exc) or "Unhandled in-memory core error.",
+                code="CORE_UNHANDLED",
+                message=str(exc) or "Unhandled core error.",
                 details={"phase": REWRITE_PHASE},
                 request_id=getattr(request.state, "request_id", None),
             )
