@@ -1,23 +1,28 @@
 import { requestJson, type AppHttpError } from "./httpClient";
 
-export type ProjectWorkflowState =
-  | "prompt_input_required"
-  | "awaiting_media"
-  | "media_ready"
+export type ProjectSummaryState =
+  | "blank"
+  | "planning"
   | "media_processing"
-  | "chat_thinking"
-  | "ready"
-  | "rendering"
-  | "failed";
+  | "editing"
+  | "exporting"
+  | "attention_required";
+export type ProjectLifecycleState = "active" | "archived";
+export type AssetProcessingStage = "pending" | "segmenting" | "vectorizing" | "ready" | "failed";
 
 export type AssetType = "video" | "audio";
+export type TaskSlot = "media" | "agent" | "export";
 export type TaskType = "ingest" | "index" | "chat" | "render";
 export type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type ChatMode = "planning_only" | "editing";
+export type ConversationFeedbackState = "unknown" | "clarify" | "approve" | "reject" | "revise";
+export type ExecutionAgentRunState = "idle" | "planning" | "executing_tool" | "waiting_user" | "failed";
 
 export interface CoreProject {
   id: string;
   title: string;
-  workflow_state: ProjectWorkflowState;
+  summary_state?: ProjectSummaryState | null;
+  lifecycle_state?: ProjectLifecycleState;
   created_at: string;
   updated_at: string;
 }
@@ -28,6 +33,12 @@ export interface CoreAsset {
   duration_ms: number;
   type: AssetType;
   source_path?: string | null;
+  processing_stage?: AssetProcessingStage;
+  processing_progress?: number | null;
+  clip_count?: number;
+  indexed_clip_count?: number;
+  last_error?: Record<string, unknown> | null;
+  updated_at?: string | null;
 }
 
 export interface CoreClip {
@@ -106,18 +117,97 @@ export type CoreChatTurn = CoreChatUserTurn | CoreChatAssistantTurn;
 
 export interface CoreTask {
   id: string;
+  slot?: TaskSlot;
   type: TaskType;
   status: TaskStatus;
+  owner_type?: "project" | "asset" | "draft";
+  owner_id?: string | null;
   progress: number | null;
   message: string | null;
+  result?: Record<string, unknown>;
+  error?: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface CoreProjectMediaSummary {
+  asset_count: number;
+  pending_asset_count: number;
+  processing_asset_count: number;
+  ready_asset_count: number;
+  failed_asset_count: number;
+  total_clip_count: number;
+  indexed_clip_count: number;
+  retrieval_ready: boolean;
+}
+
+export interface CoreProjectGoalState {
+  brief?: string | null;
+  constraints: string[];
+  preferences: string[];
+  open_questions: string[];
+  updated_at?: string | null;
+}
+
+export interface CoreProjectFocusState {
+  scope_type: "project" | "scene" | "shot";
+  scene_id?: string | null;
+  shot_id?: string | null;
+  updated_at?: string | null;
+}
+
+export interface CoreProjectConversationState {
+  pending_questions: string[];
+  confirmed_facts: string[];
+  latest_user_feedback: ConversationFeedbackState;
+  updated_at?: string | null;
+}
+
+export interface CoreProjectRetrievalState {
+  last_query?: string | null;
+  candidate_clip_ids: string[];
+  retrieval_ready: boolean;
+  blocking_reason?: string | null;
+  updated_at?: string | null;
+}
+
+export interface CoreProjectExecutionState {
+  agent_run_state: ExecutionAgentRunState;
+  current_task_id?: string | null;
+  last_tool_name?: string | null;
+  last_error?: Record<string, unknown> | null;
+  updated_at?: string | null;
+}
+
+export interface CoreProjectRuntimeState {
+  goal_state: CoreProjectGoalState;
+  focus_state: CoreProjectFocusState;
+  conversation_state: CoreProjectConversationState;
+  retrieval_state: CoreProjectRetrievalState;
+  execution_state: CoreProjectExecutionState;
+  updated_at?: string | null;
+}
+
+export interface CoreProjectCapabilities {
+  can_send_chat: boolean;
+  chat_mode: ChatMode;
+  can_retrieve: boolean;
+  can_inspect: boolean;
+  can_patch_draft: boolean;
+  can_preview: boolean;
+  can_export: boolean;
+  blocking_reasons: string[];
 }
 
 export interface CoreWorkspaceSnapshot {
   project: CoreProject;
   edit_draft: CoreEditDraft;
   chat_turns: CoreChatTurn[];
+  summary_state?: ProjectSummaryState | null;
+  media_summary: CoreProjectMediaSummary;
+  runtime_state: CoreProjectRuntimeState;
+  capabilities: CoreProjectCapabilities;
+  active_tasks: CoreTask[];
   active_task: CoreTask | null;
 }
 
