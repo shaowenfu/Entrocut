@@ -11,7 +11,11 @@
     "typecheck": "tsc --noEmit",
     "electron:build-main": "esbuild main/main.ts main/preload.ts --bundle --platform=node --format=esm --outdir=dist-electron --external:electron",
     "electron:watch-main": "npm run electron:build-main -- --watch",
-    "electron:dev": "concurrently -k -n VITE,MAIN,ELECTRON -c cyan,yellow,green \"npm run dev:web\" \"npm run electron:watch-main\" \"wait-on tcp:127.0.0.1:5173 file:dist-electron/main.js && VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron dist-electron/main.js\""
+    "electron:dev": "concurrently -k -n VITE,MAIN,ELECTRON -c cyan,yellow,green \"npm run dev:web\" \"npm run electron:watch-main\" \"wait-on tcp:127.0.0.1:5173 file:dist-electron/main.js && VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron dist-electron/main.js\"",
+    "electron:build-all": "npm run build && npm run electron:build-main && electron-builder",
+    "electron:build:win": "npm run build && npm run electron:build-main && electron-builder --win",
+    "electron:build:mac": "npm run build && npm run electron:build-main && electron-builder --mac",
+    "electron:build:linux": "npm run build && npm run electron:build-main && electron-builder --linux"
   },
   "dependencies": {
     "lucide-react": "^0.576.0",
@@ -25,6 +29,7 @@
     "@vitejs/plugin-react": "^5.1.1",
     "concurrently": "^9.2.1",
     "electron": "^37.2.0",
+    "electron-builder": "^26.8.1",
     "esbuild": "^0.25.10",
     "typescript": "^5.9.3",
     "vite": "^7.2.4",
