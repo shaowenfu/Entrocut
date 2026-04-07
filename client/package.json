@@ -2,6 +2,12 @@
   "name": "entrocut-client",
   "private": true,
   "version": "0.1.0",
+  "description": "Chat-to-Cut video editing agent",
+  "author": {
+    "name": "shaowenfu",
+    "email": "shaowenfu@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/shaowenfu/Entrocut",
   "type": "module",
   "scripts": {
     "dev": "vite",
