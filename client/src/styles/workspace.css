@@ -372,7 +372,47 @@
   display: block;
 }
 
-.asset-thumb span {
+.asset-thumb-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.42);
+}
+
+.asset-thumb-status.loading {
+  color: var(--color-blue);
+}
+
+.asset-thumb-status.error {
+  color: var(--color-red);
+}
+
+.asset-thumb-status .status-text {
+  position: static;
+  font-size: var(--text-xs);
+  color: currentColor;
+  background: transparent;
+  padding: 0;
+}
+
+.spinner {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.asset-thumb > span {
   position: absolute;
   right: var(--space-1);
   bottom: var(--space-1);
