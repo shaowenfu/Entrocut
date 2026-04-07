@@ -9,8 +9,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.config import Settings
-from app.errors import (
+from app.core.config import Settings
+from app.core.errors import (
     embedding_provider_unavailable,
     image_decode_failed,
     invalid_retrieval_request,
@@ -20,8 +20,8 @@ from app.errors import (
     vector_store_unavailable,
     vectorize_write_failed,
 )
-from app.models import AssetRetrievalRequest, VectorizeRequest
-from app.vector_service import VectorService
+from app.schemas import AssetRetrievalRequest, VectorizeRequest
+from app.services.vector import VectorService
 
 
 @pytest.fixture

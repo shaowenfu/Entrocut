@@ -27,6 +27,9 @@ import {
   toRequestError,
   type CoreChatAssistantTurn,
   type CoreChatTurn,
+  type CoreProjectCapabilities,
+  type CoreProjectMediaSummary,
+  type CoreProjectRuntimeState,
   type CoreEditDraft,
   type CoreEventEnvelope,
   type CoreExportResult,
@@ -34,7 +37,8 @@ import {
   type CoreShot,
   type CoreTask,
   type CoreWorkspaceSnapshot,
-  type ProjectWorkflowState,
+  type ProjectSummaryState,
+  type TaskSlot,
   type TaskStatus,
   type TaskType,
 } from "../services/coreClient";
@@ -47,6 +51,11 @@ export interface WorkspaceAssetItem {
   duration: string;
   type: "video" | "audio";
   sourcePath?: string | null;
+  processingStage: string;
+  processingProgress?: number | null;
+  clipCount: number;
+  indexedClipCount: number;
+  lastError?: Record<string, unknown> | null;
 }
 
 export interface WorkspaceClipItem {
@@ -95,7 +104,6 @@ export interface AssistantDecisionTurn {
 export type ChatTurn = UserTurn | AssistantDecisionTurn;
 
 type ProcessingPhase = "idle" | "media_processing" | "indexing" | "chat_thinking" | "ready" | "failed";
-type WorkflowState = ProjectWorkflowState;
 type WorkspaceLoadState = "idle" | "loading" | "ready" | "failed";
 type ChatState = "idle" | "responding" | "failed";
 type EventStreamState = "disconnected" | "connecting" | "connected";
@@ -123,10 +131,15 @@ interface ExportResult extends CoreExportResult {}
 
 interface ActiveTask {
   id: string;
+  slot: TaskSlot;
   type: TaskType;
   status: TaskStatus;
+  ownerType?: "project" | "asset" | "draft";
+  ownerId?: string | null;
   progress?: number | null;
   message?: string | null;
+  result?: Record<string, unknown>;
+  error?: Record<string, unknown> | null;
 }
 
 type WorkspaceEvent =
@@ -142,9 +155,11 @@ type WorkspaceEvent =
   | { type: "WORKSPACE_SNAPSHOT_RECEIVED"; workspace: CoreWorkspaceSnapshot; sequence: number }
   | { type: "EDIT_DRAFT_UPDATED"; editDraft: CoreEditDraft; sequence: number }
   | { type: "PROJECT_UPDATED"; project: CoreProject; sequence: number }
+  | { type: "PROJECT_SUMMARY_UPDATED"; summaryState: ProjectSummaryState; sequence: number }
+  | { type: "CAPABILITIES_UPDATED"; capabilities: CoreProjectCapabilities; sequence: number }
   | { type: "CHAT_TURN_CREATED"; turn: CoreChatTurn; sequence: number }
-  | { type: "TASK_UPDATED"; task: CoreTask; workflowState: WorkflowState; sequence: number }
-  | { type: "ERROR_OCCURRED"; error: WorkspaceError; workflowState?: WorkflowState; sequence: number }
+  | { type: "TASK_UPDATED"; task: CoreTask; sequence: number }
+  | { type: "ERROR_OCCURRED"; error: WorkspaceError; sequence: number }
   | { type: "ASSET_UPLOAD_STARTED"; task: ActiveTask }
   | { type: "ASSET_UPLOAD_CANCELLED" }
   | { type: "ASSET_UPLOAD_FAILED"; error: WorkspaceError }
@@ -177,8 +192,12 @@ interface WorkspaceState {
   lastError: WorkspaceError | null;
 
   loadState: WorkspaceLoadState;
-  workflowState: WorkflowState | null;
+  summaryState: ProjectSummaryState | null;
+  coreCapabilities: CoreProjectCapabilities | null;
+  coreRuntimeState: CoreProjectRuntimeState | null;
+  coreMediaSummary: CoreProjectMediaSummary | null;
   chatState: ChatState;
+  activeTasks: ActiveTask[];
   activeTask: ActiveTask | null;
   eventStreamState: EventStreamState;
   reconnectState: ReconnectState;
@@ -274,6 +293,11 @@ function mapAssets(editDraft: CoreEditDraft): WorkspaceAssetItem[] {
     duration: formatDurationLabel(asset.duration_ms),
     type: asset.type,
     sourcePath: asset.source_path ?? null,
+    processingStage: asset.processing_stage ?? "pending",
+    processingProgress: asset.processing_progress ?? null,
+    clipCount: asset.clip_count ?? 0,
+    indexedClipCount: asset.indexed_clip_count ?? 0,
+    lastError: asset.last_error ?? null,
   }));
 }
 
@@ -341,11 +365,22 @@ function mapTask(task: CoreTask | null): ActiveTask | null {
   }
   return {
     id: task.id,
+    slot: task.slot ?? "agent",
     type: task.type,
     status: task.status,
+    ownerType: task.owner_type,
+    ownerId: task.owner_id ?? null,
     progress: task.progress,
     message: task.message,
+    result: task.result ?? {},
+    error: task.error ?? null,
   };
+}
+
+function mapActiveTasks(tasks: CoreTask[] | null | undefined): ActiveTask[] {
+  return (tasks ?? [])
+    .map((task) => mapTask(task))
+    .filter((task): task is ActiveTask => task !== null);
 }
 
 function buildCurrentProject(input: {
@@ -354,17 +389,23 @@ function buildCurrentProject(input: {
   clips: WorkspaceClipItem[];
   storyboard: StoryboardScene[];
   editDraft: CoreEditDraft;
+  summaryState: ProjectSummaryState | null;
+  capabilities: CoreProjectCapabilities | null;
+  mediaSummary: CoreProjectMediaSummary | null;
 }): Record<string, unknown> {
   return {
     project_id: input.project.id,
     title: input.project.title,
-    workflow_state: input.project.workflow_state,
+    summary_state: input.summaryState,
     edit_draft_id: input.editDraft.id,
     edit_draft_version: input.editDraft.version,
     storyboard_count: input.storyboard.length,
     asset_count: input.assets.length,
     clip_count: input.clips.length,
     shot_count: input.editDraft.shots.length,
+    chat_mode: input.capabilities?.chat_mode ?? "planning_only",
+    can_export: input.capabilities?.can_export ?? false,
+    retrieval_ready: input.mediaSummary?.retrieval_ready ?? false,
     mode: "core",
   };
 }
@@ -374,6 +415,8 @@ function mapWorkspace(workspace: CoreWorkspaceSnapshot, workspaceName?: string):
   const assets = mapAssets(editDraft);
   const clips = mapClips(editDraft);
   const storyboard = mapStoryboard(editDraft);
+  const summaryState = workspace.summary_state ?? workspace.project.summary_state ?? null;
+  const activeTasks = mapActiveTasks(workspace.active_tasks);
   return {
     workspaceId: workspace.project.id,
     workspaceName: workspaceName ?? workspace.project.title,
@@ -382,15 +425,22 @@ function mapWorkspace(workspace: CoreWorkspaceSnapshot, workspaceName?: string):
     clips,
     storyboard,
     chatTurns: mapTurns(workspace.chat_turns),
+    summaryState,
+    coreCapabilities: workspace.capabilities,
+    coreRuntimeState: workspace.runtime_state,
+    coreMediaSummary: workspace.media_summary,
     currentProject: buildCurrentProject({
       project: workspace.project,
       assets,
       clips,
       storyboard,
       editDraft,
+      summaryState,
+      capabilities: workspace.capabilities,
+      mediaSummary: workspace.media_summary,
     }),
-    workflowState: workspace.project.workflow_state,
-    activeTask: mapTask(workspace.active_task),
+    activeTasks,
+    activeTask: findRunningTask(activeTasks) ?? mapTask(workspace.active_task),
   };
 }
 
@@ -401,23 +451,46 @@ function appendTurn(turns: ChatTurn[], nextTurn: ChatTurn): ChatTurn[] {
   return [...turns, nextTurn];
 }
 
-function deriveProcessingPhase(
-  workflowState: WorkflowState | null,
-  activeTask: ActiveTask | null
-): ProcessingPhase {
-  if (activeTask?.type === "index" && activeTask.status === "running") {
-    return "indexing";
+function findRunningTask(tasks: ActiveTask[], slot?: TaskSlot): ActiveTask | null {
+  const match = tasks.find((task) => {
+    if (task.status !== "queued" && task.status !== "running") {
+      return false;
+    }
+    return slot ? task.slot === slot : true;
+  });
+  return match ?? null;
+}
+
+function deriveChatState(activeTasks: ActiveTask[], runtimeState: CoreProjectRuntimeState | null): ChatState {
+  const agentTask = findRunningTask(activeTasks, "agent");
+  if (agentTask?.type === "chat") {
+    return "responding";
   }
-  if (activeTask?.type === "ingest" && activeTask.status === "running") {
-    return "media_processing";
-  }
-  if (activeTask?.type === "chat" && activeTask.status === "running") {
-    return "chat_thinking";
-  }
-  if (workflowState === "failed") {
+  if (runtimeState?.execution_state.agent_run_state === "failed") {
     return "failed";
   }
-  if (workflowState === null) {
+  return "idle";
+}
+
+function deriveProcessingPhase(
+  summaryState: ProjectSummaryState | null,
+  activeTasks: ActiveTask[]
+): ProcessingPhase {
+  const mediaTask = findRunningTask(activeTasks, "media");
+  const agentTask = findRunningTask(activeTasks, "agent");
+  if (mediaTask?.type === "index" && mediaTask.status === "running") {
+    return "indexing";
+  }
+  if (summaryState === "media_processing" || (mediaTask?.type === "ingest" && mediaTask.status === "running")) {
+    return "media_processing";
+  }
+  if (agentTask?.type === "chat" && agentTask.status === "running") {
+    return "chat_thinking";
+  }
+  if (summaryState === "attention_required") {
+    return "failed";
+  }
+  if (summaryState === null) {
     return "idle";
   }
   return "ready";
@@ -428,8 +501,12 @@ function withDerivedFields(
     WorkspaceState,
     | "runtimeState"
     | "loadState"
-    | "workflowState"
+    | "summaryState"
+    | "coreCapabilities"
+    | "coreRuntimeState"
+    | "coreMediaSummary"
     | "chatState"
+    | "activeTasks"
     | "activeTask"
     | "eventStreamState"
     | "reconnectState"
@@ -447,20 +524,24 @@ function withDerivedFields(
     | "lastError"
   >
 ): Partial<WorkspaceState> {
-  const activeTaskType =
-    state.activeTask && state.activeTask.status === "running" ? state.activeTask.type : null;
-  const isMediaProcessing = activeTaskType === "ingest";
+  const mediaTask = findRunningTask(state.activeTasks, "media");
+  const exportTask = findRunningTask(state.activeTasks, "export");
+  const isMediaProcessing = mediaTask?.type === "ingest";
   const isThinking = state.chatState === "responding";
-  const isExporting = activeTaskType === "render";
+  const isExporting = exportTask?.type === "render";
+  const activeTaskType =
+    exportTask?.type ?? mediaTask?.type ?? findRunningTask(state.activeTasks)?.type ?? null;
+  const dominantTask = exportTask ?? mediaTask ?? findRunningTask(state.activeTasks);
 
   return {
+    activeTask: dominantTask ?? null,
     isLoadingWorkspace: state.loadState === "loading",
     isMediaProcessing,
     mediaStatusText:
-      isMediaProcessing || isExporting ? state.activeTask?.message ?? null : null,
+      isMediaProcessing || isExporting ? dominantTask?.message ?? null : null,
     isThinking,
     isExporting,
-    processingPhase: deriveProcessingPhase(state.workflowState, state.activeTask),
+    processingPhase: deriveProcessingPhase(state.summaryState, state.activeTasks),
     activeTaskType,
   };
 }
@@ -482,8 +563,12 @@ function reduceWorkspaceState(
     | "lastEventSequence"
     | "lastError"
     | "loadState"
-    | "workflowState"
+    | "summaryState"
+    | "coreCapabilities"
+    | "coreRuntimeState"
+    | "coreMediaSummary"
     | "chatState"
+    | "activeTasks"
     | "activeTask"
     | "eventStreamState"
     | "reconnectState"
@@ -503,11 +588,7 @@ function reduceWorkspaceState(
         ...mapWorkspace(event.workspace, event.workspaceName),
         runtimeState: syncRuntimeStateFromWorkspace(state.runtimeState, event.workspace),
         loadState: "ready",
-        chatState:
-          event.workspace.active_task?.type === "chat" &&
-          (event.workspace.active_task.status === "queued" || event.workspace.active_task.status === "running")
-            ? "responding"
-            : "idle",
+        chatState: deriveChatState(mapActiveTasks(event.workspace.active_tasks), event.workspace.runtime_state),
         lastError: null,
       };
     case "WORKSPACE_LOAD_FAILED":
@@ -520,8 +601,12 @@ function reduceWorkspaceState(
         currentProject: null,
         chatTurns: [],
         loadState: "failed",
-        workflowState: "failed",
+        summaryState: "attention_required",
+        coreCapabilities: null,
+        coreRuntimeState: null,
+        coreMediaSummary: null,
         chatState: "failed",
+        activeTasks: [],
         activeTask: null,
         lastError: event.error,
       };
@@ -539,8 +624,12 @@ function reduceWorkspaceState(
         lastEventSequence: 0,
         lastError: null,
         loadState: "idle",
-        workflowState: event.hasMedia ? "media_ready" : "prompt_input_required",
+        summaryState: event.prompt?.trim() ? "planning" : "blank",
+        coreCapabilities: null,
+        coreRuntimeState: null,
+        coreMediaSummary: null,
         chatState: "idle",
+        activeTasks: [],
         activeTask: null,
         reconnectState: "idle",
       };
@@ -571,42 +660,110 @@ function reduceWorkspaceState(
         ...mapWorkspace(event.workspace),
         runtimeState: syncRuntimeStateFromWorkspace(state.runtimeState, event.workspace),
         loadState: "ready",
-        chatState:
-          event.workspace.active_task?.type === "chat" &&
-          (event.workspace.active_task.status === "queued" || event.workspace.active_task.status === "running")
-            ? "responding"
-            : "idle",
+        chatState: deriveChatState(mapActiveTasks(event.workspace.active_tasks), event.workspace.runtime_state),
         lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
       };
     case "EDIT_DRAFT_UPDATED": {
       const assets = mapAssets(event.editDraft);
       const clips = mapClips(event.editDraft);
       const storyboard = mapStoryboard(event.editDraft);
+      const project: CoreProject = {
+        id: String(state.workspaceId ?? ""),
+        title: String(state.workspaceName ?? ""),
+        summary_state: state.summaryState,
+        created_at: "",
+        updated_at: "",
+      };
       const currentProject = buildCurrentProject({
-        project: {
-          id: String(state.workspaceId ?? ""),
-          title: String(state.workspaceName ?? ""),
-          workflow_state: (state.workflowState ?? "media_ready") as ProjectWorkflowState,
-          created_at: "",
-          updated_at: "",
-        },
+        project,
         assets,
         clips,
         storyboard,
         editDraft: event.editDraft,
+        summaryState: state.summaryState,
+        capabilities: state.coreCapabilities,
+        mediaSummary: state.coreMediaSummary,
       });
       return {
         editDraft: event.editDraft,
         runtimeState: syncRuntimeStateFromWorkspace(state.runtimeState, {
-          project: {
-            id: String(state.workspaceId ?? ""),
-            title: String(state.workspaceName ?? ""),
-            workflow_state: (state.workflowState ?? "media_ready") as ProjectWorkflowState,
-            created_at: "",
-            updated_at: "",
-          },
+          project,
           edit_draft: event.editDraft,
           chat_turns: [],
+          summary_state: state.summaryState,
+          media_summary:
+            state.coreMediaSummary ?? {
+              asset_count: 0,
+              pending_asset_count: 0,
+              processing_asset_count: 0,
+              ready_asset_count: 0,
+              failed_asset_count: 0,
+              total_clip_count: 0,
+              indexed_clip_count: 0,
+              retrieval_ready: false,
+            },
+          runtime_state:
+            state.coreRuntimeState ?? {
+              goal_state: {
+                brief: null,
+                constraints: [],
+                preferences: [],
+                open_questions: [],
+                updated_at: null,
+              },
+              focus_state: {
+                scope_type: "project",
+                scene_id: null,
+                shot_id: null,
+                updated_at: null,
+              },
+              conversation_state: {
+                pending_questions: [],
+                confirmed_facts: [],
+                latest_user_feedback: "unknown",
+                updated_at: null,
+              },
+              retrieval_state: {
+                last_query: null,
+                candidate_clip_ids: [],
+                retrieval_ready: false,
+                blocking_reason: null,
+                updated_at: null,
+              },
+              execution_state: {
+                agent_run_state: "idle",
+                current_task_id: null,
+                last_tool_name: null,
+                last_error: null,
+                updated_at: null,
+              },
+              updated_at: null,
+            },
+          capabilities:
+            state.coreCapabilities ?? {
+              can_send_chat: true,
+              chat_mode: "planning_only",
+              can_retrieve: false,
+              can_inspect: false,
+              can_patch_draft: false,
+              can_preview: false,
+              can_export: false,
+              blocking_reasons: [],
+            },
+          active_tasks: state.activeTasks.map((task) => ({
+            id: task.id,
+            slot: task.slot,
+            type: task.type,
+            status: task.status,
+            owner_type: task.ownerType ?? "project",
+            owner_id: task.ownerId ?? null,
+            progress: task.progress ?? null,
+            message: task.message ?? null,
+            result: task.result ?? {},
+            error: task.error ?? null,
+            created_at: "",
+            updated_at: "",
+          })),
           active_task: null,
         }),
         assets,
@@ -646,13 +803,41 @@ function reduceWorkspaceState(
             created_at: "",
             updated_at: "",
           } as CoreEditDraft),
+        summaryState: event.project.summary_state ?? state.summaryState,
+        capabilities: state.coreCapabilities,
+        mediaSummary: state.coreMediaSummary,
       });
       return {
         currentProject,
-        workflowState: event.project.workflow_state,
+        summaryState: event.project.summary_state ?? state.summaryState,
         lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
       };
     }
+    case "PROJECT_SUMMARY_UPDATED":
+      return {
+        summaryState: event.summaryState,
+        currentProject:
+          state.currentProject === null
+            ? state.currentProject
+            : {
+                ...state.currentProject,
+                summary_state: event.summaryState,
+              },
+        lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
+      };
+    case "CAPABILITIES_UPDATED":
+      return {
+        coreCapabilities: event.capabilities,
+        currentProject:
+          state.currentProject === null
+            ? state.currentProject
+            : {
+                ...state.currentProject,
+                chat_mode: event.capabilities.chat_mode,
+                can_export: event.capabilities.can_export,
+              },
+        lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
+      };
     case "CHAT_TURN_CREATED":
       return {
         chatTurns: appendTurn(
@@ -666,74 +851,82 @@ function reduceWorkspaceState(
         lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
       };
     case "TASK_UPDATED": {
-      const activeTask =
-        event.task.status === "queued" || event.task.status === "running" ? mapTask(event.task) : null;
-      const nextChatState =
-        event.task.type === "chat" && (event.task.status === "queued" || event.task.status === "running")
-          ? "responding"
-          : event.task.type === "chat" && event.task.status === "failed"
-          ? "failed"
-          : "idle";
+      const nextTask = mapTask(event.task);
+      const activeTasks = [
+        ...state.activeTasks.filter((task) => task.id !== event.task.id),
+        ...(nextTask && (event.task.status === "queued" || event.task.status === "running") ? [nextTask] : []),
+      ];
+      const activeTask = findRunningTask(activeTasks);
       return {
+        activeTasks,
         activeTask,
-        workflowState: event.workflowState,
-        chatState: nextChatState,
+        chatState:
+          event.task.type === "chat" && event.task.status === "failed"
+            ? "failed"
+            : deriveChatState(activeTasks, state.coreRuntimeState),
         lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
         lastError: event.task.status === "failed" ? state.lastError : null,
       };
     }
     case "ERROR_OCCURRED":
       return {
-        workflowState: event.workflowState ?? state.workflowState,
+        summaryState: "attention_required",
         lastError: event.error,
         lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
       };
     case "ASSET_UPLOAD_STARTED":
       return {
+        activeTasks: [...state.activeTasks.filter((task) => task.id !== event.task.id), event.task],
         activeTask: event.task,
-        workflowState: "media_processing",
+        summaryState: "media_processing",
         lastError: null,
       };
     case "ASSET_UPLOAD_CANCELLED":
       return {
+        activeTasks: state.activeTasks.filter((task) => task.slot !== "media"),
         activeTask: null,
       };
     case "ASSET_UPLOAD_FAILED":
       return {
-        workflowState: "failed",
+        summaryState: "attention_required",
+        activeTasks: state.activeTasks.filter((task) => task.slot !== "media"),
         activeTask: null,
         lastError: event.error,
       };
     case "CHAT_REQUEST_ACCEPTED":
       return {
         chatState: "responding",
-        workflowState: "chat_thinking",
+        summaryState: state.summaryState ?? "planning",
+        activeTasks: [...state.activeTasks.filter((task) => task.id !== event.task.id), event.task],
         activeTask: event.task,
         lastError: null,
       };
     case "CHAT_FAILED":
       return {
         chatState: "failed",
-        workflowState: "failed",
+        summaryState: "attention_required",
+        activeTasks: state.activeTasks.filter((task) => task.slot !== "agent"),
         activeTask: null,
         lastError: event.error,
       };
     case "EXPORT_STARTED":
       return {
         exportResult: null,
-        workflowState: "rendering",
+        summaryState: "exporting",
+        activeTasks: [...state.activeTasks.filter((task) => task.id !== event.task.id), event.task],
         activeTask: event.task,
         lastError: null,
       };
     case "EXPORT_COMPLETED":
       return {
         exportResult: event.result,
-        workflowState: "ready",
+        activeTasks: state.activeTasks.filter((task) => task.slot !== "export"),
         lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
       };
     case "EXPORT_FAILED":
       return {
-        workflowState: "failed",
+        summaryState: "attention_required",
+        activeTasks: state.activeTasks.filter((task) => task.slot !== "export"),
         activeTask: null,
         lastError: event.error,
       };
@@ -793,8 +986,12 @@ const initialState: Omit<
   lastEventSequence: 0,
   lastError: null,
   loadState: "idle",
-  workflowState: null,
+  summaryState: null,
+  coreCapabilities: null,
+  coreRuntimeState: null,
+  coreMediaSummary: null,
   chatState: "idle",
+  activeTasks: [],
   activeTask: null,
   eventStreamState: "disconnected",
   reconnectState: "idle",
@@ -845,18 +1042,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         });
         break;
       case "task.updated": {
-        const data = payload.data as { task: CoreTask; workflow_state: WorkflowState };
+        const data = payload.data as { task: CoreTask };
         dispatch({
           type: "TASK_UPDATED",
           task: data.task,
-          workflowState: data.workflow_state,
           sequence: payload.sequence,
         });
         if (
           data.task.type === "ingest" &&
           data.task.status === "succeeded" &&
-          get().pendingPrompt?.trim() &&
-          get().assets.length > 0
+          get().pendingPrompt?.trim()
         ) {
           const queuedPrompt = get().pendingPrompt!.trim();
           applyDirectPatch({ pendingPrompt: null });
@@ -885,6 +1080,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           sequence: payload.sequence,
         });
         break;
+      case "project.summary.updated":
+        dispatch({
+          type: "PROJECT_SUMMARY_UPDATED",
+          summaryState: (payload.data as { summary_state: ProjectSummaryState }).summary_state,
+          sequence: payload.sequence,
+        });
+        break;
+      case "capabilities.updated":
+        dispatch({
+          type: "CAPABILITIES_UPDATED",
+          capabilities: (payload.data as { capabilities: CoreProjectCapabilities }).capabilities,
+          sequence: payload.sequence,
+        });
+        break;
       case "export.completed":
         dispatch({
           type: "EXPORT_COMPLETED",
@@ -896,15 +1105,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         const data = payload.data as {
           code: string;
           message: string;
-          workflow_state?: WorkflowState;
+          details?: { cause?: string };
+          request_id?: string;
         };
         dispatch({
           type: "ERROR_OCCURRED",
           error: {
             code: data.code,
             message: data.message,
+            cause: data.details?.cause,
+            requestId: data.request_id,
           },
-          workflowState: data.workflow_state,
           sequence: payload.sequence,
         });
         break;
@@ -1029,7 +1240,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         return;
       }
 
-      if (trimmedPrompt && input.hasMedia) {
+      if (trimmedPrompt) {
         for (let attempt = 0; attempt < 8; attempt += 1) {
           if (get().eventStreamState === "connected") {
             break;
@@ -1129,11 +1340,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }
 
       if (get().chatState === "responding") {
-        return;
-      }
-
-      if (get().assets.length === 0) {
-        applyDirectPatch({ pendingPrompt: trimmedPrompt });
         return;
       }
 

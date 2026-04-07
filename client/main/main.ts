@@ -1,15 +1,19 @@
 import path from "node:path";
+import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from "electron";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
 const AUTH_PROTOCOL = "entrocut";
+const SECURE_STORE_FILE = "secure-credentials.bin";
 
 let mainWindow: BrowserWindow | null = null;
 const pendingDeepLinks: string[] = [];
+
+type SecureCredentialMap = Record<string, string>;
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -111,6 +115,35 @@ function createMainWindow(): BrowserWindow {
   return window;
 }
 
+function secureStorePath(): string {
+  return path.join(app.getPath("userData"), SECURE_STORE_FILE);
+}
+
+async function readSecureCredentialMap(): Promise<SecureCredentialMap> {
+  try {
+    const encrypted = await fs.readFile(secureStorePath());
+    if (encrypted.length === 0) {
+      return {};
+    }
+    const decrypted = safeStorage.decryptString(encrypted);
+    const parsed = JSON.parse(decrypted) as unknown;
+    return parsed && typeof parsed === "object" ? (parsed as SecureCredentialMap) : {};
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "ENOENT") {
+      return {};
+    }
+    return {};
+  }
+}
+
+async function writeSecureCredentialMap(values: SecureCredentialMap): Promise<void> {
+  const serialized = JSON.stringify(values);
+  const encrypted = safeStorage.encryptString(serialized);
+  await fs.mkdir(path.dirname(secureStorePath()), { recursive: true });
+  await fs.writeFile(secureStorePath(), encrypted);
+}
+
 ipcMain.handle("dialog:open-directory", async () => {
   return dialog.showOpenDialog({
     title: "Select Media Folder",
@@ -129,6 +162,37 @@ ipcMain.handle("auth:open-external-url", async (_event, rawUrl: string) => {
     throw new Error("unsupported_external_protocol");
   }
   await shell.openExternal(parsed.toString());
+});
+
+ipcMain.handle("secure-store:get", async (_event, key: string) => {
+  const values = await readSecureCredentialMap()
+  const value = values[key]
+  return typeof value === "string" && value.trim().length > 0 ? value : null
+});
+
+ipcMain.handle("secure-store:set", async (_event, key: string, value: string) => {
+  const normalizedKey = key.trim();
+  if (!normalizedKey) {
+    throw new Error("invalid_secure_store_key");
+  }
+  const normalizedValue = value.trim();
+  const values = await readSecureCredentialMap();
+  if (!normalizedValue) {
+    delete values[normalizedKey];
+  } else {
+    values[normalizedKey] = normalizedValue;
+  }
+  await writeSecureCredentialMap(values);
+});
+
+ipcMain.handle("secure-store:delete", async (_event, key: string) => {
+  const normalizedKey = key.trim();
+  if (!normalizedKey) {
+    return;
+  }
+  const values = await readSecureCredentialMap();
+  delete values[normalizedKey];
+  await writeSecureCredentialMap(values);
 });
 
 app.on("second-instance", (_event, argv) => {

@@ -6,8 +6,8 @@ import binascii
 import logging
 from typing import Any
 
-from .config import Settings
-from .errors import (
+from ..core.config import Settings
+from ..core.errors import (
     ServerApiError,
     embedding_provider_unavailable,
     image_decode_failed,
@@ -19,9 +19,8 @@ from .errors import (
     vector_store_unavailable,
     vectorize_write_failed,
 )
-from .models import (
+from ..schemas.assets import (
     AssetRetrievalRequest,
-    VectorizeDoc,
     VectorizeRequest,
 )
 

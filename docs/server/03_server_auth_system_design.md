@@ -798,36 +798,62 @@ REDIS_URL=redis://127.0.0.1:6379/0
 1. 本地开发与生产的 `SERVER_BASE_URL`、`OAuth callback URL` 必须分开配置
 2. `Google/GitHub` 的控制台里也要分别配置开发和生产回调地址
 
-## 18. 推荐目录结构
+## 18. 当前推荐目录结构
 
-建议在 `server/` 下逐步拆成：
+当前 `server` 代码已经按下面的目录现实落位：
 
 ```text
 server/
   app/
     main.py
-    config.py
-    deps/
-      auth.py
-    routers/
-      auth.py
-      users.py
-      chat_proxy.py
-    services/
-      oauth_service.py
-      token_service.py
-      user_service.py
-      login_session_service.py
+    bootstrap/
+      app.py
+      dependencies.py
+      exception_handlers.py
+      lifespan.py
+      middleware.py
+    api/
+      router.py
+      routes/
+        auth.py
+        users.py
+        chat.py
+        assets.py
+        inspect.py
+        runtime.py
+        health.py
+    core/
+      config.py
+      errors.py
+      observability.py
+      runtime_guard.py
     repositories/
-      users.py
-      auth_identities.py
-      sessions.py
-      refresh_tokens.py
-    models/
+      auth_store.py
+      login_session_repository.py
+      mongo_repository.py
+    schemas/
       auth.py
       user.py
-    middleware/
-      request_context.py
+      runtime.py
+      assets.py
+      inspect.py
+      common.py
+    services/
+      auth/
+        oauth.py
+        tokens.py
+        users.py
+        utils.py
+      gateway/
+        provider_routing.py
+        chat_proxy.py
+        streaming.py
+        billing.py
+      vector.py
+      inspect.py
+      quota.py
+    shared/
+      time.py
 ```
 
 原则：
@@ -835,6 +861,8 @@ server/
 1. 路由层只处理 `HTTP`
 2. 服务层处理业务
 3. 仓储层处理 `MongoDB / Redis`
+4. `bootstrap` 只负责装配，不再承载业务实现
+5. `app.main` 只保留稳定入口和必要 `re-export`
 
 ## 19. 分阶段实施计划
 

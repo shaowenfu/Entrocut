@@ -64,8 +64,8 @@ function EmptyMediaGuidance({ onUploadClick, isDisabled }: EmptyMediaGuidancePro
   return (
     <div className="empty-media-guidance">
       <Upload size={32} />
-      <h3>Start by uploading media</h3>
-      <p>Upload videos to enable AI-powered editing capabilities.</p>
+      <h3>Start with a plan or upload media</h3>
+      <p>You can discuss the edit goal first, then upload videos when you are ready to cut.</p>
       <button onClick={onUploadClick} disabled={isDisabled}>
         Upload Videos
       </button>
@@ -152,8 +152,11 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const setModelPrefs = useAuthStore((state) => state.setModelPrefs);
   const loadState = useWorkspaceStore((state) => state.loadState);
   const chatState = useWorkspaceStore((state) => state.chatState);
-  const activeTask = useWorkspaceStore((state) => state.activeTask);
-  const workflowState = useWorkspaceStore((state) => state.workflowState);
+  const summaryState = useWorkspaceStore((state) => state.summaryState);
+  const coreCapabilities = useWorkspaceStore((state) => state.coreCapabilities);
+  const coreMediaSummary = useWorkspaceStore((state) => state.coreMediaSummary);
+  const coreRuntimeState = useWorkspaceStore((state) => state.coreRuntimeState);
+  const activeTasks = useWorkspaceStore((state) => state.activeTasks);
   const exportResult = useWorkspaceStore((state) => state.exportResult);
   const runtimeState = useWorkspaceStore((state) => state.runtimeState);
   const lastError = useWorkspaceStore((state) => state.lastError);
@@ -176,27 +179,44 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   );
   const safeTotalDurationSec = Math.max(1, totalDurationSec);
   const sessionLabel = `Session #${sessionId.slice(-8).toUpperCase()}`;
+  const mediaTask = activeTasks.find((task) => task.slot === "media") ?? null;
+  const exportTask = activeTasks.find((task) => task.slot === "export") ?? null;
+  const agentTask = activeTasks.find((task) => task.slot === "agent") ?? null;
   const isLoadingWorkspace = loadState === "loading";
-  const isThinking = chatState === "responding";
-  const isMediaProcessing = activeTask?.type === "ingest" && activeTask.status === "running";
-  const isExporting = activeTask?.type === "render" && activeTask.status === "running";
-  const mediaStatusText =
-    isMediaProcessing || isExporting ? activeTask?.message ?? null : null;
+  const isThinking =
+    chatState === "responding" ||
+    coreRuntimeState?.execution_state.agent_run_state === "planning" ||
+    coreRuntimeState?.execution_state.agent_run_state === "executing_tool";
+  const isMediaProcessing =
+    summaryState === "media_processing" ||
+    (mediaTask?.type === "ingest" && mediaTask.status === "running");
+  const isExporting =
+    summaryState === "exporting" ||
+    (exportTask?.type === "render" && exportTask.status === "running");
+  const mediaStatusText = isMediaProcessing
+    ? mediaTask?.message ?? "Processing media..."
+    : isExporting
+    ? exportTask?.message ?? "Exporting..."
+    : null;
   const canSendChat =
     !isEditLocked &&
-    assets.length > 0 &&
-    chatState !== "responding" &&
-    workflowState !== "rendering" &&
-    !(activeTask && activeTask.status === "running");
-  const canUploadAssets = !isEditLocked && workflowState !== "rendering";
-  const canExport =
-    workflowState === "ready" &&
+    !isLoadingWorkspace &&
+    (coreCapabilities?.can_send_chat ?? true) &&
+    !isExporting &&
+    !(agentTask && (agentTask.status === "queued" || agentTask.status === "running"));
+  const canUploadAssets =
     !isEditLocked &&
-    !(activeTask && activeTask.status === "running");
+    !isExporting &&
+    !(exportTask && (exportTask.status === "queued" || exportTask.status === "running"));
+  const canExport =
+    !isEditLocked &&
+    (coreCapabilities?.can_export ?? false) &&
+    !(agentTask && (agentTask.status === "queued" || agentTask.status === "running")) &&
+    !(exportTask && (exportTask.status === "queued" || exportTask.status === "running"));
   const canRunAgentLoop =
     !isEditLocked &&
     !isLoadingWorkspace &&
-    !(activeTask && activeTask.status === "running") &&
+    !(exportTask && (exportTask.status === "queued" || exportTask.status === "running")) &&
     Boolean(runtimeState.draft.editDraft);
 
   const activeSceneIndex = useMemo(
@@ -686,7 +706,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
             className="export-btn"
             type="button"
             onClick={handleExport}
-            disabled={isExporting || isMediaProcessing}
+            disabled={!canExport}
           >
             <Download size={16} />
             <span>{isExporting ? "Exporting..." : "Export"}</span>
@@ -897,16 +917,29 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
             {!isThinking && !isMediaProcessing && !isLoadingWorkspace && chatTurns.length === 0 ? (
               <div className="thinking-box">
                 <Sparkles size={16} />
-                <span>Send a prompt to start AI editing.</span>
+                <span>
+                  {coreCapabilities?.chat_mode === "planning_only"
+                    ? "Describe the edit goal first, or upload media to enter editing mode."
+                    : "Send a prompt to start AI editing."}
+                </span>
               </div>
             ) : null}
-            {/* 无素材时的提示 */}
             {assets.length === 0 && chatTurns.length === 0 && !isThinking && !isMediaProcessing && !isLoadingWorkspace && (
               <div className="chat-limitation-notice">
                 <Sparkles size={14} />
-                <span>AI editing is limited without media. Upload videos first.</span>
+                <span>
+                  No media yet. Chat is in planning mode; retrieval and draft patching will unlock after indexing.
+                </span>
               </div>
             )}
+            {isMediaProcessing && coreMediaSummary ? (
+              <div className="chat-limitation-notice">
+                <Sparkles size={14} />
+                <span>
+                  Indexed clips {coreMediaSummary.indexed_clip_count}/{coreMediaSummary.total_clip_count}.
+                </span>
+              </div>
+            ) : null}
             <div ref={chatEndRef} />
           </div>
 
@@ -935,8 +968,8 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
               }}
               disabled={!canSendChat}
               placeholder={
-                assets.length === 0
-                  ? "Upload media first to enable full AI editing, or describe your idea..."
+                coreCapabilities?.chat_mode === "planning_only"
+                  ? "Describe the edit goal, pacing, audience, or footage you plan to upload..."
                   : "Describe your edit..."
               }
             />

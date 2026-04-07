@@ -159,14 +159,15 @@ function projectThumbnailClass(projectId: string): string {
 }
 
 function mapProjectMeta(project: CoreProject): ProjectMeta {
+  const summaryState = project.summary_state ?? "blank";
   return {
     id: project.id,
     title: project.title,
     thumbnailClassName: projectThumbnailClass(project.id),
     storageType: "local",
     lastActiveText: formatLastActiveText(project.updated_at),
-    aiStatus: project.workflow_state,
-    lastAiEdit: `workflow=${project.workflow_state}`,
+    aiStatus: summaryState,
+    lastAiEdit: `summary=${summaryState}`,
   };
 }
 

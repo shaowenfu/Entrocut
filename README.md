@@ -99,6 +99,32 @@
 3. `vectorize / retrieval / inspect` 专用工具接口
 4. 鉴权、能力探测与错误语义稳定化
 
+## 数据存储方向
+
+当前仓库的 `core` 仍以 `in-memory state（内存状态）` 为主，这适合原型期。
+
+但从桌面应用的长期最佳实践看，本项目的数据层方向已经明确：
+
+### 本地
+
+1. `SQLite`
+   - 作为本地权威业务数据库
+   - 保存 `project / asset / clip / edit_draft / shot / scene / chat_turn / task / runtime state`
+2. `File System（文件系统）`
+   - 保存原始媒体、预览文件、导出文件、缩略图和其它中间产物
+3. `Keychain / Credential Manager（系统安全存储）`
+   - 保存 `access_token / refresh_token / third-party secrets`
+
+### 云端
+
+1. `MongoDB Atlas`
+   - 只做同步、账号和云元数据
+   - 不作为桌面端本地事实源
+
+这意味着后续最重要的数据层演进不是给 `client` 增加更多本地 store，而是：
+
+`把 core 从 in-memory state server 升级成 SQLite-backed local backend。`
+
 当前 `server` 分支额外已经并入的能力点：
 
 1. `Google + GitHub OAuth`
@@ -161,8 +187,9 @@
 3. [docs/contracts/01_core_api_ws_contract.md](./docs/contracts/01_core_api_ws_contract.md)
 4. [docs/agent_runtime/README.md](./docs/agent_runtime/README.md)
 5. [docs/server/README.md](./docs/server/README.md)
-6. [docs/develop_diary/2026-03-29_server_branch_pr_merge_journal.md](./docs/develop_diary/2026-03-29_server_branch_pr_merge_journal.md)
-7. [docs/develop_diary/2026-03-24_project_recap_and_pause_journal.md](./docs/develop_diary/2026-03-24_project_recap_and_pause_journal.md)
+6. [docs/develop_diary/2026-03-24_project_recap_and_pause_journal.md](./docs/develop_diary/2026-03-24_project_recap_and_pause_journal.md)
+7. [docs/contracts/02_local_data_storage_architecture.md](./docs/contracts/02_local_data_storage_architecture.md)
+8. [docs/develop_diary/2026-03-29_server_branch_pr_merge_journal.md](./docs/develop_diary/2026-03-29_server_branch_pr_merge_journal.md)
 
 ## 当前关键接口面
 
@@ -212,7 +239,8 @@ npm run dev -- --host 127.0.0.1 --port 5173
 
 ```bash
 cd core
-python -m venv venv(第一次需要创建虚拟环境)
+# 第一次需要创建虚拟环境时执行
+python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 uvicorn server:app --host 127.0.0.1 --port 8000 --reload

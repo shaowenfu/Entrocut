@@ -16,6 +16,33 @@
 3. `credits / BYOK` 的字段、前端入口和部分调用链已经合回主线
 4. 后续仍需要继续做真实上游能力验证、计费回归和端到端测试
 
+## 当前代码目录现实
+
+`2026-03-31` 起，`server/app` 已经从单层扁平结构重组为 `technical-layer（技术分层）` 目录：
+
+1. `bootstrap/`
+   - 应用装配、生命周期、异常处理、中间件、依赖单例
+2. `api/routes/`
+   - 所有 `HTTP route`
+3. `core/`
+   - 配置、错误语义、日志与运行时守卫
+4. `repositories/`
+   - `Mongo / Redis / in-memory fallback`
+5. `schemas/`
+   - 请求 / 响应 `Pydantic schema`
+6. `services/`
+   - 鉴权、`chat gateway`、向量、`inspect`、配额
+7. `shared/`
+   - 最小公共工具
+
+如果你要按代码进入，建议优先看：
+
+1. `server/app/bootstrap/dependencies.py`
+2. `server/app/api/routes/`
+3. `server/app/services/`
+4. `server/app/repositories/`
+5. `server/app/schemas/`
+
 如果你是第一次进入 `server` 方向，建议先看下面的阅读顺序，再看最近两篇相关开发日志。
 
 ## 推荐阅读顺序

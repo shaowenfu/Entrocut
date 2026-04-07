@@ -9,9 +9,9 @@ import redis
 from redis import Redis
 from redis.exceptions import RedisError
 
-from .auth_store import AuthStore
-from .config import Settings
-from .errors import ServerApiError
+from ..core.config import Settings
+from ..core.errors import ServerApiError
+from ..repositories.auth_store import AuthStore
 
 
 def _window_id(now_ts: float | None = None) -> int:

@@ -4,7 +4,7 @@
 
 1. 本地项目与 `EditDraft（剪辑草案）` 状态管理
 2. `Client -> Core` 本地契约落点
-3. `planner-first（先规划）` 的 `chat` 主链骨架
+3. `planner-driven（规划驱动）` 的 `chat` 主链与本地数据层
 
 ## 为什么是 Core
 
@@ -27,30 +27,120 @@
 
 当前 `core` 不是“只剩 health 的壳层”，也不是最终完整 `agent engine（智能体引擎）`。
 
-它现在处在一个中间阶段：
+它现在处在一个清晰但仍在继续收口的阶段：
 
 1. 本地项目、素材导入、`WorkspaceSnapshot`、导出任务、`WebSocket event stream（事件流）` 已经存在
-2. `chat` 已经进入 `planner-first` 骨架
-3. 真实 `tool execution loop（工具执行循环）` 还没有在 `core` 内彻底落地，仍保留 `TODO` 边界
+2. 本地数据层已经进入 `SQLite + project workspace dir + auth session mirror` 形态
+3. `chat` 已经进入 `planner-driven` 最小闭环
+4. `tool execution` 与草案写回已经能跑通最小原型，但还不是最终生产实现
 
 换句话说，`core` 当前是：
 
-`本地状态中心 + 本地契约服务 + 正在收口中的 agent 主链`
+`本地状态中心 + 本地契约服务 + SQLite-backed local backend + 已拆分成模块的 agent 主链入口`
+
+## 当前模块结构
+
+`core/server.py` 已经不再承载所有逻辑，而是缩成装配层。当前主要模块是：
+
+1. [server.py](./server.py)
+   - `FastAPI app` 创建
+   - `CORS middleware`
+   - `request_context_middleware`
+   - 异常处理
+   - router 挂载
+   - 兼容性 `re-export`
+2. [config.py](./config.py)
+   - 环境变量与运行时常量
+3. [schemas.py](./schemas.py)
+   - `Pydantic models（数据模型）`
+   - `Literal` 类型别名
+   - `CoreApiError`
+4. [helpers.py](./helpers.py)
+   - 纯工具函数
+   - 草案派生与摘要构建
+5. [agent.py](./agent.py)
+   - `planner request`
+   - 最小 `agent loop`
+   - `tool observation` 写回
+6. [store.py](./store.py)
+   - `InMemoryProjectStore`
+   - `CoreAuthSessionStore`
+   - 后台任务与事件广播
+7. [routers/](./routers/)
+   - `projects.py`
+   - `auth.py`
+   - `system.py`
+8. [state.py](./state.py)
+   - 本地 `SQLite repository`
+9. [workspace_manager.py](./workspace_manager.py)
+   - 项目工作目录与导出落点管理
+10. [storage_paths.py](./storage_paths.py)
+    - 本地存储路径解析
+11. [context.py](./context.py)
+    - `planner context packet` 组装
+
+当前依赖方向大致是：
+
+`config -> schemas -> helpers -> agent -> store -> routers/server`
+
+其中 `store -> agent` 通过运行时 `lazy import（延迟导入）` 处理，避免循环依赖。
+
+## 当前本地数据层
+
+当前 `core` 的本地数据层已经不是纯内存态，而是：
+
+1. `SQLite`
+   - 保存 `projects / edit_drafts / chat_turns / tasks / project_runtime / assets / core_auth_session`
+2. `project workspace dir`
+   - 在 `create_project` 时自动初始化
+   - 目录固定为 `thumbs / preview / exports / temp / proxies`
+3. `auth session mirror`
+   - `core` 本地只保存 `access_token / user_id` 镜像
+   - 不保存 `refresh_token`
+
+当前原则：
+
+1. 原始素材只保存路径引用
+2. 导出产物写入项目工作目录
+3. `client` 不直接感知数据库
+
+## 当前状态模型
+
+当前公开契约已经不再把项目状态压缩成单一 `workflow_state`。
+
+现在前后端共享的权威事实分成四层：
+
+1. `summary_state`
+   - 项目级摘要状态，只回答“当前整体看起来处于什么阶段”
+   - 当前取值：`blank / planning / media_processing / editing / exporting / attention_required`
+2. `media_summary`
+   - 素材聚合事实，例如 `asset_count / ready_asset_count / indexed_clip_count / retrieval_ready`
+3. `runtime_state`
+   - `agent runtime（智能体运行时）` 事实，例如 `goal / focus / conversation / retrieval / execution`
+4. `capabilities`
+   - UI 与 `agent` 的 `gating（准入开关）`，例如 `chat_mode / can_retrieve / can_export`
+
+另外：
+
+1. `active_tasks` 是权威任务集合
+2. `active_task` 只是给旧调用方保留的便利字段
+3. `SQLite` 里仍保留 `workflow_state` 列，但仅用于内部兼容持久化，不再属于公开 API/WS 契约
 
 ## 当前真实能力
 
 ### HTTP
 
-1. `GET /health`
-2. `GET /api/v1/runtime/capabilities`
-3. `GET /api/v1/projects`
-4. `POST /api/v1/projects`
-5. `GET /api/v1/projects/{project_id}`
-6. `POST /api/v1/projects/{project_id}/assets:import`
-7. `POST /api/v1/projects/{project_id}/chat`
-8. `POST /api/v1/projects/{project_id}/export`
-9. `POST /api/v1/auth/session`
-10. `DELETE /api/v1/auth/session`
+1. `GET /`
+2. `GET /health`
+3. `GET /api/v1/runtime/capabilities`
+4. `GET /api/v1/projects`
+5. `POST /api/v1/projects`
+6. `GET /api/v1/projects/{project_id}`
+7. `POST /api/v1/projects/{project_id}/assets:import`
+8. `POST /api/v1/projects/{project_id}/chat`
+9. `POST /api/v1/projects/{project_id}/export`
+10. `POST /api/v1/auth/session`
+11. `DELETE /api/v1/auth/session`
 
 ### WebSocket
 
@@ -59,15 +149,20 @@
 当前 `WebSocket` 已用于推送：
 
 1. `task.updated`
-2. `workspace.snapshot.updated`
+2. `workspace.snapshot`
 3. `edit_draft.updated`
-4. `agent.step.updated`
+4. `asset.updated`
+5. `project.updated`
+6. `project.summary.updated`
+7. `capabilities.updated`
+8. `chat.turn.created`
+9. `export.completed`
+10. `error.occurred`
+11. `agent.step.updated`
 
 ## chat 主链的当前状态
 
-`/api/v1/projects/{project_id}/chat` 现在已经不是“用户输入直接触发工具链”的旧逻辑。
-
-当前主链是：
+`/api/v1/projects/{project_id}/chat` 现在的真实主链是：
 
 1. 接收用户输入
 2. 读取当前 `workspace snapshot`
@@ -76,19 +171,18 @@
 5. 调用 `Server /v1/chat/completions`
 6. 解析严格 `JSON planner decision（结构化规划决策）`
 7. 进入最小 `agent loop`
+8. 在需要时执行 `read / retrieve / inspect / patch / preview`
+9. 将结果回写为新的 `EditDraft`
 
-当前明确保留的边界：
+当前仍然明确保留的原型边界：
 
-1. 如果 `planner` 返回 `requires_tool`，`core` 会 `fail-fast（立即失败）` 抛出 `AGENT_TOOL_EXECUTION_TODO`
-2. 当前仍保留 `placeholder_first_cut（占位初剪）` 作为原型期的最小可运行路径
+1. `placeholder_first_cut（占位初剪）` 仍是最小可运行路径之一
+2. `tool execution` 还不是最终生产级实现
+3. 真正复杂的精剪、排序、质量判断仍需要继续演进
 
 这意味着：
 
-`core/chat` 的框架方向已经正确，但真实的 planner -> tool -> replanning 闭环仍是下一步重点。`
-
-换句话说，`/chat` 的真正目标不是“回复一句话”，而是：
-
-`让一次对话成为一次围绕 EditDraft 的收敛推进。`
+`/chat` 的目标不是“回复一句话”，而是让一次对话成为一次围绕 EditDraft 的收敛推进。`
 
 ## 当前事实源
 
@@ -121,16 +215,24 @@
 
 ## 代码入口
 
-当前主要看这几个文件：
+如果想快速理解当前实现，建议按这个顺序看：
 
 1. [server.py](./server.py)
-2. [tests/test_server_toolchain_integration.py](./tests/test_server_toolchain_integration.py)
+2. [routers/projects.py](./routers/projects.py)
+3. [store.py](./store.py)
+4. [agent.py](./agent.py)
+5. [schemas.py](./schemas.py)
+6. [state.py](./state.py)
+7. [context.py](./context.py)
+8. [workspace_manager.py](./workspace_manager.py)
+9. [tests/test_server_toolchain_integration.py](./tests/test_server_toolchain_integration.py)
 
-如果想先理解契约和结构，建议同时看：
+如果想先理解契约和设计背景，建议同时看：
 
-1. [docs/contracts/01_core_api_ws_contract.md](../docs/contracts/01_core_api_ws_contract.md)
+1. [docs/store/01_core_api_ws_contract.md](../docs/store/01_core_api_ws_contract.md)
 2. [docs/editing/01_edit_draft_schema.md](../docs/editing/01_edit_draft_schema.md)
 3. [docs/agent_runtime/02_editing_agent_runtime_architecture.md](../docs/agent_runtime/02_editing_agent_runtime_architecture.md)
+4. [docs/develop_diary/2026-03-30_core_module_reconstruct_journal.md](../docs/develop_diary/2026-03-30_core_module_reconstruct_journal.md)
 
 ## 本地启动
 
@@ -142,8 +244,18 @@ pip install -r requirements.txt
 uvicorn server:app --host 127.0.0.1 --port 8000 --reload
 ```
 
+## 测试
+
+当前仓库里的 `core` 测试可以直接跑：
+
+```bash
+cd core
+source venv/bin/activate
+PYTHONPATH=.. pytest tests -q
+```
+
 ## 当前最应该做的事
 
-如果继续推进 `core`，最应该做的不是再扩接口，而是：
+如果继续推进 `core`，最值得投入的不是再扩接口，而是：
 
-`把 planner -> tool execution -> replanning 的真实 agent loop 落到 core/chat 主链里。`
+`把 planner -> tool execution -> replanning 的真实生产级 agent loop 继续收口到 core/chat 主链里。`

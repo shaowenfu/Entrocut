@@ -1,6 +1,6 @@
 import { isElectronEnvironment } from "./electronBridge";
 import { clearCoreAuthSession, syncCoreAuthSession } from "./coreClient";
-import { getAuthToken, requestJson, setAuthToken } from "./httpClient";
+import { getAuthToken, persistAuthToken, requestJson } from "./httpClient";
 
 const SERVER_BASE_URL = (
   (import.meta.env as Record<string, string | undefined>).VITE_SERVER_BASE_URL?.trim() ||
@@ -8,6 +8,10 @@ const SERVER_BASE_URL = (
 ).replace(/\/$/, "");
 
 const REFRESH_STORAGE_KEY = "ENTROCUT_REFRESH_TOKEN";
+const SECURE_REFRESH_STORAGE_KEY = "entrocut.auth.refresh_token";
+
+let cachedRefreshToken: string | null = null;
+let refreshStorageInitialized = false;
 
 export interface AuthUser {
   id: string;
@@ -70,6 +74,9 @@ export async function clearCoreAuthSessionState(): Promise<void> {
 }
 
 export function getRefreshToken(): string | null {
+  if (cachedRefreshToken && cachedRefreshToken.trim()) {
+    return cachedRefreshToken.trim();
+  }
   if (typeof window === "undefined") {
     return null;
   }
@@ -77,10 +84,64 @@ export function getRefreshToken(): string | null {
 }
 
 export function setRefreshToken(token: string | null): void {
+  const normalized = token?.trim() || null;
+  cachedRefreshToken = normalized;
   if (typeof window === "undefined") {
     return;
   }
-  const normalized = token?.trim();
+}
+
+export async function initializeRefreshTokenStorage(): Promise<void> {
+  if (refreshStorageInitialized) {
+    return;
+  }
+  refreshStorageInitialized = true;
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const electron = window.electron;
+  const legacyToken = window.localStorage.getItem(REFRESH_STORAGE_KEY)?.trim() || null;
+  if (electron?.getSecureCredential) {
+    const secureToken = (await electron.getSecureCredential(SECURE_REFRESH_STORAGE_KEY))?.trim() || null;
+    if (secureToken) {
+      cachedRefreshToken = secureToken;
+      if (legacyToken) {
+        window.localStorage.removeItem(REFRESH_STORAGE_KEY);
+      }
+      return;
+    }
+    if (legacyToken) {
+      cachedRefreshToken = legacyToken;
+      await electron.setSecureCredential?.(SECURE_REFRESH_STORAGE_KEY, legacyToken);
+      window.localStorage.removeItem(REFRESH_STORAGE_KEY);
+      return;
+    }
+    cachedRefreshToken = null;
+    return;
+  }
+
+  cachedRefreshToken = legacyToken;
+}
+
+export async function persistRefreshToken(token: string | null): Promise<void> {
+  const normalized = token?.trim() || null;
+  cachedRefreshToken = normalized;
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const electron = window.electron;
+  if (electron?.setSecureCredential) {
+    if (!normalized) {
+      await electron.deleteSecureCredential?.(SECURE_REFRESH_STORAGE_KEY);
+    } else {
+      await electron.setSecureCredential(SECURE_REFRESH_STORAGE_KEY, normalized);
+    }
+    window.localStorage.removeItem(REFRESH_STORAGE_KEY);
+    return;
+  }
+
   if (!normalized) {
     window.localStorage.removeItem(REFRESH_STORAGE_KEY);
     return;
@@ -132,8 +193,8 @@ export async function claimLoginSession(loginSessionId: string): Promise<AuthUse
       status: 400,
     };
   }
-  setAuthToken(response.result.access_token);
-  setRefreshToken(response.result.refresh_token);
+  await persistAuthToken(response.result.access_token);
+  await persistRefreshToken(response.result.refresh_token);
   await syncCoreAuthSession(response.result.access_token, response.result.user.id);
   return response.result.user;
 }
@@ -155,8 +216,8 @@ export async function refreshAccessToken(): Promise<string | null> {
       refresh_token: refreshToken,
     },
   });
-  setAuthToken(response.access_token);
-  setRefreshToken(response.refresh_token);
+  await persistAuthToken(response.access_token);
+  await persistRefreshToken(response.refresh_token);
   await syncCoreAuthSession(response.access_token);
   return response.access_token;
 }
@@ -167,8 +228,8 @@ export async function logoutCurrentUser(): Promise<void> {
       method: "POST",
     });
   } finally {
-    setAuthToken("");
-    setRefreshToken(null);
+    await persistAuthToken("");
+    await persistRefreshToken(null);
     await clearCoreAuthSession();
   }
 }

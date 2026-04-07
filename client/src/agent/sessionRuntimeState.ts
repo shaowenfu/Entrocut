@@ -1,5 +1,6 @@
 import type {
   CoreEditDraft,
+  CoreProjectRuntimeState,
   CoreScene,
   CoreShot,
   CoreWorkspaceSnapshot,
@@ -195,15 +196,28 @@ export function syncRuntimeStateFromWorkspace(
   workspace: CoreWorkspaceSnapshot,
   now: string = new Date().toISOString(),
 ): SessionRuntimeState {
-  const selectedSceneId = workspace.edit_draft.selected_scene_id ?? null;
-  const selectedShotId = workspace.edit_draft.selected_shot_id ?? null;
+  const coreRuntimeState = workspace.runtime_state;
+  const selectedSceneId =
+    coreRuntimeState.focus_state.scene_id ?? workspace.edit_draft.selected_scene_id ?? null;
+  const selectedShotId =
+    coreRuntimeState.focus_state.shot_id ?? workspace.edit_draft.selected_shot_id ?? null;
   const selectedScene = workspace.edit_draft.scenes?.find((scene) => scene.id === selectedSceneId) ?? null;
   const selectedShot = workspace.edit_draft.shots.find((shot) => shot.id === selectedShotId) ?? null;
+  const candidatePool = buildCandidatePool(workspace);
 
   return {
     ...state,
     projectId: workspace.project.id,
     updatedAt: now,
+    goal: {
+      ...state.goal,
+      brief: coreRuntimeState.goal_state.brief ?? null,
+      constraints: coreRuntimeState.goal_state.constraints.map((value, index) => ({
+        key: `constraint_${index}`,
+        value,
+        status: "confirmed",
+      })),
+    },
     draft: {
       ...state.draft,
       editDraft: workspace.edit_draft,
@@ -211,11 +225,61 @@ export function syncRuntimeStateFromWorkspace(
       lastSyncedAt: now,
     },
     selection: {
-      scope: selectedShotId ? "shot" : selectedSceneId ? "scene" : "global",
+      scope:
+        coreRuntimeState.focus_state.scope_type === "shot"
+          ? "shot"
+          : coreRuntimeState.focus_state.scope_type === "scene"
+          ? "scene"
+          : "global",
       selectedSceneId,
       selectedShotId,
       lockedSceneFields: selectedScene?.locked_fields ?? [],
       lockedShotFields: selectedShot?.locked_fields ?? [],
+    },
+    retrieval: {
+      latestRequest: coreRuntimeState.retrieval_state.last_query
+        ? {
+            summary: coreRuntimeState.retrieval_state.last_query,
+            query: coreRuntimeState.retrieval_state.last_query,
+            targetSceneId: selectedSceneId,
+            targetShotId: selectedShotId,
+            requestedAt: coreRuntimeState.retrieval_state.updated_at ?? now,
+          }
+        : null,
+      candidatePool,
+      candidatePoolStatus: deriveCandidatePoolStatus(coreRuntimeState, candidatePool),
+      insufficiencyReason: coreRuntimeState.retrieval_state.blocking_reason ?? null,
+      lastFailure: coreRuntimeState.execution_state.last_error
+        ? {
+            code: String(coreRuntimeState.execution_state.last_error.code ?? "runtime_error"),
+            message: String(coreRuntimeState.execution_state.last_error.message ?? "runtime_error"),
+            failedAt: coreRuntimeState.execution_state.updated_at ?? now,
+          }
+        : null,
+    },
+    execution: {
+      ...state.execution,
+      status: mapExecutionStatus(coreRuntimeState.execution_state.agent_run_state),
+      currentAction: mapCurrentAction(coreRuntimeState.execution_state.last_tool_name),
+      lastPatchSummary:
+        coreRuntimeState.execution_state.last_tool_name === "patch"
+          ? "server_runtime_patch_applied"
+          : state.execution.lastPatchSummary,
+    },
+    conversation: {
+      confirmedFacts: coreRuntimeState.conversation_state.confirmed_facts.map((value, index) => ({
+        key: `fact_${index}`,
+        value,
+      })),
+      openQuestions: coreRuntimeState.conversation_state.pending_questions.map((question) => ({
+        question,
+        raisedBy: "agent",
+      })),
+      latestFeedback: {
+        disposition: mapFeedbackDisposition(coreRuntimeState.conversation_state.latest_user_feedback),
+        summary: coreRuntimeState.conversation_state.latest_user_feedback,
+      },
+      clarificationRequired: coreRuntimeState.conversation_state.pending_questions.length > 0,
     },
   };
 }
@@ -272,4 +336,78 @@ export function recordExecutionAction(
       recentActions,
     },
   };
+}
+
+function buildCandidatePool(workspace: CoreWorkspaceSnapshot): CandidateClipSummary[] {
+  const candidateIds = workspace.runtime_state.retrieval_state.candidate_clip_ids;
+  const clipsById = new Map(workspace.edit_draft.clips.map((clip) => [clip.id, clip]));
+  return candidateIds
+    .map((clipId): CandidateClipSummary | null => {
+      const clip = clipsById.get(clipId);
+      if (!clip) {
+        return null;
+      }
+      return {
+        clipId,
+        summary: clip.visual_desc,
+        sourceAssetId: clip.asset_id,
+        deepInspected: false,
+        score: clip.confidence ?? null,
+      };
+    })
+    .filter((item): item is CandidateClipSummary => item !== null);
+}
+
+function deriveCandidatePoolStatus(
+  runtimeState: CoreProjectRuntimeState,
+  candidatePool: CandidateClipSummary[],
+): CandidatePoolStatus {
+  if (candidatePool.length > 0) {
+    return "ready";
+  }
+  if (!runtimeState.retrieval_state.retrieval_ready) {
+    return "insufficient";
+  }
+  return "idle";
+}
+
+function mapExecutionStatus(agentRunState: CoreProjectRuntimeState["execution_state"]["agent_run_state"]): ExecutionStatus {
+  if (agentRunState === "planning" || agentRunState === "executing_tool") {
+    return "running";
+  }
+  if (agentRunState === "failed") {
+    return "failed";
+  }
+  return "idle";
+}
+
+function mapCurrentAction(lastToolName: string | null | undefined): PlannerActionType | null {
+  if (lastToolName === "retrieve") {
+    return "create_retrieval_request";
+  }
+  if (lastToolName === "inspect") {
+    return "inspect_candidates";
+  }
+  if (lastToolName === "patch") {
+    return "apply_patch";
+  }
+  if (lastToolName === "preview") {
+    return "render_preview";
+  }
+  return null;
+}
+
+function mapFeedbackDisposition(
+  feedback: CoreProjectRuntimeState["conversation_state"]["latest_user_feedback"],
+): FeedbackDisposition {
+  if (feedback === "approve") {
+    return "accepted";
+  }
+  if (feedback === "reject") {
+    return "rejected";
+  }
+  if (feedback === "revise") {
+    return "partial";
+  }
+  return "unclear";
 }

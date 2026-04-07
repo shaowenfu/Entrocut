@@ -403,12 +403,14 @@ X-Request-ID: req_xxxxxxxxxxxx
 
 关键文件：
 
-1. `server/app/auth_service.py`
+1. `server/app/services/auth/`
    - `OAuth`、用户映射、`JWT` 签发
-2. `server/app/auth_store.py`
+2. `server/app/repositories/`
    - 用户、会话、`refresh token`、`login_session`
-3. `server/app/main.py`
-   - 鉴权依赖、`/me`、`/v1/chat/completions`
+3. `server/app/api/routes/auth.py`
+   - 登录、回调、刷新、登出、`/me`
+4. `server/app/bootstrap/dependencies.py`
+   - 鉴权依赖、运行态单例与稳定入口装配
 4. `client/src/services/authClient.ts`
    - 登录、刷新、登出、领取 `login_session`
 5. `client/src/store/useAuthStore.ts`

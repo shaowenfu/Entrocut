@@ -11,8 +11,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.auth_service import new_id
-from app.auth_store import now_utc, to_iso
+from app.services.auth import new_id
+from app.shared.time import now_utc, to_iso
 from app.main import app, settings, store, token_service
 
 
@@ -152,7 +152,7 @@ class TestVectorizeSuccess:
 
 class TestVectorizeErrors:
     def test_returns_error_on_invalid_request_error(self, client: TestClient, auth_headers: dict[str, str]) -> None:
-        from app.errors import invalid_vectorize_request
+        from app.core.errors import invalid_vectorize_request
 
         with patch(
             "app.main.vector_service.vectorize",
@@ -168,7 +168,7 @@ class TestVectorizeErrors:
         assert response.json()["error"]["code"] == "INVALID_VECTORIZE_REQUEST"
 
     def test_returns_error_on_embedding_failure(self, client: TestClient, auth_headers: dict[str, str]) -> None:
-        from app.errors import embedding_provider_unavailable
+        from app.core.errors import embedding_provider_unavailable
 
         with patch(
             "app.main.vector_service.vectorize",
@@ -184,7 +184,7 @@ class TestVectorizeErrors:
         assert response.json()["error"]["code"] == "EMBEDDING_PROVIDER_UNAVAILABLE"
 
     def test_returns_error_on_vector_store_failure(self, client: TestClient, auth_headers: dict[str, str]) -> None:
-        from app.errors import vector_store_unavailable
+        from app.core.errors import vector_store_unavailable
 
         with patch(
             "app.main.vector_service.vectorize",

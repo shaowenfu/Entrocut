@@ -370,18 +370,19 @@ DASHVECTOR_PROTOCOL=grpc
 
 建议新增：
 
-1. `server/app/vector_service.py`
-   - `DashScopeMultiModalEmbeddingClient`
-   - `DashVectorStore`
+1. `server/app/services/vector.py`
    - `VectorService`
 
-2. `server/app/vector_models.py`
-   - 请求/响应 `Pydantic models`
+2. `server/app/schemas/assets.py`
+   - `vectorize / retrieval` 请求/响应 `Pydantic models`
 
-3. `server/tests/test_vector_service.py`
+3. `server/app/api/routes/assets.py`
+   - `vectorize / retrieval` 路由落点
+
+4. `server/tests/test_vector_service.py`
    - 单元测试
 
-4. `server/tests/test_vector_routes.py`
+5. `server/tests/test_vector_routes.py`
    - 路由测试
 
 ## 6.2 `DashScopeMultiModalEmbeddingClient`

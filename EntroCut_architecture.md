@@ -10,6 +10,8 @@
 - **实现思路**：
     - 使用 **Zustand** 建立全局 Store，所有的状态更新不再请求云端，而是请求 `localhost:8000`。
     - 实现一个 **IPC 桥接层**，让 Web 页面能安全地调用 Node.js 的文件系统 API。
+    - Client 本地不承担权威事实存储；持久业务数据应下沉到 `Core + SQLite`
+    - 认证凭证在 `Electron` 环境下通过主进程安全桥和系统 `safeStorage` 管理，并兼容迁移旧 `localStorage`
 
 ### 二、 本地引擎 (Core: Python FastAPI + Agent Engine)
 
@@ -26,11 +28,13 @@
     - **Agent 逻辑编排**：运行 `plan -> act -> observe -> replan` 闭环。决定下一步是去调用 `Server` 进行语义检索，还是更新本地 `EditDraft` 中的 `shot / scene` 结构，再交给执行层渲染。
     - **重型计算任务**：调用本地 FFmpeg 提取视频帧、处理音频流。
     - **向量化 (Embedding)**：将提取的视频帧通过 `Server` 中转给阿里云 API，获取向量并存入本地临时索引。
-    - **本地存储管理**：管理 SQLite 数据库，持久化存储用户的项目配置。
+    - **本地存储管理**：管理 `SQLite + File System + Keychain/Credential Manager`，作为桌面端本地权威数据层。
 - **实现思路**：
     - **FastAPI** 作为常驻进程，与 Client 保持 WebSocket 长连接。
     - 使用 **LangChain 或原生 Python** 编写 Agent 决策树。
     - **FFmpeg-python** 封装所有的底层音视频操作。
+    - `SQLite` 存结构化业务事实，文件系统存媒体与中间产物，系统安全存储保存认证与敏感密钥
+    - `core` 本地只持久化 `access_token / user_id` 镜像，不持有 `refresh token`
 
 ### 三、 云端服务器 (Server: Python FastAPI + Auth/Proxy)
 
@@ -40,10 +44,34 @@
     - **API 鉴权与中转 (Proxy)**：`Core` 不直接持有阿里云/OpenAI 的 API Key。`Core` 将请求发给 `Server`，`Server` 验证用户身份（Auth）后，代为调用大模型接口并返回结果。
     - **敏感数据托管**：管理用户的 DashVector 密钥、模型配额、订阅状态。
     - **语义检索中介**：接收 `Core` 发来的向量请求，代为查询云端向量数据库（DashVector），并将匹配结果返回给 `Core`。
-    - **用户云端同步**：备份轻量级的项目元数据（不含视频原片），实现跨设备的项目列表查看。
+    - **用户云端同步**：使用 `MongoDB Atlas` 保存账号、同步记录与轻量级云元数据（不含本地媒体原片，不替代本地权威库）。
 - **实现思路**：
     - **JWT** 进行身份验证。
     - 使用 **HTTP 反向代理** 机制，隐藏真实的第三方 API 端点，防止用户非法刷取额度。
+
+---
+
+### 数据存储总原则
+
+当前架构的目标不是把桌面应用做成一个薄客户端，而是：
+
+1. 本地权威事实层放在 `Core`
+2. 本地结构化数据放在 `SQLite`
+3. 大文件继续放文件系统
+4. 敏感凭证放系统安全存储
+5. 云端 `MongoDB Atlas` 只负责同步、账号和云元数据
+
+当前实现状态补充：
+
+1. `core` 已落地 `SQLite-backed local backend`
+2. 项目工作目录已在 `create_project` 时自动初始化
+3. 导出产物已写入项目工作目录
+4. 原始素材仍保持外部路径引用
+5. `client` 已实现旧 `localStorage` 到安全存储的迁移链
+
+一句话：
+
+`Client` 是视图层，`Core` 是本地权威状态层，`Atlas` 不是本地事实源。`
 
 ---
 

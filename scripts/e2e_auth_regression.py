@@ -17,10 +17,10 @@ SERVER_DIR = ROOT_DIR / "server"
 if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
 
-from app.auth_service import TokenService, UserService  # noqa: E402
-from app.auth_store import AuthStore  # noqa: E402
-from app.config import get_settings  # noqa: E402
-from app.errors import ServerApiError  # noqa: E402
+from app.services.auth import TokenService, UserService  # noqa: E402
+from app.repositories.auth_store import AuthStore  # noqa: E402
+from app.core.config import get_settings  # noqa: E402
+from app.core.errors import ServerApiError  # noqa: E402
 
 
 class RegressionFailure(RuntimeError):
