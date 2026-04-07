@@ -32,11 +32,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: client/package-lock.json
 
       - name: Install dependencies
-        run: npm install
+        run: |
+          node -e "const fs=require('fs'); const p='package-lock.json'; if(fs.existsSync(p)) fs.unlinkSync(p)"
+          npm install
 
       - name: Build & package
         run: ${{ matrix.build_cmd }}
