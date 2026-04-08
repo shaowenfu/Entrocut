@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from typing import Any
 
+from config import SERVER_BASE_URL
 from helpers import (
     _asset_clip_counts,
     _build_assets,
@@ -18,11 +20,14 @@ from helpers import (
     _bump_draft,
 )
 from core.state import LocalStateRepository
+from ingestion import detect_scenes, extract_and_stitch_frames
+from httpx import AsyncClient
 from schemas import (
     AssistantDecisionOperationModel,
     AssistantDecisionTurnModel,
     AssetModel,
     ChatTarget,
+    ClipModel,
     CoreApiError,
     CreateProjectRequest,
     EditDraftModel,
@@ -38,6 +43,9 @@ from schemas import (
     WorkspaceSnapshotModel,
 )
 from core.manager import WorkspaceManager
+
+
+logger = logging.getLogger(__name__)
 
 
 class InMemoryProjectStore:
@@ -626,14 +634,13 @@ class InMemoryProjectStore:
         self._ensure_record_defaults(record)
         current_task = task
         try:
-            await asyncio.sleep(0.05)
             previous_capabilities = self._derive_project_capabilities(record)
             previous_summary_state = record.get("summary_state")
             segmenting_at = _now_iso()
             running = current_task.model_copy(
                 update={
                     "status": "running",
-                    "progress": 35,
+                    "progress": 10,
                     "message": "Segmenting media into clips",
                     "updated_at": segmenting_at,
                 }
@@ -644,7 +651,7 @@ class InMemoryProjectStore:
                 draft,
                 asset_ids=asset_ids,
                 stage="segmenting",
-                progress=35,
+                progress=10,
                 updated_at=segmenting_at,
                 bump_version=False,
             )
@@ -658,11 +665,7 @@ class InMemoryProjectStore:
                 "asset.updated",
                 {"assets": self._select_draft_assets(segmenting_draft, asset_ids)},
             )
-            await self.emit(
-                project_id,
-                "task.updated",
-                {"task": running_task},
-            )
+            await self.emit(project_id, "task.updated", {"task": running_task})
             await self._emit_derived_state_events(
                 project_id,
                 previous_capabilities=previous_capabilities,
@@ -670,19 +673,35 @@ class InMemoryProjectStore:
             )
             current_task = running
 
-            await asyncio.sleep(0.05)
-            record = self.get_project_or_raise(project_id)
-            self._ensure_record_defaults(record)
-            previous_capabilities = self._derive_project_capabilities(record)
-            previous_summary_state = record.get("summary_state")
-            vectorizing_at = _now_iso()
-            draft = EditDraftModel.model_validate(record["edit_draft"])
-            imported_assets = [asset for asset in draft.assets if asset.id in asset_ids]
-            new_clips = _build_clips(imported_assets)
+            imported_assets = [asset for asset in segmenting_draft.assets if asset.id in asset_ids]
+            
+            # 1. Segmenting
+            new_clips = []
+            for asset in imported_assets:
+                video_path = asset.source_path
+                if not video_path:
+                    continue
+                # run CPU intensive detection in thread
+                scene_list = await asyncio.to_thread(detect_scenes, video_path)
+                for i, (start_ms, end_ms) in enumerate(scene_list, start=1):
+                    new_clips.append(
+                        ClipModel(
+                            id=_entity_id("clip"),
+                            asset_id=asset.id,
+                            source_start_ms=start_ms,
+                            source_end_ms=end_ms,
+                            visual_desc=f"{asset.name} candidate clip {i}",
+                            semantic_tags=[],
+                        )
+                    )
+
             clip_counts = _asset_clip_counts(new_clips)
+
+            # Update state to vectorizing
+            vectorizing_at = _now_iso()
             vectorizing_task = current_task.model_copy(
                 update={
-                    "progress": 75,
+                    "progress": 50,
                     "message": "Vectorizing clips for retrieval",
                     "updated_at": vectorizing_at,
                 }
@@ -692,7 +711,7 @@ class InMemoryProjectStore:
                 draft,
                 asset_ids=asset_ids,
                 stage="vectorizing",
-                progress=75,
+                progress=50,
                 clip_counts=clip_counts,
                 indexed_clip_counts={asset_id: 0 for asset_id in asset_ids},
                 append_clips=new_clips,
@@ -709,11 +728,7 @@ class InMemoryProjectStore:
                 "asset.updated",
                 {"assets": self._select_draft_assets(vectorizing_draft, asset_ids)},
             )
-            await self.emit(
-                project_id,
-                "task.updated",
-                {"task": vectorizing_running_task},
-            )
+            await self.emit(project_id, "task.updated", {"task": vectorizing_running_task})
             await self._emit_derived_state_events(
                 project_id,
                 previous_capabilities=previous_capabilities,
@@ -721,13 +736,63 @@ class InMemoryProjectStore:
             )
             current_task = vectorizing_task
 
-            await asyncio.sleep(0.05)
-            record = self.get_project_or_raise(project_id)
-            self._ensure_record_defaults(record)
-            previous_capabilities = self._derive_project_capabilities(record)
-            previous_summary_state = record.get("summary_state")
+            # 2. Extract frames and send to vectorizer
+            auth_session = await auth_session_store.snapshot()
+            access_token = auth_session.get("access_token")
+            if not access_token:
+                raise RuntimeError("Access token missing, please login.")
+
+            # Batch vectorize
+            batch_size = 10
+            asset_by_id = {asset.id: asset for asset in imported_assets}
+            for i in range(0, len(new_clips), batch_size):
+                batch = new_clips[i : i + batch_size]
+                docs: list[dict[str, Any]] = []
+                for clip in batch:
+                    asset = asset_by_id.get(clip.asset_id)
+                    if asset is None:
+                        continue
+                    video_path = asset.source_path
+                    if not video_path:
+                        continue
+                    b64 = await asyncio.to_thread(
+                        extract_and_stitch_frames,
+                        video_path,
+                        clip.source_start_ms,
+                        clip.source_end_ms,
+                    )
+                    docs.append({
+                        "id": clip.id,
+                        "content": {"image_base64": b64},
+                        "fields": {
+                            "clip_id": clip.id,
+                            "asset_id": clip.asset_id,
+                            "project_id": project_id,
+                            "source_start_ms": clip.source_start_ms,
+                            "source_end_ms": clip.source_end_ms,
+                            "frame_count": 4,
+                        }
+                    })
+
+                # send request to server
+                if docs:
+                    endpoint_url = f"{SERVER_BASE_URL}/v1/assets/vectorize"
+                    request_headers = {
+                        "Authorization": f"Bearer {access_token}",
+                        "Content-Type": "application/json",
+                    }
+                    async with AsyncClient(timeout=300) as client:
+                        response = await client.post(endpoint_url, json={"docs": docs}, headers=request_headers)
+                        response.raise_for_status()
+
+                # Update progress
+                progress = 50 + int(50 * (i + len(batch)) / max(1, len(new_clips)))
+                current_task = current_task.model_copy(update={"progress": progress})
+                self._upsert_active_task(record, current_task)
+                await self.emit(project_id, "task.updated", {"task": current_task})
+
+            # Update stage to ready
             ready_at = _now_iso()
-            draft = EditDraftModel.model_validate(record["edit_draft"])
             ready_draft = self._update_draft_assets(
                 draft,
                 asset_ids=asset_ids,
@@ -774,6 +839,7 @@ class InMemoryProjectStore:
                 {"task": succeeded_task},
             )
         except Exception as exc:
+            logger.error("Asset import failed: %s", exc, exc_info=True)
             record = self.get_project_or_raise(project_id)
             self._ensure_record_defaults(record)
             previous_capabilities = self._derive_project_capabilities(record)

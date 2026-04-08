@@ -35,9 +35,33 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         core_server.auth_session_store.reset_for_test()
         self.client = TestClient(core_server.app)
         self.client.__enter__()
+        
+        self.detect_scenes_patcher = patch("ingestion.detect_scenes", return_value=[(0, 6000), (6000, 12000)])
+        self.detect_scenes_mock = self.detect_scenes_patcher.start()
+        
+        self.extract_frames_patcher = patch("ingestion.extract_and_stitch_frames", return_value="dummy_b64")
+        self.extract_frames_mock = self.extract_frames_patcher.start()
+        
+        class _MockResponse:
+            status_code = 200
+            def raise_for_status(self): pass
+            
+        class _MockClientAsyncContextManager:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                pass
+            async def post(self, *args, **kwargs):
+                return _MockResponse()
+                
+        self.httpx_patcher = patch("store.AsyncClient", return_value=_MockClientAsyncContextManager())
+        self.httpx_mock = self.httpx_patcher.start()
 
     def tearDown(self) -> None:
         self.client.__exit__(None, None, None)
+        self.detect_scenes_patcher.stop()
+        self.extract_frames_patcher.stop()
+        self.httpx_patcher.stop()
 
     def _create_project(self) -> tuple[str, list[str]]:
         response = self.client.post(
@@ -689,6 +713,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         response = self.client.post("/api/v1/projects", json={})
         self.assertEqual(response.status_code, 200)
         project_id = response.json()["project"]["id"]
+        self._set_auth_session()
 
         with self.client.websocket_connect(f"/api/v1/projects/{project_id}/events") as websocket:
             snapshot_event = websocket.receive_json()
@@ -726,13 +751,15 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
 
     def test_partial_media_processing_keeps_editing_capability_when_existing_clips_exist(self) -> None:
         project_id, _ = self._create_project()
+        self._set_auth_session()
 
-        original_sleep = asyncio.sleep
+        async def slow_to_thread(func, *args, **kwargs) -> Any:
+            await asyncio.sleep(0.5)
+            if "detect_scenes" in str(func):
+                return [(0, 6000), (6000, 12000)]
+            return "dummy_b64"
 
-        async def slow_store_sleep(delay: float) -> None:
-            await original_sleep(max(delay, 0.2))
-
-        with patch("store.asyncio.sleep", slow_store_sleep):
+        with patch("store.asyncio.to_thread", slow_to_thread):
             import_response = self.client.post(
                 f"/api/v1/projects/{project_id}/assets:import",
                 json={"media": {"files": [{"name": "extra.mp4", "path": "/tmp/extra.mp4"}]}},

@@ -768,29 +768,52 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                   />
                 ) : (
                   <div className="asset-grid">
-                    {assets.map((asset) => (
-                      <article
-                        key={asset.id}
-                        className={`asset-card ${
-                          previewSelection?.kind === "asset" && previewSelection.assetId === asset.id ? "is-active" : ""
-                        }`}
-                        onClick={() => {
-                          setPreviewSelection({ kind: "asset", assetId: asset.id });
-                          setCurrentTimeSec(0);
-                          setIsPlaying(true);
-                        }}
-                      >
-                        <div className="asset-thumb">
-                          {thumbnailUrls[asset.name] ? (
-                            <img src={thumbnailUrls[asset.name]} alt={asset.name} className="asset-thumb-image" />
-                          ) : (
-                            <Film size={14} />
-                          )}
-                          <span>{asset.duration}</span>
-                        </div>
-                        <p title={asset.name}>{asset.name}</p>
-                      </article>
-                    ))}
+                    {assets.map((asset) => {
+                      const isReady = asset.processingStage === "ready";
+                      const isFailed = asset.processingStage === "failed";
+                      const isLoading = !isReady && !isFailed;
+                      const progress = asset.processingProgress ?? 0;
+                      
+                      return (
+                        <article
+                          key={asset.id}
+                          className={`asset-card ${
+                            previewSelection?.kind === "asset" && previewSelection.assetId === asset.id ? "is-active" : ""
+                          } ${!isReady ? "is-processing" : ""}`}
+                          onClick={() => {
+                            if (isReady) {
+                              setPreviewSelection({ kind: "asset", assetId: asset.id });
+                              setCurrentTimeSec(0);
+                              setIsPlaying(true);
+                            }
+                          }}
+                        >
+                          <div className="asset-thumb">
+                            {isReady ? (
+                              thumbnailUrls[asset.name] ? (
+                                <img src={thumbnailUrls[asset.name]} alt={asset.name} className="asset-thumb-image" />
+                              ) : (
+                                <Film size={14} />
+                              )
+                            ) : isFailed ? (
+                              <div className="asset-thumb-status error">
+                                <AlertCircle size={20} />
+                                <span className="status-text">处理失败</span>
+                              </div>
+                            ) : (
+                              <div className="asset-thumb-status loading">
+                                <Loader2 size={20} className="spinner" />
+                                <span className="status-text">
+                                  {asset.processingStage === "segmenting" ? "镜头切分中" : "云端特征提取中"} {progress}%
+                                </span>
+                              </div>
+                            )}
+                            {isReady && <span>{asset.duration}</span>}
+                          </div>
+                          <p title={asset.name}>{asset.name}</p>
+                        </article>
+                      );
+                    })}
                   </div>
                 )}
               </>
