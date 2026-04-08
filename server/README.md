@@ -111,6 +111,30 @@
 4. `Redis` 不可用时，`login_session` 会退回进程内存模式，方便本地开发
 5. `POST /v1/chat/completions` 当前主链已经受鉴权保护，但真实上游能力和计费闭环仍需继续验证
 
+## 开发辅助脚本
+
+### `scripts/issue_super_token.py` — 签发开发用超级用户 token
+
+用于在本地或 staging 环境快速获取一个长效 access token，跳过正常登录流程，方便调试鉴权保护下的 API。
+
+**做了什么：**
+1. 在 MongoDB 中创建（或复用）一个 `dev_superuser` 用户，自带极高 credits 余额
+2. 创建一条对应的 login session
+3. 签发一个有效期 100 年的 JWT，scope 包含 `user:read` 和 `chat:proxy`
+
+**用法：**
+```bash
+# 使用默认 user-id / email
+python scripts/issue_super_token.py
+
+# 自定义
+python scripts/issue_super_token.py --user-id myuser --email my@dev.local
+```
+
+输出可直接用作 `Authorization: Bearer <token>` 测试任意受保护端点。
+
+> 仅限开发 / staging 使用，**禁止在生产环境运行**。
+
 ## 当前非目标
 
 当前版本仍然**不追求**：
