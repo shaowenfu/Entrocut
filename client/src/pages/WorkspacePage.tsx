@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent } from "react";
 import {
+  AlertCircle,
   ArrowLeft,
   ChevronRight,
   Download,
