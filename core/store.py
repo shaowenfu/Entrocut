@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from typing import Any
 
+from config import SERVER_BASE_URL
 from helpers import (
     _asset_clip_counts,
     _build_assets,
@@ -18,12 +20,14 @@ from helpers import (
     _bump_draft,
 )
 from core.state import LocalStateRepository
+from ingestion import detect_scenes, extract_and_stitch_frames
 from httpx import AsyncClient
 from schemas import (
     AssistantDecisionOperationModel,
     AssistantDecisionTurnModel,
     AssetModel,
     ChatTarget,
+    ClipModel,
     CoreApiError,
     CreateProjectRequest,
     EditDraftModel,
@@ -39,6 +43,9 @@ from schemas import (
     WorkspaceSnapshotModel,
 )
 from core.manager import WorkspaceManager
+
+
+logger = logging.getLogger(__name__)
 
 
 class InMemoryProjectStore:
@@ -623,11 +630,6 @@ class InMemoryProjectStore:
         return task
 
     async def _run_assets_import(self, project_id: str, task: TaskModel, asset_ids: set[str]) -> None:
-        from ingestion import detect_scenes, extract_and_stitch_frames
-        from config import SERVER_BASE_URL
-        from schemas import ClipModel
-        from helpers import _entity_id, _asset_clip_counts
-
         record = self.get_project_or_raise(project_id)
         self._ensure_record_defaults(record)
         current_task = task
@@ -742,15 +744,23 @@ class InMemoryProjectStore:
 
             # Batch vectorize
             batch_size = 10
+            asset_by_id = {asset.id: asset for asset in imported_assets}
             for i in range(0, len(new_clips), batch_size):
-                batch = new_clips[i:i+batch_size]
-                docs = []
+                batch = new_clips[i : i + batch_size]
+                docs: list[dict[str, Any]] = []
                 for clip in batch:
-                    asset = next(a for a in imported_assets if a.id == clip.asset_id)
+                    asset = asset_by_id.get(clip.asset_id)
+                    if asset is None:
+                        continue
                     video_path = asset.source_path
                     if not video_path:
                         continue
-                    b64 = await asyncio.to_thread(extract_and_stitch_frames, video_path, clip.source_start_ms, clip.source_end_ms)
+                    b64 = await asyncio.to_thread(
+                        extract_and_stitch_frames,
+                        video_path,
+                        clip.source_start_ms,
+                        clip.source_end_ms,
+                    )
                     docs.append({
                         "id": clip.id,
                         "content": {"image_base64": b64},
@@ -773,8 +783,7 @@ class InMemoryProjectStore:
                     }
                     async with AsyncClient(timeout=300) as client:
                         response = await client.post(endpoint_url, json={"docs": docs}, headers=request_headers)
-                        if response.status_code != 200:
-                            raise RuntimeError(f"Vectorize failed: {response.status_code}")
+                        response.raise_for_status()
 
                 # Update progress
                 progress = 50 + int(50 * (i + len(batch)) / max(1, len(new_clips)))
@@ -830,9 +839,7 @@ class InMemoryProjectStore:
                 {"task": succeeded_task},
             )
         except Exception as exc:
-            import traceback
-            import logging
-            logging.getLogger(__name__).error(f"Asset import failed: {exc}", exc_info=True)
+            logger.error("Asset import failed: %s", exc, exc_info=True)
             record = self.get_project_or_raise(project_id)
             self._ensure_record_defaults(record)
             previous_capabilities = self._derive_project_capabilities(record)
