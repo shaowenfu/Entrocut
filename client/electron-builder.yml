@@ -1,0 +1,51 @@
+appId: com.entrocut.desktop
+productName: EntroCut
+copyright: Copyright © 2025 EntroCut
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - package.json
+  - "!node_modules/**/*"
+
+extraMetadata:
+  main: dist-electron/main.js
+
+mac:
+  category: public.app-category.productivity
+  target:
+    - dmg
+    - zip
+  extendInfo:
+    CFBundleURLTypes:
+      - CFBundleURLName: EntroCut Auth
+        CFBundleURLSchemes:
+          - entrocut
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: ${name}-${version}-setup.${ext}
+
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Video
+  artifactName: ${name}-${version}.${ext}
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+
+publish:
+  provider: github
+  owner: shaowenfu
+  repo: Entrocut

@@ -1,6 +1,7 @@
 # System
 .DS_Store
 Thumbs.db
+*:Zone.Identifier
 
 # Editor
 .vscode/*
@@ -32,6 +33,7 @@ htmlcov/
 **/dist/
 **/dist-electron/
 **/dist-main/
+**/release/
 **/.vite/
 coverage/
 

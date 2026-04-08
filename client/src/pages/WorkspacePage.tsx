@@ -51,7 +51,6 @@ const SUGGESTION_CHIPS = [
 ];
 
 
-
 function isDecisionTurn(turn: ChatTurn): turn is AssistantDecisionTurn {
   return turn.role === "assistant";
 }

@@ -6,7 +6,6 @@ import {
   Cloud,
   FileVideo,
   FolderUp,
-  Github,
   HardDrive,
   MoreVertical,
   Plus,
