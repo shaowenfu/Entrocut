@@ -12,12 +12,6 @@ from config import (
     SERVER_CHAT_MODEL,
     SERVER_CHAT_TIMEOUT_SECONDS,
 )
-from core.context import (
-    build_goal_state,
-    build_planner_context_packet,
-    build_planner_system_prompt,
-    build_scope_state,
-)
 from helpers import (
     _bump_draft,
     _chat_history_summary,
@@ -44,6 +38,21 @@ from schemas import (
     ToolObservationModel,
 )
 from store import store
+
+try:
+    from core.context import (
+        build_goal_state,
+        build_planner_context_packet,
+        build_planner_system_prompt,
+        build_scope_state,
+    )
+except ModuleNotFoundError:
+    from context import (
+        build_goal_state,
+        build_planner_context_packet,
+        build_planner_system_prompt,
+        build_scope_state,
+    )
 
 
 async def _emit_agent_progress(

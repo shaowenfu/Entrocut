@@ -19,7 +19,6 @@ from helpers import (
     _trimmed,
     _bump_draft,
 )
-from core.state import LocalStateRepository
 from ingestion import detect_scenes, extract_and_stitch_frames
 from httpx import AsyncClient
 from schemas import (
@@ -42,7 +41,13 @@ from schemas import (
     UserTurnModel,
     WorkspaceSnapshotModel,
 )
-from core.manager import WorkspaceManager
+
+try:
+    from core.state import LocalStateRepository
+    from core.manager import WorkspaceManager
+except ModuleNotFoundError:
+    from state import LocalStateRepository
+    from manager import WorkspaceManager
 
 
 logger = logging.getLogger(__name__)
