@@ -11,7 +11,7 @@ export type ProjectLifecycleState = "active" | "archived";
 export type AssetProcessingStage = "pending" | "segmenting" | "vectorizing" | "ready" | "failed";
 
 export type AssetType = "video" | "audio";
-export type TaskSlot = "media" | "agent" | "export";
+export type TaskSlot = "media" | "agent" | "preview" | "export";
 export type TaskType = "ingest" | "index" | "chat" | "render";
 export type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type ChatMode = "planning_only" | "editing";
@@ -166,6 +166,9 @@ export interface CoreProjectConversationState {
 export interface CoreProjectRetrievalState {
   last_query?: string | null;
   candidate_clip_ids: string[];
+  candidate_scores?: Record<string, number>;
+  selected_candidate_id?: string | null;
+  inspection_summary?: string | null;
   retrieval_ready: boolean;
   blocking_reason?: string | null;
   updated_at?: string | null;
@@ -209,6 +212,17 @@ export interface CoreWorkspaceSnapshot {
   capabilities: CoreProjectCapabilities;
   active_tasks: CoreTask[];
   active_task: CoreTask | null;
+  preview_result?: Record<string, unknown> | null;
+  export_result?: Record<string, unknown> | null;
+}
+
+export interface CoreAgentStepItem {
+  phase: string;
+  summary: string;
+  details: Record<string, unknown>;
+  status?: string;
+  iteration?: number;
+  emitted_at?: string;
 }
 
 export interface CoreExportResult {

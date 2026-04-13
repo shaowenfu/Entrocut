@@ -52,6 +52,7 @@
 7. [2026-03-13 Credits / BYOK 改造复盘](./develop_diary/2026-03-13_credits_byok_settlement_followup_journal.md)
 8. [2026-03-24 项目回顾与阶段性暂停日志](./develop_diary/2026-03-24_project_recap_and_pause_journal.md)
 9. [2026-03-29 Server 分支 PR 回收合并日志](./develop_diary/2026-03-29_server_branch_pr_merge_journal.md)
+10. [2026-04-13 MVP 闭环与渲染收口日志](./develop_diary/2026-04-13_mvp_closure_rendering_timeline_journal.md)
 
 ### 6. Reference / Archive / Secrets
 

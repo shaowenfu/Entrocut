@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 ProjectLifecycleState = Literal["active", "archived"]
 AssetProcessingStage = Literal["pending", "segmenting", "vectorizing", "ready", "failed"]
 AssetType = Literal["video", "audio"]
-TaskSlot = Literal["media", "agent", "export"]
+TaskSlot = Literal["media", "agent", "preview", "export"]
 TaskType = Literal["ingest", "index", "chat", "render"]
 TaskStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 EditDraftStatus = Literal["draft", "ready", "rendering", "failed"]
@@ -224,6 +224,9 @@ class ConversationState(BaseModel):
 class RetrievalState(BaseModel):
     last_query: str | None = None
     candidate_clip_ids: list[str] = Field(default_factory=list)
+    candidate_scores: dict[str, float] = Field(default_factory=dict)
+    selected_candidate_id: str | None = None
+    inspection_summary: str | None = None
     retrieval_ready: bool = False
     blocking_reason: str | None = None
     updated_at: str | None = None
@@ -282,6 +285,8 @@ class WorkspaceSnapshotModel(BaseModel):
     capabilities: ProjectCapabilities = Field(default_factory=ProjectCapabilities)
     active_tasks: list[TaskModel] = Field(default_factory=list)
     active_task: TaskModel | None = None
+    preview_result: dict[str, Any] | None = None
+    export_result: dict[str, Any] | None = None
 
 
 class CreateProjectRequest(BaseModel):
@@ -362,3 +367,36 @@ class EventEnvelope(BaseModel):
     project_id: str
     emitted_at: str
     data: dict[str, Any]
+
+
+class RenderSegment(BaseModel):
+    asset_id: str
+    source_path: str
+    source_in_ms: int = Field(ge=0)
+    source_out_ms: int = Field(gt=0)
+    shot_id: str
+    scene_id: str | None = None
+    order: int = Field(ge=0)
+
+
+class RenderPlan(BaseModel):
+    project_id: str
+    draft_id: str
+    draft_version: int = Field(ge=1)
+    segments: list[RenderSegment] = Field(default_factory=list)
+    estimated_duration_ms: int = Field(ge=0)
+
+
+class PatchOperationModel(BaseModel):
+    op: Literal["insert_shot", "replace_shot", "trim_shot", "delete_shot", "reorder_shot"]
+    shot_id: str | None = None
+    clip_id: str | None = None
+    index: int | None = None
+    source_in_ms: int | None = None
+    source_out_ms: int | None = None
+
+
+class EditDraftPatchModel(BaseModel):
+    operations: list[PatchOperationModel] = Field(default_factory=list)
+    reasoning_summary: str | None = None
+    scope: Literal["project", "scene", "shot"] = "project"

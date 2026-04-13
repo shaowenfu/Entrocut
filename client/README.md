@@ -32,6 +32,8 @@
    - 发送 chat
    - 导出项目
    - 订阅 `project events`
+   - 展示 `agent` 执行时间线（`agent.step.updated`）
+   - 优先播放 `Draft Preview`（`preview.completed`）并区分 `Source Media`
 
 3. `Zustand` 状态层
    - `useLaunchpadStore.ts`
@@ -89,6 +91,7 @@
 5. 发送 chat
 6. 订阅 `WebSocket events`
 7. 导出项目
+8. 消费 `preview.completed` 与 `agent.step.updated` 过程事件
 
 ## 当前非目标
 

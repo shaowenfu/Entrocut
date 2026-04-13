@@ -32,7 +32,8 @@
 1. 本地项目、素材导入、`WorkspaceSnapshot`、导出任务、`WebSocket event stream（事件流）` 已经存在
 2. 本地数据层已经进入 `SQLite + project workspace dir + auth session mirror` 形态
 3. `chat` 已经进入 `planner-driven` 最小闭环
-4. `tool execution` 与草案写回已经能跑通最小原型，但还不是最终生产实现
+4. `tool execution` 已经接入真实 `retrieval / inspect / patch / preview`，并可回写运行时与草案状态
+5. `preview / export` 已共享 `RenderPlan` 并落地真实渲染产物
 
 换句话说，`core` 当前是：
 
@@ -159,6 +160,7 @@
 9. `export.completed`
 10. `error.occurred`
 11. `agent.step.updated`
+12. `preview.completed`
 
 ## chat 主链的当前状态
 
@@ -174,11 +176,11 @@
 8. 在需要时执行 `read / retrieve / inspect / patch / preview`
 9. 将结果回写为新的 `EditDraft`
 
-当前仍然明确保留的原型边界：
+当前仍然明确保留的边界：
 
-1. `placeholder_first_cut（占位初剪）` 仍是最小可运行路径之一
-2. `tool execution` 还不是最终生产级实现
-3. 真正复杂的精剪、排序、质量判断仍需要继续演进
+1. `placeholder_first_cut（占位初剪）` 仍作为回退路径保留
+2. 复杂精剪、排序、质量判断仍需要继续演进
+3. 渲染参数与并发策略尚未进入最终生产级优化阶段
 
 这意味着：
 

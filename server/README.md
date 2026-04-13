@@ -152,4 +152,5 @@ python scripts/issue_super_token.py --user-id myuser --email my@dev.local
 1. 鉴权底座已经成立
 2. `chat proxy` 主链已经接上
 3. 历史 `GitHub OAuth` 与 `credits/BYOK` 分支能力已经回收
-4. 但仍需要继续补真实上游联调、计费回归和端到端测试
+4. `core` 已开始在 agent loop 中真实调用 `POST /v1/assets/retrieval`
+5. 仍需要继续补真实上游联调、计费回归和端到端测试
