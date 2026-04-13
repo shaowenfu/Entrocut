@@ -9,7 +9,6 @@ from config import SERVER_BASE_URL
 from helpers import (
     _asset_clip_counts,
     _build_assets,
-    _build_clips,
     _build_edit_plan,
     _derive_title,
     _draft_from_payload,
@@ -452,7 +451,7 @@ class InMemoryProjectStore:
         now = _now_iso()
         project_id = _entity_id("proj")
         title = _derive_title(normalized_title, normalized_prompt, payload.media)
-        edit_draft = _draft_from_payload(project_id, now, payload.media)
+        edit_draft = _draft_from_payload(project_id, now)
 
         project = ProjectModel(
             id=project_id,
@@ -566,12 +565,59 @@ class InMemoryProjectStore:
         self._workspace_manager.clear_all_project_workspaces()
 
     async def queue_assets_import(self, project_id: str, media: MediaReference) -> TaskModel:
+        auth_session = await auth_session_store.snapshot()
+        if not auth_session.get("access_token"):
+            raise CoreApiError(
+                status_code=401,
+                code="AUTH_SESSION_REQUIRED",
+                message="Sign in is required before media ingest can run.",
+            )
         if not _media_file_refs(media):
             raise CoreApiError(
                 status_code=422,
                 code="MEDIA_REFERENCE_REQUIRED",
-                message="At least one media file or folder_path is required.",
+                message="At least one media file is required.",
             )
+        if media.folder_path:
+            raise CoreApiError(
+                status_code=422,
+                code="MEDIA_FOLDER_SCAN_REQUIRED",
+                message="folder_path is not a direct ingest input. Scan the folder and submit media.files[].",
+            )
+        validated_files: list[dict[str, str]] = []
+        for file_ref in _media_file_refs(media):
+            file_path = (file_ref.path or "").strip()
+            if not file_path:
+                raise CoreApiError(
+                    status_code=422,
+                    code="MEDIA_FILE_PATH_REQUIRED",
+                    message="Each media file entry must include an absolute local file path.",
+                    details={"file_name": file_ref.name},
+                )
+            path_obj = Path(file_path)
+            if not path_obj.is_absolute():
+                raise CoreApiError(
+                    status_code=422,
+                    code="MEDIA_FILE_PATH_NOT_ABSOLUTE",
+                    message="Media file path must be absolute.",
+                    details={"file_name": file_ref.name, "path": file_path},
+                )
+            if not path_obj.exists():
+                raise CoreApiError(
+                    status_code=422,
+                    code="MEDIA_FILE_NOT_FOUND",
+                    message="Media file does not exist.",
+                    details={"file_name": file_ref.name, "path": file_path},
+                )
+            if path_obj.is_dir():
+                raise CoreApiError(
+                    status_code=422,
+                    code="MEDIA_FILE_PATH_IS_DIRECTORY",
+                    message="Media file path points to a directory.",
+                    details={"file_name": file_ref.name, "path": file_path},
+                )
+            validated_files.append({"name": file_ref.name, "path": file_path})
+        media = MediaReference(files=validated_files)
 
         record = self.get_project_or_raise(project_id)
         self._ensure_record_defaults(record)
@@ -588,7 +634,7 @@ class InMemoryProjectStore:
             raise CoreApiError(
                 status_code=422,
                 code="MEDIA_REFERENCE_REQUIRED",
-                message="At least one media file or folder_path is required.",
+                message="At least one media file is required.",
             )
         draft = EditDraftModel.model_validate(record["edit_draft"])
         next_draft = EditDraftModel.model_validate(

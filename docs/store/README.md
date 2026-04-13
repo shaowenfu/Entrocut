@@ -17,6 +17,15 @@
    - 从第一性原理重构 `Project / Asset / EditDraft / Runtime / Task` 的状态归属与派生 capability 设计
    - 当前主要作为设计背景与迁移决策记录，最新契约仍以 `01` 为准
 
+## 2026-04 导入链路补充口径
+
+与 `real_desktop_ingest_retrieval` 任务一致，当前契约补充如下：
+
+1. `create_project` 只负责创建空项目与空草稿
+2. 真实素材必须通过 `assets:import` + `media.files[]` 导入
+3. `media.files[*].path` 必须是绝对本地文件路径
+4. `folder_path` 不再作为真实 ingest 输入，仅可作为上游扫描描述
+
 ## 当前阅读原则
 
 1. 想看“现在代码到底怎么对外表达”，先读 [01_core_api_ws_contract.md](./01_core_api_ws_contract.md)

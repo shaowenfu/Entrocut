@@ -7,17 +7,17 @@
 1. 想先理解整体文档布局，看当前页。
 2. 想看剪辑基础模型，从 [editing/README.md](./editing/README.md) 开始。
 3. 想系统看 `editing agent（剪辑智能体）` 设计，按 [agent_runtime/README.md](./agent_runtime/README.md) 的顺序阅读。
-4. 想看 `client -> core` 本地契约，从 [contracts/README.md](./contracts/README.md) 开始。
+4. 想看 `client -> core` 本地契约，从 [store/README.md](./store/README.md) 开始。
 5. 想看 `server` 方向的设计与约束，从 [server/README.md](./server/README.md) 开始。
 6. 想回顾推进过程，直接看 [develop_diary](./develop_diary/)。
 
 ## 目录分组
 
-### 1. Contracts（契约）
+### 1. Store Contracts（本地契约）
 
-- [contracts/README.md](./contracts/README.md)
+- [store/README.md](./store/README.md)
 - 当前重点：
-  - [Core API / WS Contract](./contracts/01_core_api_ws_contract.md)
+  - [Core API / WS Contract](./store/01_core_api_ws_contract.md)
 
 ### 2. Editing（剪辑基础）
 
@@ -52,6 +52,7 @@
 7. [2026-03-13 Credits / BYOK 改造复盘](./develop_diary/2026-03-13_credits_byok_settlement_followup_journal.md)
 8. [2026-03-24 项目回顾与阶段性暂停日志](./develop_diary/2026-03-24_project_recap_and_pause_journal.md)
 9. [2026-03-29 Server 分支 PR 回收合并日志](./develop_diary/2026-03-29_server_branch_pr_merge_journal.md)
+10. [2026-04-13 真实桌面导入与检索准备收敛日志](./develop_diary/2026-04-13_real_desktop_ingest_retrieval_landing_journal.md)
 
 ### 6. Reference / Archive / Secrets
 
@@ -64,7 +65,7 @@
 如果目标是快速进入当前主线，建议按这个顺序：
 
 1. [editing/01_edit_draft_schema.md](./editing/01_edit_draft_schema.md)
-2. [contracts/01_core_api_ws_contract.md](./contracts/01_core_api_ws_contract.md)
+2. [store/01_core_api_ws_contract.md](./store/01_core_api_ws_contract.md)
 3. [agent_runtime/README.md](./agent_runtime/README.md)
 4. [server/README.md](./server/README.md)
 5. [develop_diary/2026-03-29_server_branch_pr_merge_journal.md](./develop_diary/2026-03-29_server_branch_pr_merge_journal.md)

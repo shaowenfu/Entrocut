@@ -111,6 +111,8 @@
 4. `Redis` 不可用时，`login_session` 会退回进程内存模式，方便本地开发
 5. `POST /v1/chat/completions` 当前主链已经受鉴权保护，但真实上游能力和计费闭环仍需继续验证
 
+补充：当前 `vectorize` 的上游输入已默认来自桌面端真实本地视频路径切分后的 contact sheet，不再依赖 `create_project` 阶段的占位 clips。
+
 ## 开发辅助脚本
 
 ### `scripts/issue_super_token.py` — 签发开发用超级用户 token
