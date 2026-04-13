@@ -184,11 +184,11 @@
 
 1. [docs/README.md](./docs/README.md)
 2. [docs/editing/01_edit_draft_schema.md](./docs/editing/01_edit_draft_schema.md)
-3. [docs/contracts/01_core_api_ws_contract.md](./docs/contracts/01_core_api_ws_contract.md)
+3. [docs/store/01_core_api_ws_contract.md](./docs/store/01_core_api_ws_contract.md)
 4. [docs/agent_runtime/README.md](./docs/agent_runtime/README.md)
 5. [docs/server/README.md](./docs/server/README.md)
 6. [docs/develop_diary/2026-03-24_project_recap_and_pause_journal.md](./docs/develop_diary/2026-03-24_project_recap_and_pause_journal.md)
-7. [docs/contracts/02_local_data_storage_architecture.md](./docs/contracts/02_local_data_storage_architecture.md)
+7. [docs/store/02_local_data_storage_architecture.md](./docs/store/02_local_data_storage_architecture.md)
 8. [docs/develop_diary/2026-03-29_server_branch_pr_merge_journal.md](./docs/develop_diary/2026-03-29_server_branch_pr_merge_journal.md)
 
 ## 当前关键接口面
@@ -268,3 +268,18 @@ uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
 当前最重要的原则仍然是：
 
 `把脚手架收缩到基础设施层，把决策自由留给模型。`
+
+
+## 桌面端一体化发布进展（2026-04-13）
+
+当前仓库已经落地桌面端 `core supervisor` 最小链路：
+
+1. `core` 可通过 `PyInstaller` 打出 `core-dist/` 可执行目录。
+2. Electron Main 会在应用启动时自动拉起本地 `core`，并做 `/health` 探活。
+3. Main 通过 `preload + IPC` 向 Renderer 暴露运行态 `core base url`。
+4. Renderer 在 `core ready` 前展示桌面初始化页，失败时展示错误态。
+
+对齐文档：
+
+- [docs/tasks/2026-04-12_desktop_local_core_packaging_task.md](./docs/tasks/2026-04-12_desktop_local_core_packaging_task.md)
+- [docs/client/01_electron_build_and_release.md](./docs/client/01_electron_build_and_release.md)

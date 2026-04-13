@@ -28,6 +28,7 @@
 14. [2026-03-30 Core 模块重构日志](./2026-03-30_core_module_reconstruct_journal.md)
 15. [2026-03-31 项目状态管理收口日志](./2026-03-31_project_state_management_wrapup_journal.md)
 16. [2026-03-31 Server 目录重构日志](./2026-03-31_server_directory_refactor_journal.md)
+17. [2026-04-13 桌面端 Core 托管与打包落地日志](./2026-04-13_desktop_core_packaging_supervisor_journal.md)
 
 ## 当前这组日记主要覆盖的主题
 

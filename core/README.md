@@ -259,3 +259,24 @@ PYTHONPATH=.. pytest tests -q
 如果继续推进 `core`，最值得投入的不是再扩接口，而是：
 
 `把 planner -> tool execution -> replanning 的真实生产级 agent loop 继续收口到 core/chat 主链里。`
+
+## 桌面端打包（PyInstaller）
+
+为桌面端一体化发布，`core/` 新增以下打包入口：
+
+1. `desktop_entry.py`
+   - 可执行入口，读取 `CORE_PORT` 并启动 `uvicorn server:app`
+2. `pyinstaller.spec`
+   - 单目录构建配置，产物名 `entrocut-core`
+3. `scripts/build_desktop_core.sh`
+   - 一键构建脚本，输出 `core-dist/`
+
+本地构建示例：
+
+```bash
+cd core
+pip install pyinstaller
+bash scripts/build_desktop_core.sh
+```
+
+输出目录默认为：`core/dist/core-dist`。

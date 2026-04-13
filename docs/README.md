@@ -7,17 +7,17 @@
 1. 想先理解整体文档布局，看当前页。
 2. 想看剪辑基础模型，从 [editing/README.md](./editing/README.md) 开始。
 3. 想系统看 `editing agent（剪辑智能体）` 设计，按 [agent_runtime/README.md](./agent_runtime/README.md) 的顺序阅读。
-4. 想看 `client -> core` 本地契约，从 [contracts/README.md](./contracts/README.md) 开始。
+4. 想看 `client -> core` 本地契约，从 [store/README.md](./store/README.md) 开始。
 5. 想看 `server` 方向的设计与约束，从 [server/README.md](./server/README.md) 开始。
 6. 想回顾推进过程，直接看 [develop_diary](./develop_diary/)。
 
 ## 目录分组
 
-### 1. Contracts（契约）
+### 1. Store / Contract（本地契约与存储）
 
-- [contracts/README.md](./contracts/README.md)
+- [store/README.md](./store/README.md)
 - 当前重点：
-  - [Core API / WS Contract](./contracts/01_core_api_ws_contract.md)
+  - [Core API / WS Contract](./store/01_core_api_ws_contract.md)
 
 ### 2. Editing（剪辑基础）
 
@@ -64,7 +64,13 @@
 如果目标是快速进入当前主线，建议按这个顺序：
 
 1. [editing/01_edit_draft_schema.md](./editing/01_edit_draft_schema.md)
-2. [contracts/01_core_api_ws_contract.md](./contracts/01_core_api_ws_contract.md)
+2. [store/01_core_api_ws_contract.md](./store/01_core_api_ws_contract.md)
 3. [agent_runtime/README.md](./agent_runtime/README.md)
 4. [server/README.md](./server/README.md)
 5. [develop_diary/2026-03-29_server_branch_pr_merge_journal.md](./develop_diary/2026-03-29_server_branch_pr_merge_journal.md)
+
+
+### 7. Desktop Packaging（桌面一体化）
+
+- [tasks/2026-04-12_desktop_local_core_packaging_task.md](./tasks/2026-04-12_desktop_local_core_packaging_task.md)
+- [client/01_electron_build_and_release.md](./client/01_electron_build_and_release.md)

@@ -224,3 +224,50 @@ PATCH: 向后兼容的问题修复
 | `tsc -b` 报类型错误 | TypeScript 类型不匹配 | 先 `npm run typecheck` 排查 |
 | `electron-builder` 找不到入口 | `extraMetadata.main` 配置错误 | 确认 `dist-electron/main.js` 存在 |
 | 图标缺失报错 | `build/icon.png` 不存在 | 确认 `client/build/icon.png` 存在 |
+
+## 十、桌面端 Core 一体化打包补充（2026-04）
+
+当前打包链路已升级为：
+
+```text
+构建 core 可执行目录(core-dist)
+→ 构建 renderer(dist)
+→ 构建 electron main/preload(dist-electron)
+→ electron-builder 打包并携带 core-dist
+```
+
+### 关键新增文件
+
+| 文件 | 职责 |
+|---|---|
+| `core/scripts/build_desktop_core.sh` | 触发 PyInstaller，输出 `core-dist` |
+| `core/pyinstaller.spec` | Core 可执行单目录打包配置 |
+| `core/desktop_entry.py` | 桌面可执行入口（读取 `CORE_PORT` 启动服务） |
+| `client/main/coreSupervisor.ts` | Electron Main 生命周期托管器 |
+
+### Main 托管策略
+
+1. 启动时动态分配本地端口，避免固定 `8000` 冲突。
+2. 注入：`CORE_PORT`、`ENTROCUT_APP_DATA_ROOT=<userData>/core-data`。
+3. 轮询 `/health`，成功后向 Renderer 广播 ready 状态与实际 `baseUrl`。
+4. 退出时优雅停止子进程，超时后强制 kill，避免孤儿进程。
+
+### 渲染层启动门禁
+
+1. Renderer 在 `core ready` 前展示初始化页。
+2. 若 `core` 启动失败，展示产品化错误态而非直接进入业务页。
+3. 所有业务请求通过运行时注入的 `core base url` 发起，不再依赖发布态硬编码。
+
+### 本地构建建议
+
+```bash
+# 仅构建 core 可执行目录
+cd core
+bash scripts/build_desktop_core.sh
+
+# 构建桌面安装包（自动前置 core 构建）
+cd ../client
+npm run electron:build:win
+```
+
+> 如报 `pyinstaller` 缺失，请先在 Python 环境安装：`pip install pyinstaller`。

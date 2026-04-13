@@ -12,6 +12,10 @@ files:
   - package.json
   - "!node_modules/**/*"
 
+extraResources:
+  - from: ../core/dist/core-dist
+    to: core-dist
+
 extraMetadata:
   main: dist-electron/main.js
 

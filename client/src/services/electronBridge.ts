@@ -13,6 +13,15 @@ export interface AuthDeepLinkPayload {
   status: "authenticated";
 }
 
+export type CoreRuntimeStatus = "idle" | "starting" | "ready" | "failed" | "stopped";
+
+export interface CoreRuntimeState {
+  status: CoreRuntimeStatus;
+  baseUrl: string | null;
+  pid: number | null;
+  lastError: string | null;
+}
+
 export type MediaPickMode = "electron-folder" | "browser-files" | "auto";
 
 function hasValidFiles(files?: File[]): files is File[] {
@@ -159,6 +168,32 @@ export async function deleteSecureCredential(key: string): Promise<void> {
   await bridge.deleteSecureCredential(key);
 }
 
+
+export async function getCoreRuntimeState(): Promise<CoreRuntimeState | null> {
+  const bridge = typeof window !== "undefined" ? window.electron : undefined;
+  if (!bridge?.getCoreRuntimeState) {
+    return null;
+  }
+  return bridge.getCoreRuntimeState();
+}
+
+export async function getCoreBaseUrlFromElectron(): Promise<string | null> {
+  const bridge = typeof window !== "undefined" ? window.electron : undefined;
+  if (!bridge?.getCoreBaseUrl) {
+    return null;
+  }
+  return bridge.getCoreBaseUrl();
+}
+
+export function subscribeCoreRuntimeState(
+  callback: (state: CoreRuntimeState) => void
+): (() => void) | null {
+  const bridge = typeof window !== "undefined" ? window.electron : undefined;
+  if (!bridge?.onCoreRuntimeState) {
+    return null;
+  }
+  return bridge.onCoreRuntimeState(callback);
+}
 export function subscribeAuthDeepLink(
   callback: (payload: AuthDeepLinkPayload) => void
 ): (() => void) | null {

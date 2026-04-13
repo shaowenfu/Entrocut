@@ -153,3 +153,12 @@ python scripts/issue_super_token.py --user-id myuser --email my@dev.local
 2. `chat proxy` 主链已经接上
 3. 历史 `GitHub OAuth` 与 `credits/BYOK` 分支能力已经回收
 4. 但仍需要继续补真实上游联调、计费回归和端到端测试
+
+## 与桌面端一体化发布的关系（2026-04）
+
+桌面端一体化本次主要改动发生在 `client + core`：
+
+1. Electron Main 自动托管本地 core 进程
+2. Renderer 动态获取本地 core base url
+
+`server` 侧接口与部署形态本次无 breaking change；`Core -> Server` 仍沿用既有 HTTP 契约。
