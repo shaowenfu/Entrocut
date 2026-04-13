@@ -1079,3 +1079,12 @@ preview 和 export 必须共用同一套 `render plan`。
 5. `Process Timeline`
 
 这是最短、最稳、也最符合当前仓库演进方向的收口路径。
+
+## 20. 团队防冲突开发公约与并行护栏（工程师 A 必读）
+
+本项目当前由三位工程师并行推进，请在开发时严格遵守以下边界，避免产生代码冲突：
+
+1. **你的专属领域**：`core/rendering.py`、`core/patching.py`、`core/retrieval.py`、`core/inspection.py` 等新增业务逻辑；以及前端的 Timeline 和 Preview 切换组件。
+2. **核心公共文件 `core/store.py`**：你只需关注任务调度（如新增 preview/export 的 TaskSlot）和事件广播。**绝对不要**修改项目创建 (`create_project`) 和素材导入 (`assets:import`) 的初始化逻辑，这部分由负责 Ingest 的工程师 C 处理。
+3. **核心公共文件 `core/schemas.py`**：你将新增 `RenderPlan`、`EditDraftPatch` 等结构。请直接在文件末尾或新建独立区块追加，不要修改现有的 `MediaReference` 等基础定义。
+4. **前端入口与生命周期**：前端最外层的 `isCoreReady` 状态和网络请求的 Base URL 动态获取由负责打包的工程师 B 负责，你只需关注内部业务组件的呈现。

@@ -482,6 +482,14 @@ EntroCut 当前缺的不是 Electron 打包本身，而是：
 
 最佳实践不是让用户自己装环境，也不是把 `core` 塞回 Electron，而是：
 
-`保留 core 为独立本地服务进程，并把它随安装包分发，由 Electron Main 自动启动、探活、关闭。`
+`保留 core 为独立本地服务进程，并把它随安装包分发，由 Electron Main 自动启动、探活、关闭。
+
+## 16. 团队防冲突开发公约与并行护栏（工程师 B 必读）
+
+本项目当前由三位工程师并行推进，请在开发时严格遵守以下边界，避免产生代码冲突：
+
+1. **你的专属领域**：Core 的打包脚本（`build_desktop_core.sh`, `pyinstaller.spec`）、Electron 主进程的托管逻辑（`coreSupervisor.ts`）以及应用的启动生命周期。
+2. **核心公共文件 `client/main/main.ts`**：你负责在此注入 Core 的启动与托管逻辑。负责真实 Ingest 的工程师 C 会在此注册目录扫描的 IPC Handler。**约定**：你们应将各自的核心逻辑封装在独立文件（如 `coreSupervisor.ts` 和 `fileScanner.ts`）中，在 `main.ts` 中仅作单行注册，避免主文件冲突。
+3. **前端网络层**：你需要在应用启动页增加全局 Loading 态，并动态将实际的 Core Base URL 暴露给 Renderer。内部的具体业务请求逻辑（如创建项目、聊天、预览）由工程师 A 和 C 填充，你无需关注。`
 
 这条路线最符合当前架构，也最接近主流桌面应用的真实交付方式。
