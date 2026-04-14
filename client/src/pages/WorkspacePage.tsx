@@ -159,6 +159,8 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const coreRuntimeState = useWorkspaceStore((state) => state.coreRuntimeState);
   const activeTasks = useWorkspaceStore((state) => state.activeTasks);
   const exportResult = useWorkspaceStore((state) => state.exportResult);
+  const previewResult = useWorkspaceStore((state) => state.previewResult);
+  const agentSteps = useWorkspaceStore((state) => state.agentSteps);
   const runtimeState = useWorkspaceStore((state) => state.runtimeState);
   const lastError = useWorkspaceStore((state) => state.lastError);
   const initializeWorkspace = useWorkspaceStore((state) => state.initializeWorkspace);
@@ -253,11 +255,16 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   }, [assets, previewSelection, selectedClip]);
 
   const selectedPreviewSource = useMemo(() => {
+    const outputUrl = typeof previewResult?.output_url === "string" ? previewResult.output_url : null;
+    if (outputUrl && outputUrl.startsWith("file://")) {
+      return { url: outputUrl, kind: "draft" as const };
+    }
     if (!selectedAsset) {
       return null;
     }
-    return getProjectMediaSource(workspaceId, selectedAsset.name);
-  }, [selectedAsset, workspaceId]);
+    const source = getProjectMediaSource(workspaceId, selectedAsset.name);
+    return source ? { ...source, kind: "source" as const } : null;
+  }, [previewResult, selectedAsset, workspaceId]);
 
   const previewDurationSec = useMemo(() => {
     if (selectedClip) {
@@ -893,7 +900,17 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
           </div>
 
           <div className="chat-thread">
-            {chatTurns.map((turn) => (
+            
+              <div className="agent-timeline">
+                <h4>Agent Timeline</h4>
+                {agentSteps.length === 0 ? <p className="timeline-empty">等待执行步骤...</p> : null}
+                {agentSteps.map((step, idx) => (
+                  <div key={`${step.phase}-${idx}`} className="timeline-item">
+                    <strong>{step.phase}</strong> · {step.summary}
+                  </div>
+                ))}
+              </div>
+{chatTurns.map((turn) => (
               <div key={turn.id} className={turn.role === "user" ? "chat-row chat-row-user" : "chat-row"}>
                 {turn.role === "user" ? (
                   <div className="chat-bubble">{turn.content}</div>
@@ -1043,7 +1060,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
               <div className="timecode">{formatTimecode(currentTimeSec)}</div>
               {!isThinking && !isMediaProcessing && !isLoadingWorkspace ? (
                 <div className="preview-meta">
-                  <strong>{previewTitle}</strong>
+                  <strong>{previewTitle} {selectedPreviewSource?.kind === "draft" ? "(Draft Preview)" : "(Source Media)"}</strong>
                   <span>{previewSubtitle ?? "Select an asset, clip, or storyboard scene to preview."}</span>
                 </div>
               ) : null}

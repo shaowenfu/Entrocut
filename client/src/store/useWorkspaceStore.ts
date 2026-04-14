@@ -27,6 +27,7 @@ import {
   toRequestError,
   type CoreChatAssistantTurn,
   type CoreChatTurn,
+  type CoreAgentStepItem,
   type CoreProjectCapabilities,
   type CoreProjectMediaSummary,
   type CoreProjectRuntimeState,
@@ -167,6 +168,8 @@ type WorkspaceEvent =
   | { type: "CHAT_FAILED"; error: WorkspaceError }
   | { type: "EXPORT_STARTED"; task: ActiveTask }
   | { type: "EXPORT_COMPLETED"; result: ExportResult; sequence: number }
+  | { type: "PREVIEW_COMPLETED"; result: Record<string, unknown>; sequence: number }
+  | { type: "AGENT_STEP_UPDATED"; step: CoreAgentStepItem; sequence: number }
   | { type: "EXPORT_FAILED"; error: WorkspaceError }
   | {
       type: "SELECTION_CONTEXT_UPDATED";
@@ -187,6 +190,8 @@ interface WorkspaceState {
   currentProject: Record<string, unknown> | null;
   chatTurns: ChatTurn[];
   exportResult: ExportResult | null;
+  previewResult: Record<string, unknown> | null;
+  agentSteps: CoreAgentStepItem[];
   pendingPrompt: string | null;
   lastEventSequence: number;
   lastError: WorkspaceError | null;
@@ -441,6 +446,8 @@ function mapWorkspace(workspace: CoreWorkspaceSnapshot, workspaceName?: string):
     }),
     activeTasks,
     activeTask: findRunningTask(activeTasks) ?? mapTask(workspace.active_task),
+    previewResult: workspace.preview_result ?? null,
+    exportResult: (workspace.export_result as ExportResult | null) ?? null,
   };
 }
 
@@ -519,6 +526,8 @@ function withDerivedFields(
     | "currentProject"
     | "chatTurns"
     | "exportResult"
+    | "previewResult"
+    | "agentSteps"
     | "pendingPrompt"
     | "lastEventSequence"
     | "lastError"
@@ -559,6 +568,8 @@ function reduceWorkspaceState(
     | "currentProject"
     | "chatTurns"
     | "exportResult"
+    | "previewResult"
+    | "agentSteps"
     | "pendingPrompt"
     | "lastEventSequence"
     | "lastError"
@@ -661,6 +672,8 @@ function reduceWorkspaceState(
         runtimeState: syncRuntimeStateFromWorkspace(state.runtimeState, event.workspace),
         loadState: "ready",
         chatState: deriveChatState(mapActiveTasks(event.workspace.active_tasks), event.workspace.runtime_state),
+        previewResult: event.workspace.preview_result ?? state.previewResult,
+        exportResult: (event.workspace.export_result as ExportResult | null) ?? state.exportResult,
         lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
       };
     case "EDIT_DRAFT_UPDATED": {
@@ -848,6 +861,17 @@ function reduceWorkspaceState(
                 ...(event.turn as CoreChatAssistantTurn),
               } as AssistantDecisionTurn)
         ),
+        agentSteps: event.turn.role === "user" ? [] : state.agentSteps,
+        lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
+      };
+    case "AGENT_STEP_UPDATED":
+      return {
+        agentSteps: [...state.agentSteps, event.step],
+        lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
+      };
+    case "PREVIEW_COMPLETED":
+      return {
+        previewResult: event.result,
         lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
       };
     case "TASK_UPDATED": {
@@ -982,6 +1006,8 @@ const initialState: Omit<
   currentProject: null,
   chatTurns: [],
   exportResult: null,
+  previewResult: null,
+  agentSteps: [],
   pendingPrompt: null,
   lastEventSequence: 0,
   lastError: null,
@@ -1098,6 +1124,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         dispatch({
           type: "EXPORT_COMPLETED",
           result: (payload.data as { result: ExportResult }).result,
+          sequence: payload.sequence,
+        });
+        break;
+      case "preview.completed":
+        dispatch({
+          type: "PREVIEW_COMPLETED",
+          result: payload.data as Record<string, unknown>,
+          sequence: payload.sequence,
+        });
+        break;
+      case "agent.step.updated":
+        dispatch({
+          type: "AGENT_STEP_UPDATED",
+          step: payload.data as CoreAgentStepItem,
           sequence: payload.sequence,
         });
         break;

@@ -47,7 +47,8 @@
 
 1. `media`
 2. `agent`
-3. `export`
+3. `preview`
+4. `export`
 
 `active_tasks` 是权威任务集合。  
 `active_task` 仅为兼容旧调用方保留的便利字段。
@@ -190,7 +191,7 @@ type ChatTurn =
 ### 3.5 Task
 
 ```ts
-type TaskSlot = "media" | "agent" | "export";
+type TaskSlot = "media" | "agent" | "preview" | "export";
 type TaskType = "ingest" | "index" | "chat" | "render";
 type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 
@@ -255,6 +256,9 @@ interface ProjectRuntimeState {
   retrieval_state: {
     last_query?: string | null;
     candidate_clip_ids: string[];
+    candidate_scores?: Record<string, number>;
+    selected_candidate_id?: string | null;
+    inspection_summary?: string | null;
     retrieval_ready: boolean;
     blocking_reason?: string | null;
     updated_at?: string | null;
@@ -298,6 +302,8 @@ interface WorkspaceSnapshot {
   capabilities: ProjectCapabilities;
   active_tasks: Task[];
   active_task: Task | null;
+  preview_result?: Record<string, unknown> | null;
+  export_result?: Record<string, unknown> | null;
 }
 ```
 
@@ -886,7 +892,18 @@ interface ExportCompletedEventData {
 }
 ```
 
-### 6.10 `error.occurred`
+### 6.10 `preview.completed`
+
+```ts
+interface PreviewCompletedEventData {
+  draft_version: number;
+  output_url: string;
+  duration_ms: number;
+  render_profile: string;
+}
+```
+
+### 6.11 `error.occurred`
 
 用途：
 
@@ -906,7 +923,7 @@ interface ErrorOccurredEventData {
 2. 当前 `WS` 错误事件也不保证携带 `request_id`
 3. 错误后的项目摘要状态通常会转入 `attention_required`
 
-### 6.11 `agent.step.updated`
+### 6.12 `agent.step.updated`
 
 用途：
 
@@ -918,6 +935,9 @@ interface AgentStepUpdatedEventData {
   phase: string;
   summary: string;
   details: Record<string, unknown>;
+  status?: string;
+  iteration?: number;
+  emitted_at?: string;
 }
 ```
 
@@ -939,7 +959,8 @@ interface AgentStepUpdatedEventData {
 4. 推送项目摘要状态
 5. 推送 `capabilities`
 6. 推送导出结果
-7. 推送流程级错误
+7. 推送预览结果
+8. 推送流程级错误
 
 ## 8. 错误语义
 

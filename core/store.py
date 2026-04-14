@@ -19,6 +19,7 @@ from helpers import (
     _bump_draft,
 )
 from ingestion import detect_scenes, extract_and_stitch_frames
+from rendering import build_render_plan, render_export
 from httpx import AsyncClient
 from schemas import (
     AssistantDecisionOperationModel,
@@ -251,6 +252,8 @@ class InMemoryProjectStore:
     def _ensure_record_defaults(self, record: dict[str, Any]) -> None:
         project = record.setdefault("project", {})
         project.setdefault("lifecycle_state", "active")
+        record.setdefault("preview_result", None)
+        record.setdefault("export_result", None)
         record["edit_draft"] = self._normalize_draft_assets(record["edit_draft"])
         record["runtime_state"] = ProjectRuntimeState.model_validate(
             record.get("runtime_state") or self._default_project_runtime_state()
@@ -275,7 +278,7 @@ class InMemoryProjectStore:
         project["summary_state"] = record["summary_state"]
 
     def _task_priority(self, task: dict[str, Any]) -> tuple[int, int, str]:
-        slot_priority = {"agent": 0, "export": 1, "media": 2}
+        slot_priority = {"agent": 0, "preview": 1, "export": 2, "media": 3}
         status_priority = {"running": 0, "queued": 1}
         return (
             slot_priority.get(str(task.get("slot")), 9),
@@ -475,6 +478,7 @@ class InMemoryProjectStore:
             "active_task": None,
             "summary_state": project.summary_state,
             "export_result": None,
+            "preview_result": None,
             "sequence": 0,
             "workspace_dir": workspace_dir,
         }
@@ -508,6 +512,8 @@ class InMemoryProjectStore:
                 "capabilities": capabilities,
                 "active_tasks": record["active_tasks"],
                 "active_task": record["active_task"],
+                "preview_result": record.get("preview_result"),
+                "export_result": record.get("export_result"),
             }
         )
 
@@ -519,6 +525,10 @@ class InMemoryProjectStore:
             if event_name == "task.updated" and isinstance(data.get("task"), dict):
                 task_payload = self._upsert_active_task(record, data["task"])
                 self._repository.upsert_task(project_id, task_payload)
+            if event_name == "preview.completed":
+                record["preview_result"] = dict(data)
+            if event_name == "export.completed" and isinstance(data.get("result"), dict):
+                record["export_result"] = dict(data.get("result") or {})
             media_summary = self._sync_runtime_retrieval_state(record)
             record["summary_state"] = self._derive_summary_state(record, media_summary=media_summary)
             record["project"]["summary_state"] = record["summary_state"]
@@ -1294,19 +1304,24 @@ class InMemoryProjectStore:
 
         await asyncio.sleep(0.08)
         export_path = self._workspace_manager.export_output_path(project_id, payload.format or "mp4")
-        export_path.parent.mkdir(parents=True, exist_ok=True)
-        export_path.write_text("placeholder export artifact\n", encoding="utf-8")
+        draft = EditDraftModel.model_validate(record["edit_draft"])
+        plan = build_render_plan(draft)
+        render_result = await asyncio.to_thread(
+            render_export,
+            plan,
+            export_path,
+            quality=payload.quality,
+        )
         result = {
             "render_type": "export",
-            "output_url": export_path.resolve().as_uri(),
-            "duration_ms": 4800,
-            "file_size_bytes": 18_000_000,
+            "output_url": render_result["output_url"],
+            "duration_ms": render_result["duration_ms"],
+            "file_size_bytes": render_result["file_size_bytes"],
             "thumbnail_url": None,
             "format": payload.format or "mp4",
             "quality": payload.quality,
             "resolution": "1920x1080",
         }
-        draft = EditDraftModel.model_validate(record["edit_draft"])
         ready_draft = _bump_draft(draft, status="ready")
         record["export_result"] = result
         record["edit_draft"] = ready_draft.model_dump()

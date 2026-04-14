@@ -178,14 +178,14 @@
 
 ### 当前仍在收口的部分
 
-1. `core /chat` 还停在 `planner-first` 骨架阶段
-2. `planner -> tool execution -> replanning` 的真实 `agent loop` 还没有在 `core` 里彻底落地
-3. `retrieve / inspect` 的真实 `Core -> Server` 接入还需要继续按新契约推进
-4. `credits / BYOK` 还需要更系统的端到端验证与真实上游兼容性核查
+1. `chat` 主链已具备 `retrieve / inspect / patch / preview` 真实执行能力，但 `planner` 质量和长链路稳定性还需继续优化
+2. `preview / export` 已切到统一 `RenderPlan` 和真实渲染，实现了可播放产物，但编码参数与性能策略仍是后续优化点
+3. 前端已接入 `agent.step.updated` 时间线与 `preview.completed`，但细化交互（如 stale preview 提示、步骤详情折叠）仍可增强
+4. `credits / BYOK` 仍需要更系统的端到端验证与真实上游兼容性核查
 
-所以现在最准确的描述不是“功能缺很多”，而是：
+所以当前更准确的描述是：
 
-`系统主方向已经基本确定，但核心 agent 执行闭环仍在实现中。`
+`MVP 核心闭环已成立，接下来进入质量、性能与策略层面的持续打磨。`
 
 ## 当前推荐阅读路径
 
