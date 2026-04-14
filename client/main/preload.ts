@@ -23,6 +23,15 @@ export interface AuthDeepLinkPayload {
   status: "authenticated";
 }
 
+export type CoreRuntimeStatus = "idle" | "starting" | "ready" | "failed" | "stopped";
+
+export interface CoreRuntimeState {
+  status: CoreRuntimeStatus;
+  baseUrl: string | null;
+  pid: number | null;
+  lastError: string | null;
+}
+
 const electronBridge = {
   version: process.versions.electron,
   async showOpenDirectory(): Promise<OpenDirectoryScanResult | null> {
@@ -53,6 +62,21 @@ const electronBridge = {
   },
   async deleteSecureCredential(key: string): Promise<void> {
     await ipcRenderer.invoke("secure-store:delete", key);
+  },
+  async getCoreBaseUrl(): Promise<string | null> {
+    return (await ipcRenderer.invoke("core:get-base-url")) as string | null;
+  },
+  async getCoreRuntimeState(): Promise<CoreRuntimeState> {
+    return (await ipcRenderer.invoke("core:get-runtime-state")) as CoreRuntimeState;
+  },
+  onCoreRuntimeState(callback: (state: CoreRuntimeState) => void): () => void {
+    const listener = (_event: Electron.IpcRendererEvent, state: CoreRuntimeState) => {
+      callback(state);
+    };
+    ipcRenderer.on("core:runtime-state", listener);
+    return () => {
+      ipcRenderer.removeListener("core:runtime-state", listener);
+    };
   },
   onAuthDeepLink(callback: (payload: AuthDeepLinkPayload) => void): () => void {
     const listener = (_event: Electron.IpcRendererEvent, payload: AuthDeepLinkPayload) => {

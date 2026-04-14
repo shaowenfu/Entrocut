@@ -28,9 +28,9 @@
 14. [2026-03-30 Core 模块重构日志](./2026-03-30_core_module_reconstruct_journal.md)
 15. [2026-03-31 项目状态管理收口日志](./2026-03-31_project_state_management_wrapup_journal.md)
 16. [2026-03-31 Server 目录重构日志](./2026-03-31_server_directory_refactor_journal.md)
-<<<<<<< HEAD
 17. [2026-04-13 真实桌面导入与检索准备收敛日志](./2026-04-13_real_desktop_ingest_retrieval_landing_journal.md)
 18. [2026-04-13 MVP 闭环与渲染收口日志](./2026-04-13_mvp_closure_rendering_timeline_journal.md)
+19. [2026-04-13 桌面端 Core 托管与打包落地日志](./2026-04-13_desktop_core_packaging_supervisor_journal.md)
 
 ## 当前这组日记主要覆盖的主题
 
@@ -42,6 +42,7 @@
 6. 项目状态管理从 `workflow_state` 向事实分层模型收口
 7. `server` 目录分层与 `FastAPI` 结构收口
 8. MVP 阶段 `render/retrieve/patch/timeline` 闭环落地
+9. 桌面端 `core supervisor`、本地托管与打包链路落地
 
 ## 命名约定
 

@@ -5,13 +5,17 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
 
 from core.helpers import _entity_id, _now_iso
 from core.patching import apply_edit_draft_patch
 from core.rendering import build_render_plan
 from core.schemas import AssetModel, ClipModel, EditDraftModel, EditDraftPatchModel, ShotModel
-from types import SimpleNamespace
 
 sys.modules.setdefault(
     "ingestion",

@@ -13,7 +13,7 @@
 
 ## 目录分组
 
-### 1. Store Contracts（本地契约）
+### 1. Store / Contract（本地契约与存储）
 
 - [store/README.md](./store/README.md)
 - 当前重点：
@@ -52,9 +52,9 @@
 7. [2026-03-13 Credits / BYOK 改造复盘](./develop_diary/2026-03-13_credits_byok_settlement_followup_journal.md)
 8. [2026-03-24 项目回顾与阶段性暂停日志](./develop_diary/2026-03-24_project_recap_and_pause_journal.md)
 9. [2026-03-29 Server 分支 PR 回收合并日志](./develop_diary/2026-03-29_server_branch_pr_merge_journal.md)
-<<<<<<< HEAD
 10. [2026-04-13 真实桌面导入与检索准备收敛日志](./develop_diary/2026-04-13_real_desktop_ingest_retrieval_landing_journal.md)
 11. [2026-04-13 MVP 闭环与渲染收口日志](./develop_diary/2026-04-13_mvp_closure_rendering_timeline_journal.md)
+12. [2026-04-13 桌面端 Core 托管与打包落地日志](./develop_diary/2026-04-13_desktop_core_packaging_supervisor_journal.md)
 
 ### 6. Reference / Archive / Secrets
 
@@ -71,3 +71,9 @@
 3. [agent_runtime/README.md](./agent_runtime/README.md)
 4. [server/README.md](./server/README.md)
 5. [develop_diary/2026-03-29_server_branch_pr_merge_journal.md](./develop_diary/2026-03-29_server_branch_pr_merge_journal.md)
+
+
+### 7. Desktop Packaging（桌面一体化）
+
+- [tasks/2026-04-12_desktop_local_core_packaging_task.md](./tasks/2026-04-12_desktop_local_core_packaging_task.md)
+- [client/01_electron_build_and_release.md](./client/01_electron_build_and_release.md)

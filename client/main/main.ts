@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import { app, BrowserWindow, ipcMain, safeStorage, shell } from "electron";
+import { getCoreRuntimeState, onCoreRuntimeState, startCore, stopCore } from "./coreSupervisor";
 import { registerFileScannerIpcHandlers } from "./fileScanner";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -90,7 +91,7 @@ function flushPendingDeepLinks(): void {
   }
 }
 
-function createMainWindow(): BrowserWindow {
+function createMainWindow(coreBaseUrl: string | null): BrowserWindow {
   const window = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -107,6 +108,12 @@ function createMainWindow(): BrowserWindow {
   });
 
   void window.loadURL(DEV_SERVER_URL);
+  window.webContents.once("did-finish-load", () => {
+    window.webContents.send("core:runtime-state", getCoreRuntimeState());
+    if (coreBaseUrl) {
+      window.webContents.send("core:runtime-base-url", coreBaseUrl);
+    }
+  });
   mainWindow = window;
   window.on("closed", () => {
     if (mainWindow === window) {
@@ -181,6 +188,14 @@ ipcMain.handle("secure-store:set", async (_event, key: string, value: string) =>
   await writeSecureCredentialMap(values);
 });
 
+
+ipcMain.handle("core:get-runtime-state", async () => {
+  return getCoreRuntimeState();
+});
+
+ipcMain.handle("core:get-base-url", async () => {
+  return getCoreRuntimeState().baseUrl;
+});
 ipcMain.handle("secure-store:delete", async (_event, key: string) => {
   const normalizedKey = key.trim();
   if (!normalizedKey) {
@@ -209,9 +224,24 @@ app.on("open-url", (event, url) => {
   dispatchDeepLink(url);
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   registerProtocolClient();
-  createMainWindow();
+
+  const unsubscribeCoreRuntime = onCoreRuntimeState((state) => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+    mainWindow.webContents.send("core:runtime-state", state);
+    if (state.baseUrl) {
+      mainWindow.webContents.send("core:runtime-base-url", state.baseUrl);
+    }
+  });
+
+  createMainWindow(getCoreRuntimeState().baseUrl);
+
+  void startCore().catch((error) => {
+    console.error("[core-supervisor] start failed", error);
+  });
   const initialDeepLink = extractDeepLinkFromArgv(process.argv);
   if (initialDeepLink) {
     dispatchDeepLink(initialDeepLink);
@@ -219,14 +249,24 @@ app.whenReady().then(() => {
   flushPendingDeepLinks();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow();
+      createMainWindow(getCoreRuntimeState().baseUrl);
       flushPendingDeepLinks();
     }
+  });
+
+  app.once("will-quit", () => {
+    unsubscribeCoreRuntime();
   });
 });
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
-    app.quit();
+    void stopCore().finally(() => {
+      app.quit();
+    });
   }
+});
+
+app.on("before-quit", () => {
+  void stopCore();
 });

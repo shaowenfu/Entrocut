@@ -326,11 +326,20 @@ interface CoreAuthSessionResponse {
 
 const DEFAULT_CORE_BASE_URL = "http://127.0.0.1:8000";
 
+let runtimeCoreBaseUrl: string | null = null;
+
 function trimTrailingSlash(url: string): string {
   return url.endsWith("/") ? url.slice(0, -1) : url;
 }
 
+export function setRuntimeCoreBaseUrl(baseUrl: string | null): void {
+  runtimeCoreBaseUrl = baseUrl ? trimTrailingSlash(baseUrl) : null;
+}
+
 export function getCoreBaseUrl(): string {
+  if (runtimeCoreBaseUrl) {
+    return runtimeCoreBaseUrl;
+  }
   const env = import.meta.env as Record<string, string | undefined>;
   const fromEnv = env.VITE_CORE_BASE_URL?.trim();
   return trimTrailingSlash(fromEnv && fromEnv.length > 0 ? fromEnv : DEFAULT_CORE_BASE_URL);

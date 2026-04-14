@@ -148,3 +148,22 @@ npm run electron:dev
 如果继续推进 `client`，当前最值得做的不是继续堆页面细节，而是：
 
 `逐步减少页面对派生 storyboard 视图的依赖，并让前端交互更明确地围绕 selection / editDraft / chat target 工作。`
+
+## 桌面端 Core 托管（新增）
+
+当前 Electron 主进程已经引入 `core supervisor`：
+
+1. 入口模块：`main/coreSupervisor.ts`
+2. 负责：动态端口分配、拉起本地 `core`、`/health` 探活、退出回收
+3. 通过 `preload + IPC` 向 Renderer 暴露运行时 `core base url`
+4. Renderer 启动时会等待 `core ready`，未就绪时显示初始化页
+
+开发态默认行为：
+
+1. `electron:dev` 启动后，Main 会尝试用 `python3 -m uvicorn server:app` 从仓库 `core/` 拉起服务
+2. 可通过 `ENTROCUT_SKIP_MANAGED_CORE=1` 跳过托管并连接外部 `VITE_CORE_BASE_URL`
+
+发布态默认行为：
+
+1. Main 从 `process.resourcesPath/core-dist/entrocut-core(.exe)` 拉起内置 core
+2. 启动注入 `ENTROCUT_APP_DATA_ROOT=<userData>/core-data` 与动态 `CORE_PORT`
