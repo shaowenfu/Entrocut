@@ -67,9 +67,6 @@ def _derive_title(title: str | None, prompt: str | None, media: MediaReference |
 def _media_file_refs(media: MediaReference) -> list[MediaFileReference]:
     if media.files:
         return media.files
-    if media.folder_path:
-        folder_name = Path(media.folder_path).name or "media"
-        return [MediaFileReference(name=f"{folder_name}.mp4", path=media.folder_path)]
     return []
 
 
@@ -112,68 +109,14 @@ def _asset_clip_counts(clips: list[ClipModel]) -> dict[str, int]:
     return counts
 
 
-def _mark_assets_ready(
-    assets: list[AssetModel],
-    clips: list[ClipModel],
-    *,
-    updated_at: str,
-) -> list[AssetModel]:
-    clip_counts = _asset_clip_counts(clips)
-    return [
-        asset.model_copy(
-            update={
-                "processing_stage": "ready" if clip_counts.get(asset.id, 0) > 0 else asset.processing_stage,
-                "processing_progress": 100 if clip_counts.get(asset.id, 0) > 0 else asset.processing_progress,
-                "clip_count": clip_counts.get(asset.id, 0),
-                "indexed_clip_count": clip_counts.get(asset.id, 0),
-                "last_error": None,
-                "updated_at": updated_at,
-            }
-        )
-        for asset in assets
-    ]
-
-
-def _build_clips(assets: list[AssetModel]) -> list[ClipModel]:
-    clips: list[ClipModel] = []
-    semantic_bank = [
-        ["wide", "establishing", "environment"],
-        ["action", "subject", "motion"],
-        ["detail", "texture", "closeup"],
-        ["transition", "reaction", "cutaway"],
-    ]
-    for asset_index, asset in enumerate(assets, start=1):
-        for offset in range(2):
-            clip_index = (asset_index - 1) * 2 + offset
-            start_ms = offset * 6000
-            end_ms = start_ms + 6000
-            semantic_tags = semantic_bank[clip_index % len(semantic_bank)]
-            clips.append(
-                ClipModel(
-                    id=_entity_id("clip"),
-                    asset_id=asset.id,
-                    source_start_ms=start_ms,
-                    source_end_ms=end_ms,
-                    visual_desc=f"{asset.name} candidate highlight {offset + 1}",
-                    semantic_tags=semantic_tags,
-                    confidence=round(0.92 - clip_index * 0.05, 2),
-                    thumbnail_ref=f"thumb-gradient-{(clip_index % 4) + 1}",
-                )
-            )
-    return clips
-
-
-def _draft_from_payload(project_id: str, created_at: str, media: MediaReference | None) -> EditDraftModel:
-    assets = _build_assets(media, updated_at=created_at) if media else []
-    clips = _build_clips(assets)
-    assets = _mark_assets_ready(assets, clips, updated_at=created_at)
+def _draft_from_payload(project_id: str, created_at: str, media: MediaReference | None = None) -> EditDraftModel:
     return EditDraftModel(
         id=_entity_id("draft"),
         project_id=project_id,
         version=1,
         status="draft",
-        assets=assets,
-        clips=clips,
+        assets=[],
+        clips=[],
         shots=[],
         scenes=None,
         selected_scene_id=None,

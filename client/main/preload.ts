@@ -5,6 +5,19 @@ interface OpenDirectoryDialogResult {
   filePaths: string[];
 }
 
+export interface DesktopMediaFileReference {
+  name: string;
+  path: string;
+  size_bytes?: number;
+  mime_type?: string;
+}
+
+export interface OpenDirectoryScanResult {
+  canceled: boolean;
+  folderPath: string | null;
+  files: DesktopMediaFileReference[];
+}
+
 export interface AuthDeepLinkPayload {
   loginSessionId: string;
   status: "authenticated";
@@ -12,14 +25,22 @@ export interface AuthDeepLinkPayload {
 
 const electronBridge = {
   version: process.versions.electron,
-  async showOpenDirectory(): Promise<string | null> {
+  async showOpenDirectory(): Promise<OpenDirectoryScanResult | null> {
     const result = (await ipcRenderer.invoke(
       "dialog:open-directory"
-    )) as OpenDirectoryDialogResult | null;
-    if (!result || result.canceled || result.filePaths.length === 0) {
+    )) as OpenDirectoryDialogResult | OpenDirectoryScanResult | null;
+    if (!result || result.canceled) {
       return null;
     }
-    return result.filePaths[0] ?? null;
+    if ("files" in result) {
+      return result;
+    }
+    const folderPath = result.filePaths[0] ?? null;
+    return {
+      canceled: false,
+      folderPath,
+      files: [],
+    };
   },
   async openExternalUrl(url: string): Promise<void> {
     await ipcRenderer.invoke("auth:open-external-url", url);

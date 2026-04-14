@@ -146,6 +146,16 @@
 
 1. `GET /api/v1/projects/{project_id}/events`
 
+## 真实素材导入约束（2026-04 更新）
+
+为避免 fake 数据污染，当前导入链路遵循以下约束：
+
+1. `POST /api/v1/projects` 只创建空草稿，不再根据 `payload.media` 直接生成 `assets/clips`
+2. `POST /api/v1/projects/{project_id}/assets:import` 是唯一真实媒体入口
+3. `assets:import` 在入口前置鉴权（未登录返回 `AUTH_SESSION_REQUIRED`）
+4. `media.files[*].path` 必须是本机可读的绝对文件路径；目录路径和不存在路径会被稳定拒绝
+5. `folder_path` 不能直接进入 ingest（需要由桌面端先扫描展开成 `files[]`）
+
 当前 `WebSocket` 已用于推送：
 
 1. `task.updated`

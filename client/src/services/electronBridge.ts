@@ -1,11 +1,18 @@
 export interface MediaPickInput {
   folderPath?: string;
-  files?: File[];
+  files?: Array<File | DesktopMediaFileReference>;
 }
 
 export interface MediaPickResult {
   folderPath?: string;
-  files?: File[];
+  files?: Array<File | DesktopMediaFileReference>;
+}
+
+export interface DesktopMediaFileReference {
+  name: string;
+  path: string;
+  size_bytes?: number;
+  mime_type?: string;
 }
 
 export interface AuthDeepLinkPayload {
@@ -15,8 +22,12 @@ export interface AuthDeepLinkPayload {
 
 export type MediaPickMode = "electron-folder" | "browser-files" | "auto";
 
-function hasValidFiles(files?: File[]): files is File[] {
-  return Array.isArray(files) && files.some((file) => file.size > 0);
+function hasValidFiles(files?: Array<File | DesktopMediaFileReference>): files is Array<File | DesktopMediaFileReference> {
+  return Array.isArray(files) && files.length > 0;
+}
+
+function isDesktopMediaFileReference(file: File | DesktopMediaFileReference): file is DesktopMediaFileReference {
+  return "path" in file && typeof file.path === "string";
 }
 
 export function isElectronEnvironment(): boolean {
@@ -28,26 +39,37 @@ export function normalizeMediaInput(input?: MediaPickInput): MediaPickResult | n
     return null;
   }
   const folderPath = input.folderPath?.trim();
-  const files = input.files?.filter((file) => file.size > 0);
-  if (folderPath) {
-    return { folderPath };
-  }
+  const files = input.files?.filter((file) => {
+    if (isDesktopMediaFileReference(file)) {
+      return file.path.trim().length > 0;
+    }
+    return file.size > 0;
+  });
   if (hasValidFiles(files)) {
     return { files };
+  }
+  if (folderPath) {
+    return { folderPath };
   }
   return null;
 }
 
-export async function pickFolderFromElectron(): Promise<string | null> {
+export async function pickFolderFromElectron(): Promise<MediaPickResult | null> {
   const bridge = window.electron;
   if (!bridge?.showOpenDirectory) {
     return null;
   }
-  const pickedPath = await bridge.showOpenDirectory();
-  if (!pickedPath) {
+  const picked = await bridge.showOpenDirectory();
+  if (!picked) {
     return null;
   }
-  return pickedPath;
+  if (picked.files.length > 0) {
+    return { files: picked.files };
+  }
+  if (picked.folderPath) {
+    return { folderPath: picked.folderPath };
+  }
+  return null;
 }
 
 export async function pickVideoFilesFromBrowser(): Promise<File[] | null> {
@@ -99,9 +121,9 @@ export async function pickVideoFilesFromBrowser(): Promise<File[] | null> {
 }
 
 export async function pickMediaFromSystem(): Promise<MediaPickResult | null> {
-  const folderPath = await pickFolderFromElectron();
-  if (folderPath) {
-    return { folderPath };
+  const mediaFromElectron = await pickFolderFromElectron();
+  if (mediaFromElectron) {
+    return mediaFromElectron;
   }
   const files = await pickVideoFilesFromBrowser();
   if (!files || files.length === 0) {
@@ -112,8 +134,7 @@ export async function pickMediaFromSystem(): Promise<MediaPickResult | null> {
 
 export async function pickMediaByMode(mode: MediaPickMode): Promise<MediaPickResult | null> {
   if (mode === "electron-folder") {
-    const folderPath = await pickFolderFromElectron();
-    return folderPath ? { folderPath } : null;
+    return pickFolderFromElectron();
   }
   if (mode === "browser-files") {
     const files = await pickVideoFilesFromBrowser();

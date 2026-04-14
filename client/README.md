@@ -90,6 +90,15 @@
 6. 订阅 `WebSocket events`
 7. 导出项目
 
+## Electron 媒体扫描口径（2026-04 更新）
+
+桌面端媒体导入当前采用“主进程扫描 -> 渲染进程消费”模型：
+
+1. 目录选择与文件系统扫描在 Electron Main Process 完成
+2. IPC 返回目录中的结构化视频文件列表（`name/path/size_bytes`）
+3. Renderer 侧统一将结果映射为 `media.files[]` 提交给 `core`
+4. `folderPath` 仅保留兼容语义，不再作为真实 ingest 主契约
+
 ## 当前非目标
 
 当前 `client` 明确还不做这些事：

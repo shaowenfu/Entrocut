@@ -32,7 +32,7 @@ export function registerProjectMediaSources(
   projectId: string,
   input?: {
     folderPath?: string;
-    files?: File[];
+    files?: Array<File | { name: string; path: string; mime_type?: string }>;
   } | null
 ): void {
   if (!input) {
@@ -40,18 +40,19 @@ export function registerProjectMediaSources(
   }
 
   const projectRegistry = ensureProjectRegistry(projectId);
-  const files = input.files?.filter((file) => file.size > 0) ?? [];
+  const files = input.files ?? [];
   for (const file of files) {
-    const fileWithPath = file as File & { path?: string };
-    const filePath = typeof fileWithPath.path === "string" ? fileWithPath.path.trim() : "";
+    const isDesktopFile = "path" in file && typeof file.path === "string";
+    const filePath = isDesktopFile ? file.path.trim() : ((file as File & { path?: string }).path ?? "").trim();
     const existing = projectRegistry.get(normalizeAssetName(file.name));
     if (existing?.kind === "object_url") {
       URL.revokeObjectURL(existing.url);
     }
+    const mimeType = isDesktopFile ? (file.mime_type ?? null) : ((file as File).type || null);
     projectRegistry.set(normalizeAssetName(file.name), {
       assetName: file.name,
-      url: filePath ? toFileUrl(filePath) : URL.createObjectURL(file),
-      mimeType: file.type || null,
+      url: filePath ? toFileUrl(filePath) : URL.createObjectURL(file as File),
+      mimeType,
       kind: filePath ? "file_url" : "object_url",
     });
   }

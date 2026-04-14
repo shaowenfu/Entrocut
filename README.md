@@ -151,6 +151,15 @@
 3. `scene` 是可选工作分组层
 4. 最终执行语义以 `EditDraft.shots` 为准
 
+## 真实桌面导入主链（2026-04 更新）
+
+当前素材导入口径已经收敛为：
+
+1. `create_project` 只创建空 `project + edit_draft`
+2. `assets:import` 才是唯一真实素材入口
+3. Electron 侧选择目录后，先在 Main Process 扫描视频文件，再以 `files[path]` 提交给 `core`
+4. `retrieval_ready` 只由真实切分 + 向量写入成功派生
+
 ## 当前整体进度
 
 ### 已经比较明确的部分
@@ -184,11 +193,11 @@
 
 1. [docs/README.md](./docs/README.md)
 2. [docs/editing/01_edit_draft_schema.md](./docs/editing/01_edit_draft_schema.md)
-3. [docs/contracts/01_core_api_ws_contract.md](./docs/contracts/01_core_api_ws_contract.md)
+3. [docs/store/01_core_api_ws_contract.md](./docs/store/01_core_api_ws_contract.md)
 4. [docs/agent_runtime/README.md](./docs/agent_runtime/README.md)
 5. [docs/server/README.md](./docs/server/README.md)
 6. [docs/develop_diary/2026-03-24_project_recap_and_pause_journal.md](./docs/develop_diary/2026-03-24_project_recap_and_pause_journal.md)
-7. [docs/contracts/02_local_data_storage_architecture.md](./docs/contracts/02_local_data_storage_architecture.md)
+7. [docs/store/02_local_data_storage_architecture.md](./docs/store/02_local_data_storage_architecture.md)
 8. [docs/develop_diary/2026-03-29_server_branch_pr_merge_journal.md](./docs/develop_diary/2026-03-29_server_branch_pr_merge_journal.md)
 
 ## 当前关键接口面

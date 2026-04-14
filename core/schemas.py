@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 ProjectLifecycleState = Literal["active", "archived"]
 AssetProcessingStage = Literal["pending", "segmenting", "vectorizing", "ready", "failed"]
@@ -75,10 +76,28 @@ class MediaFileReference(BaseModel):
     size_bytes: int | None = None
     mime_type: str | None = None
 
+    @field_validator("path")
+    @classmethod
+    def validate_absolute_path(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            return None
+        if not Path(normalized).is_absolute():
+            raise ValueError("media file path must be an absolute local path")
+        return normalized
+
 
 class MediaReference(BaseModel):
     folder_path: str | None = None
     files: list[MediaFileReference] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_source_fields(self) -> "MediaReference":
+        if self.folder_path and self.files:
+            raise ValueError("media reference cannot include both folder_path and files")
+        return self
 
 
 class ProjectModel(BaseModel):

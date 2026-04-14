@@ -242,6 +242,17 @@ export interface MediaReference {
   files?: MediaFileReference[];
 }
 
+type DesktopMediaLike = {
+  name: string;
+  path: string;
+  size_bytes?: number;
+  mime_type?: string;
+};
+
+function isDesktopMediaLike(file: File | DesktopMediaLike): file is DesktopMediaLike {
+  return "path" in file && typeof file.path === "string";
+}
+
 export interface CreateProjectRequest {
   title?: string;
   prompt?: string;
@@ -315,27 +326,42 @@ function buildCoreUrl(path: string): string {
   return `${getCoreBaseUrl()}${path}`;
 }
 
-export function toMediaReference(input?: { folderPath?: string; files?: File[] } | null): MediaReference | undefined {
+export function toMediaReference(
+  input?: { folderPath?: string; files?: Array<File | DesktopMediaLike> } | null
+): MediaReference | undefined {
   if (!input) {
     return undefined;
   }
-  const folderPath = input.folderPath?.trim();
-  if (folderPath) {
-    return { folder_path: folderPath };
-  }
   const files = input.files
-    ?.filter((file) => file.size > 0)
+    ?.filter((file) => {
+      if (isDesktopMediaLike(file)) {
+        return file.path.trim().length > 0;
+      }
+      return file.size > 0;
+    })
     .map((file) => {
+      if (isDesktopMediaLike(file)) {
+        return {
+          name: file.name,
+          path: file.path,
+          size_bytes: file.size_bytes,
+          mime_type: file.mime_type,
+        };
+      }
       const maybePath = (file as File & { path?: string }).path;
       return {
         name: file.name,
         path: typeof maybePath === "string" && maybePath.trim().length > 0 ? maybePath : undefined,
-        size_bytes: file.size,
-        mime_type: file.type || undefined,
+        size_bytes: (file as File).size,
+        mime_type: (file as File).type || undefined,
       };
     });
   if (files && files.length > 0) {
     return { files };
+  }
+  const folderPath = input.folderPath?.trim();
+  if (folderPath) {
+    return { folder_path: folderPath };
   }
   return undefined;
 }

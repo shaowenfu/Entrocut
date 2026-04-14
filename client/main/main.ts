@@ -2,7 +2,8 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from "electron";
+import { app, BrowserWindow, ipcMain, safeStorage, shell } from "electron";
+import { registerFileScannerIpcHandlers } from "./fileScanner";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -144,12 +145,7 @@ async function writeSecureCredentialMap(values: SecureCredentialMap): Promise<vo
   await fs.writeFile(secureStorePath(), encrypted);
 }
 
-ipcMain.handle("dialog:open-directory", async () => {
-  return dialog.showOpenDialog({
-    title: "Select Media Folder",
-    properties: ["openDirectory"],
-  });
-});
+registerFileScannerIpcHandlers();
 
 ipcMain.handle("auth:open-external-url", async (_event, rawUrl: string) => {
   let parsed: URL;

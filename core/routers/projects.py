@@ -47,6 +47,13 @@ async def get_project(project_id: str) -> GetWorkspaceResponse:
 
 @router.post("/api/v1/projects/{project_id}/assets:import", response_model=TaskResponse)
 async def import_assets(project_id: str, payload: ImportAssetsRequest) -> TaskResponse:
+    auth_session = await auth_session_store.snapshot()
+    if not auth_session.get("access_token"):
+        raise CoreApiError(
+            status_code=401,
+            code="AUTH_SESSION_REQUIRED",
+            message="Sign in is required before media ingest can run.",
+        )
     task = await store.queue_assets_import(project_id, payload.media)
     return TaskResponse(task=task)
 

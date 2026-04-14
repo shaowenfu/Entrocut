@@ -5,13 +5,23 @@ interface AuthDeepLinkPayload {
   status: "authenticated";
 }
 
-declare global {
-  type OpenDirectoryResult = string | null;
+interface DesktopMediaFileReference {
+  name: string;
+  path: string;
+  size_bytes?: number;
+  mime_type?: string;
+}
 
+interface OpenDirectoryResult {
+  folderPath: string | null;
+  files: DesktopMediaFileReference[];
+}
+
+declare global {
   interface Window {
     electron?: {
       version?: string;
-      showOpenDirectory?: () => Promise<OpenDirectoryResult>;
+      showOpenDirectory?: () => Promise<OpenDirectoryResult | null>;
       openExternalUrl?: (url: string) => Promise<void>;
       getSecureCredential?: (key: string) => Promise<string | null>;
       setSecureCredential?: (key: string, value: string) => Promise<void>;
