@@ -31,6 +31,7 @@
 17. [2026-04-13 真实桌面导入与检索准备收敛日志](./2026-04-13_real_desktop_ingest_retrieval_landing_journal.md)
 18. [2026-04-13 MVP 闭环与渲染收口日志](./2026-04-13_mvp_closure_rendering_timeline_journal.md)
 19. [2026-04-13 桌面端 Core 托管与打包落地日志](./2026-04-13_desktop_core_packaging_supervisor_journal.md)
+20. [2026-04-14 三个 MVP PR 合并与联调计划日志](./2026-04-14_pr_merge_and_mvp_e2e_plan_journal.md)
 
 ## 当前这组日记主要覆盖的主题
 
@@ -43,6 +44,7 @@
 7. `server` 目录分层与 `FastAPI` 结构收口
 8. MVP 阶段 `render/retrieve/patch/timeline` 闭环落地
 9. 桌面端 `core supervisor`、本地托管与打包链路落地
+10. 多个独立 PR 的集成合并与人工联调计划收口
 
 ## 命名约定
 

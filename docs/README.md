@@ -55,6 +55,7 @@
 10. [2026-04-13 真实桌面导入与检索准备收敛日志](./develop_diary/2026-04-13_real_desktop_ingest_retrieval_landing_journal.md)
 11. [2026-04-13 MVP 闭环与渲染收口日志](./develop_diary/2026-04-13_mvp_closure_rendering_timeline_journal.md)
 12. [2026-04-13 桌面端 Core 托管与打包落地日志](./develop_diary/2026-04-13_desktop_core_packaging_supervisor_journal.md)
+13. [2026-04-14 三个 MVP PR 合并与联调计划日志](./develop_diary/2026-04-14_pr_merge_and_mvp_e2e_plan_journal.md)
 
 ### 6. Reference / Archive / Secrets
 
@@ -77,3 +78,7 @@
 
 - [tasks/2026-04-12_desktop_local_core_packaging_task.md](./tasks/2026-04-12_desktop_local_core_packaging_task.md)
 - [client/01_electron_build_and_release.md](./client/01_electron_build_and_release.md)
+
+### 8. Integration Tasks（集成联调）
+
+- [tasks/2026-04-14_mvp_manual_end_to_end_integration_plan.md](./tasks/2026-04-14_mvp_manual_end_to_end_integration_plan.md)
