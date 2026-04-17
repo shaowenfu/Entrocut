@@ -246,11 +246,16 @@ npm run dev -- --host 127.0.0.1 --port 5173
 
 ### 手动启动 core
 
+在 Windows 下，建议使用 `py -3.11` 以确保环境稳定性：
+py -3.11 -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+
 ```bash
 cd core
 # 第一次需要创建虚拟环境时执行
-python -m venv venv
-source venv/bin/activate
+py -3.11 -m venv venv
+.\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 uvicorn server:app --host 127.0.0.1 --port 8000 --reload
 ```

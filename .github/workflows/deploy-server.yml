@@ -107,6 +107,7 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           source: "docker-compose.production.yml"
           target: "${{ env.DEPLOY_DIR }}"
+          timeout: 10m
 
       - name: Deploy on ECS
         uses: appleboy/ssh-action@v1.2.0
@@ -125,6 +126,7 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           envs: DEPLOY_DIR,IMAGE_REF,GHCR_USERNAME,GHCR_PASSWORD,MONGODB_ATLAS_URI,DASHSCOPE_API_KEY,DASHVECTOR_API_KEY,DASHVECTOR_ENDPOINT
           script_stop: true
+          timeout: 20m
           script: |
             set -euo pipefail
             mkdir -p "${DEPLOY_DIR}"
