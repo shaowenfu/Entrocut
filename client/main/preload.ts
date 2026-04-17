@@ -51,6 +51,13 @@ const electronBridge = {
       files: [],
     };
   },
+  async showOpenVideos(): Promise<OpenDirectoryScanResult | null> {
+    const result = (await ipcRenderer.invoke("dialog:open-videos")) as OpenDirectoryScanResult | null;
+    if (!result || result.canceled) {
+      return null;
+    }
+    return result;
+  },
   async openExternalUrl(url: string): Promise<void> {
     await ipcRenderer.invoke("auth:open-external-url", url);
   },

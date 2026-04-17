@@ -31,6 +31,7 @@ declare global {
     electron?: {
       version?: string;
       showOpenDirectory?: () => Promise<OpenDirectoryResult | null>;
+      showOpenVideos?: () => Promise<OpenDirectoryResult | null>;
       openExternalUrl?: (url: string) => Promise<void>;
       getSecureCredential?: (key: string) => Promise<string | null>;
       setSecureCredential?: (key: string, value: string) => Promise<void>;

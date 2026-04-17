@@ -82,3 +82,4 @@
 ### 8. Integration Tasks（集成联调）
 
 - [tasks/2026-04-14_mvp_manual_end_to_end_integration_plan.md](./tasks/2026-04-14_mvp_manual_end_to_end_integration_plan.md)
+- [tasks/2026-04-17_final_manual_e2e_vscode_electron_runbook.md](./tasks/2026-04-17_final_manual_e2e_vscode_electron_runbook.md)

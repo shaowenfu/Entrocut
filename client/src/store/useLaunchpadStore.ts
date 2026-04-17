@@ -288,6 +288,7 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => {
     workspaceName: string;
     prompt?: string;
     hasMedia: boolean;
+    media?: MediaPickInput | null;
   }): Promise<void> => {
     dispatch({ type: "NAVIGATION_STARTED" });
     try {
@@ -297,6 +298,7 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => {
         workspaceName: input.workspaceName,
         prompt: input.prompt,
         hasMedia: input.hasMedia,
+        media: input.media,
       });
       dispatch({ type: "NAVIGATION_SUCCEEDED" });
     } catch (error) {
@@ -380,7 +382,6 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => {
 
         const created = await createProject({
           prompt: trimmedPrompt || undefined,
-          media: toMediaReference(media),
           title: !hasMedia ? trimmedPrompt.slice(0, 32) || "Untitled Project" : undefined,
         });
 
@@ -396,6 +397,7 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => {
           workspaceName: created.project.title,
           prompt: trimmedPrompt || undefined,
           hasMedia,
+          media,
         });
         return created.project.id;
       } catch (error) {

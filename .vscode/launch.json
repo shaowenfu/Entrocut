@@ -20,6 +20,27 @@
       "justMyCode": false
     },
     {
+      "name": "Debug Core (FastAPI -> Cloud Server)",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}/core/venv/bin/python",
+      "module": "uvicorn",
+      "cwd": "${workspaceFolder}/core",
+      "args": [
+        "server:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000"
+      ],
+      "env": {
+        "SERVER_BASE_URL": "https://entrocut.sherwenfu.com",
+        "PYTHONUNBUFFERED": "1"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
       "name": "Debug Server (FastAPI)",
       "type": "debugpy",
       "request": "launch",
@@ -53,6 +74,29 @@
         "5173"
       ],
       "console": "integratedTerminal"
+    },
+    {
+      "name": "Debug Client (Electron -> Local Core + Cloud Server)",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/client",
+      "runtimeExecutable": "${workspaceFolder}/client/node_modules/electron/dist/electron",
+      "args": [
+        "${workspaceFolder}/client/dist-electron/main.js"
+      ],
+      "env": {
+        "VITE_DEV_SERVER_URL": "http://127.0.0.1:5173",
+        "VITE_CORE_BASE_URL": "http://127.0.0.1:8000",
+        "VITE_SERVER_BASE_URL": "https://entrocut.sherwenfu.com",
+        "SERVER_BASE_URL": "https://entrocut.sherwenfu.com",
+        "ENTROCUT_SKIP_MANAGED_CORE": "1"
+      },
+      "preLaunchTask": "Client: Start Electron Dev Prerequisites",
+      "console": "integratedTerminal",
+      "outputCapture": "std",
+      "skipFiles": [
+        "<node_internals>/**"
+      ]
     }
   ],
   "compounds": [
@@ -67,4 +111,3 @@
     }
   ]
 }
-

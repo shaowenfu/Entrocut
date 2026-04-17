@@ -18,6 +18,23 @@ export interface OpenDirectoryScanResult {
   files: DesktopMediaFileReference[];
 }
 
+async function toDesktopMediaFileReference(absolutePath: string): Promise<DesktopMediaFileReference | null> {
+  const stat = await fs.stat(absolutePath);
+  if (!stat.isFile()) {
+    return null;
+  }
+  const ext = path.extname(absolutePath).toLowerCase();
+  if (!VIDEO_EXTENSIONS.has(ext)) {
+    return null;
+  }
+  return {
+    name: path.basename(absolutePath),
+    path: absolutePath,
+    size_bytes: stat.size,
+    mime_type: undefined,
+  };
+}
+
 async function scanTopLevelVideoFiles(folderPath: string): Promise<DesktopMediaFileReference[]> {
   const entries = await fs.readdir(folderPath, { withFileTypes: true });
   const files: DesktopMediaFileReference[] = [];
@@ -30,13 +47,10 @@ async function scanTopLevelVideoFiles(folderPath: string): Promise<DesktopMediaF
       continue;
     }
     const absolutePath = path.join(folderPath, entry.name);
-    const stat = await fs.stat(absolutePath);
-    files.push({
-      name: entry.name,
-      path: absolutePath,
-      size_bytes: stat.size,
-      mime_type: undefined,
-    });
+    const fileRef = await toDesktopMediaFileReference(absolutePath);
+    if (fileRef) {
+      files.push(fileRef);
+    }
   }
   return files;
 }
@@ -58,6 +72,30 @@ export function registerFileScannerIpcHandlers(): void {
     return {
       canceled: false,
       folderPath,
+      files,
+    };
+  });
+
+  ipcMain.handle("dialog:open-videos", async (): Promise<OpenDirectoryScanResult> => {
+    const result = await dialog.showOpenDialog({
+      title: "Select Videos",
+      properties: ["openFile", "multiSelections"],
+      filters: [
+        {
+          name: "Video Files",
+          extensions: ["mp4", "mov", "m4v", "webm", "mkv", "avi"],
+        },
+      ],
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return { canceled: true, folderPath: null, files: [] };
+    }
+    const files = (
+      await Promise.all(result.filePaths.map((filePath) => toDesktopMediaFileReference(filePath)))
+    ).filter((file): file is DesktopMediaFileReference => Boolean(file));
+    return {
+      canceled: false,
+      folderPath: null,
       files,
     };
   });

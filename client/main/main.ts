@@ -1,5 +1,7 @@
 import path from "node:path";
+import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { app, BrowserWindow, ipcMain, safeStorage, shell } from "electron";
@@ -152,6 +154,38 @@ async function writeSecureCredentialMap(values: SecureCredentialMap): Promise<vo
   await fs.writeFile(secureStorePath(), encrypted);
 }
 
+function canOpenWindowsDefaultBrowser(): boolean {
+  if (process.platform === "win32") {
+    return false;
+  }
+  if (!(process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP)) {
+    return false;
+  }
+  return (
+    existsSync("/mnt/c/WINDOWS/explorer.exe") ||
+    existsSync("/mnt/c/Windows/explorer.exe") ||
+    existsSync("/mnt/c/WINDOWS/system32/cmd.exe") ||
+    existsSync("/mnt/c/WINDOWS/System32/cmd.exe")
+  );
+}
+
+function openUrlInWindowsExplorer(rawUrl: string): boolean {
+  const explorerPath = existsSync("/mnt/c/WINDOWS/explorer.exe")
+    ? "/mnt/c/WINDOWS/explorer.exe"
+    : "/mnt/c/Windows/explorer.exe";
+  const child = spawn(
+    explorerPath,
+    [rawUrl],
+    {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    }
+  );
+  child.unref();
+  return true;
+}
+
 registerFileScannerIpcHandlers();
 
 ipcMain.handle("auth:open-external-url", async (_event, rawUrl: string) => {
@@ -164,7 +198,15 @@ ipcMain.handle("auth:open-external-url", async (_event, rawUrl: string) => {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("unsupported_external_protocol");
   }
-  await shell.openExternal(parsed.toString());
+  try {
+    if (canOpenWindowsDefaultBrowser()) {
+      openUrlInWindowsExplorer(parsed.toString());
+      return;
+    }
+    await shell.openExternal(parsed.toString());
+  } catch {
+    await shell.openExternal(parsed.toString());
+  }
 });
 
 ipcMain.handle("secure-store:get", async (_event, key: string) => {

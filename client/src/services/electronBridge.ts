@@ -29,7 +29,7 @@ export interface CoreRuntimeState {
   lastError: string | null;
 }
 
-export type MediaPickMode = "electron-folder" | "browser-files" | "auto";
+export type MediaPickMode = "electron-folder" | "electron-videos" | "browser-files" | "auto";
 
 function hasValidFiles(files?: Array<File | DesktopMediaFileReference>): files is Array<File | DesktopMediaFileReference> {
   return Array.isArray(files) && files.length > 0;
@@ -81,6 +81,18 @@ export async function pickFolderFromElectron(): Promise<MediaPickResult | null> 
   return null;
 }
 
+export async function pickVideoFilesFromElectron(): Promise<MediaPickResult | null> {
+  const bridge = window.electron;
+  if (!bridge?.showOpenVideos) {
+    return null;
+  }
+  const picked = await bridge.showOpenVideos();
+  if (!picked || picked.files.length === 0) {
+    return null;
+  }
+  return { files: picked.files };
+}
+
 export async function pickVideoFilesFromBrowser(): Promise<File[] | null> {
   if (typeof document === "undefined") {
     return null;
@@ -130,6 +142,9 @@ export async function pickVideoFilesFromBrowser(): Promise<File[] | null> {
 }
 
 export async function pickMediaFromSystem(): Promise<MediaPickResult | null> {
+  if (isElectronEnvironment()) {
+    return pickFolderFromElectron();
+  }
   const mediaFromElectron = await pickFolderFromElectron();
   if (mediaFromElectron) {
     return mediaFromElectron;
@@ -144,6 +159,9 @@ export async function pickMediaFromSystem(): Promise<MediaPickResult | null> {
 export async function pickMediaByMode(mode: MediaPickMode): Promise<MediaPickResult | null> {
   if (mode === "electron-folder") {
     return pickFolderFromElectron();
+  }
+  if (mode === "electron-videos") {
+    return pickVideoFilesFromElectron();
   }
   if (mode === "browser-files") {
     const files = await pickVideoFilesFromBrowser();

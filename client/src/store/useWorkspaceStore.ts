@@ -16,7 +16,13 @@ import {
   type RuntimeScope,
   type SessionRuntimeState,
 } from "../agent/sessionRuntimeState";
-import { normalizeMediaInput, pickMediaFromSystem, type MediaPickInput } from "../services/electronBridge";
+import {
+  isElectronEnvironment,
+  normalizeMediaInput,
+  pickMediaByMode,
+  pickMediaFromSystem,
+  type MediaPickInput,
+} from "../services/electronBridge";
 import {
   createProjectEventsSocket,
   exportProject as exportProjectRequest,
@@ -122,6 +128,7 @@ interface BootstrapInput {
   workspaceName: string;
   prompt?: string;
   hasMedia: boolean;
+  media?: MediaPickInput | null;
 }
 
 interface UploadAssetsInput extends MediaPickInput {
@@ -1267,6 +1274,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
     bootstrapFromLaunch: async (input) => {
       const trimmedPrompt = input.prompt?.trim();
+      const media = normalizeMediaInput(input.media ?? undefined);
       dispatch({
         type: "BOOTSTRAP_STARTED",
         projectId: input.projectId,
@@ -1278,6 +1286,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       await get().initializeWorkspace(input.projectId, input.workspaceName);
       if (get().loadState !== "ready") {
         return;
+      }
+
+      if (media) {
+        await get().uploadAssets(media ?? undefined);
       }
 
       if (trimmedPrompt) {
@@ -1338,7 +1350,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
       let media = normalizeMediaInput(input);
       if (!media && input?.shouldPickMedia) {
-        media = await pickMediaFromSystem();
+        media = isElectronEnvironment()
+          ? await pickMediaByMode("electron-videos")
+          : await pickMediaFromSystem();
       }
       if (!media) {
         dispatch({ type: "ASSET_UPLOAD_CANCELLED" });

@@ -108,17 +108,14 @@ function LaunchpadPage() {
   async function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setIsDropHovering(false);
-    const droppedPath = extractDroppedPath(event);
     const droppedFiles = extractDroppedFiles(event);
+    const droppedPath = extractDroppedPath(event);
     if (!droppedPath && droppedFiles.length === 0) {
       return;
     }
-    // Electron 环境：droppedPath 存在时使用 folderPath，否则使用 files
-    // 浏览器环境：只有 files
-    const isElectron = isElectronEnvironment();
     await startWorkspaceFromLaunchpad({
-      folderPath: isElectron && droppedPath ? droppedPath : undefined,
-      files: isElectron && droppedPath ? [] : droppedFiles,
+      folderPath: droppedFiles.length === 0 ? droppedPath ?? undefined : undefined,
+      files: droppedFiles.length > 0 ? droppedFiles : undefined,
       prompt: prompt.trim() || undefined,
     });
     if (prompt.trim()) {

@@ -110,6 +110,7 @@ function AccountMenu({ variant = "workspace" }: AccountMenuProps) {
   const startGoogleLogin = useAuthStore((state) => state.startGoogleLogin);
   const startGithubLogin = useAuthStore((state) => state.startGithubLogin);
   const logout = useAuthStore((state) => state.logout);
+  const isAuthenticating = authStatus === "authenticating";
 
   const displayName = useMemo(
     () => getDisplayName(authUser?.email, authUser?.display_name),
@@ -295,10 +296,9 @@ function AccountMenu({ variant = "workspace" }: AccountMenuProps) {
                   onClick={() => {
                     void handlePrimaryAction();
                   }}
-                  disabled={authStatus === "authenticating"}
                 >
                   <LogIn size={15} />
-                  <span>{authStatus === "authenticating" ? "Connecting..." : "Continue with Google"}</span>
+                  <span>{isAuthenticating ? "Retry Google Sign In" : "Continue with Google"}</span>
                 </button>
                 <button
                   type="button"
@@ -306,10 +306,9 @@ function AccountMenu({ variant = "workspace" }: AccountMenuProps) {
                   onClick={() => {
                     void handleGithubLogin();
                   }}
-                  disabled={authStatus === "authenticating"}
                 >
                   <Github size={15} />
-                  <span>Continue with GitHub</span>
+                  <span>{isAuthenticating ? "Retry GitHub Sign In" : "Continue with GitHub"}</span>
                 </button>
               </div>
             )}
