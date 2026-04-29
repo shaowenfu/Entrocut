@@ -56,6 +56,4 @@ core/*.db
 server/*.db
 entrocut_jobs/
 docs/archived
-docs/毕设/manus生成内容参考
-docs/毕设/开题与中期检查相关文档
-docs/毕设/workspace
+docs/毕设相关
