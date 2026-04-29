@@ -291,6 +291,13 @@ npm run electron:dev
 
 ### 手动启动 core
 
+在 Windows 下，建议使用 `py -3.11` 以确保环境稳定性：
+```bash
+py -3.11 -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
 ```bash
 cd core
 # 第一次需要创建虚拟环境时执行
@@ -301,6 +308,13 @@ uvicorn server:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 ### 手动启动 server
+
+在 Windows 下，建议使用 `py -3.11` 以确保环境稳定性：
+```bash
+py -3.11 -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+```
 
 ```bash
 cd server
