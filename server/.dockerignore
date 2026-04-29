@@ -1,10 +1,14 @@
 venv
+.venv
 __pycache__
 .pytest_cache
+.mypy_cache
+.ruff_cache
 *.pyc
 *.pyo
 *.pyd
 .Python
 .env
 .env.*
+tests
 tests/__pycache__

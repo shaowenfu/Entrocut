@@ -127,6 +127,7 @@ jobs:
           envs: DEPLOY_DIR,IMAGE_REF,GHCR_USERNAME,GHCR_PASSWORD,MONGODB_ATLAS_URI,DASHSCOPE_API_KEY,DASHVECTOR_API_KEY,DASHVECTOR_ENDPOINT
           script_stop: true
           timeout: 20m
+          command_timeout: 60m
           script: |
             set -euo pipefail
             mkdir -p "${DEPLOY_DIR}"
@@ -169,11 +170,79 @@ jobs:
             DASHVECTOR_PROTOCOL=grpc
             EOF
             echo "${GHCR_PASSWORD}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
-            docker rm -f entrocut-mock-server || true
-            docker rm -f entrocut-server || true
             export IMAGE_REF="${IMAGE_REF}"
+            OLD_IMAGE_REF=$(docker inspect -f '{{.Config.Image}}' entrocut-server 2>/dev/null || true)
             docker compose -f docker-compose.production.yml pull
-            docker compose -f docker-compose.production.yml up -d
+            docker compose -f docker-compose.production.yml up -d redis
+
+            CANDIDATE_CONTAINER=entrocut-server-candidate
+            docker rm -f "${CANDIDATE_CONTAINER}" || true
+            docker run -d \
+              --name "${CANDIDATE_CONTAINER}" \
+              --network entrocut-server_default \
+              --env-file .env.production \
+              -e APP_ENV=staging \
+              -e SERVER_PORT=8001 \
+              -e REDIS_URL=redis://entrocut-redis:6379/0 \
+              -e AUTH_DEV_FALLBACK_ENABLED=false \
+              -e ALLOW_INMEMORY_MONGO_FALLBACK=false \
+              -e ALLOW_INMEMORY_REDIS_FALLBACK=false \
+              "${IMAGE_REF}" \
+              uvicorn main:app --host 0.0.0.0 --port 8001 --proxy-headers --forwarded-allow-ips=*
+            for i in $(seq 1 30); do
+              LIVE_CODE=$(docker exec "${CANDIDATE_CONTAINER}" curl --silent --output /dev/null --write-out "%{http_code}" http://127.0.0.1:8001/livez || true)
+              READY_CODE=$(docker exec "${CANDIDATE_CONTAINER}" curl --silent --output /dev/null --write-out "%{http_code}" http://127.0.0.1:8001/readyz || true)
+              if [ "${LIVE_CODE}" = "200" ] && [ "${READY_CODE}" = "200" ]; then
+                echo "candidate_ready"
+                break
+              fi
+              if [ "${i}" = "30" ]; then
+                docker logs --tail=200 "${CANDIDATE_CONTAINER}" || true
+                docker rm -f "${CANDIDATE_CONTAINER}" || true
+                exit 1
+              fi
+              echo "candidate_livez=${LIVE_CODE} candidate_readyz=${READY_CODE}"
+              sleep 2
+            done
+
+            docker rm -f entrocut-mock-server || true
+            docker compose -f docker-compose.production.yml up -d --no-deps server || {
+              if [ -n "${OLD_IMAGE_REF}" ]; then
+                echo "deploy_failed_rollback_to=${OLD_IMAGE_REF}"
+                export IMAGE_REF="${OLD_IMAGE_REF}"
+                docker compose -f docker-compose.production.yml up -d --no-deps server || true
+              fi
+              docker rm -f "${CANDIDATE_CONTAINER}" || true
+              exit 1
+            }
+            docker rm -f "${CANDIDATE_CONTAINER}" || true
+            for i in $(seq 1 30); do
+              LIVE_CODE=$(curl --silent --output /dev/null --write-out "%{http_code}" http://127.0.0.1:8001/livez || true)
+              READY_CODE=$(curl --silent --output /dev/null --write-out "%{http_code}" http://127.0.0.1:8001/readyz || true)
+              if [ "${LIVE_CODE}" = "200" ] && [ "${READY_CODE}" = "200" ]; then
+                echo "deploy_ready"
+                curl --silent http://127.0.0.1:8001/ || true
+                echo
+                break
+              fi
+              if [ "${i}" = "30" ]; then
+                if [ -n "${OLD_IMAGE_REF}" ]; then
+                  echo "health_check_failed_rollback_to=${OLD_IMAGE_REF}"
+                  export IMAGE_REF="${OLD_IMAGE_REF}"
+                  docker compose -f docker-compose.production.yml up -d --no-deps server || true
+                fi
+                docker compose -f docker-compose.production.yml ps
+                docker compose -f docker-compose.production.yml logs --tail=200
+                exit 1
+              fi
+              echo "livez=${LIVE_CODE} readyz=${READY_CODE}"
+              if [ "${READY_CODE}" != "200" ]; then
+                curl --silent http://127.0.0.1:8001/readyz || true
+                echo
+              fi
+              sleep 2
+            done
+
             SERVER_IMAGE_REPO="ghcr.io/${{ github.repository_owner }}/entrocut-server"
             STALE_IMAGE_IDS=$(docker image ls "${SERVER_IMAGE_REPO}" --format '{{.ID}} {{.Repository}}:{{.Tag}}' \
               | grep -v ':latest$' \
@@ -184,22 +253,3 @@ jobs:
             if [ -n "${STALE_IMAGE_IDS}" ]; then
               echo "${STALE_IMAGE_IDS}" | xargs docker rmi || true
             fi
-            for i in $(seq 1 30); do
-              LIVE_CODE=$(curl --silent --output /dev/null --write-out "%{http_code}" http://127.0.0.1:8001/livez || true)
-              READY_CODE=$(curl --silent --output /dev/null --write-out "%{http_code}" http://127.0.0.1:8001/readyz || true)
-              if [ "${LIVE_CODE}" = "200" ] && [ "${READY_CODE}" = "200" ]; then
-                echo "deploy_ready"
-                curl --silent http://127.0.0.1:8001/ || true
-                echo
-                exit 0
-              fi
-              echo "livez=${LIVE_CODE} readyz=${READY_CODE}"
-              if [ "${READY_CODE}" != "200" ]; then
-                curl --silent http://127.0.0.1:8001/readyz || true
-                echo
-              fi
-              sleep 2
-            done
-            docker compose -f docker-compose.production.yml ps
-            docker compose -f docker-compose.production.yml logs --tail=200
-            exit 1
