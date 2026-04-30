@@ -267,6 +267,14 @@ function isDesktopMediaLike(file: File | DesktopMediaLike): file is DesktopMedia
   return "path" in file && typeof file.path === "string";
 }
 
+function normalizePathForLocalCore(nativePath: string): string {
+  const wslMatch = nativePath.match(/^\\\\wsl(?:\.localhost|\$)\\[^\\]+\\(.+)$/i);
+  if (!wslMatch) {
+    return nativePath;
+  }
+  return `/${wslMatch[1]!.replaceAll("\\", "/")}`;
+}
+
 export interface CreateProjectRequest {
   title?: string;
   prompt?: string;
@@ -355,31 +363,36 @@ export function toMediaReference(
   if (!input) {
     return undefined;
   }
-  const files = input.files
-    ?.filter((file) => {
-      if (isDesktopMediaLike(file)) {
-        return file.path.trim().length > 0;
+  const files: MediaFileReference[] = [];
+  for (const file of input.files ?? []) {
+    if (isDesktopMediaLike(file)) {
+      const normalizedPath = normalizePathForLocalCore(file.path.trim());
+      if (normalizedPath.length === 0) {
+        continue;
       }
-      return file.size > 0;
-    })
-    .map((file) => {
-      if (isDesktopMediaLike(file)) {
-        return {
-          name: file.name,
-          path: file.path,
-          size_bytes: file.size_bytes,
-          mime_type: file.mime_type,
-        };
-      }
-      const maybePath = (file as File & { path?: string }).path;
-      return {
+      files.push({
         name: file.name,
-        path: typeof maybePath === "string" && maybePath.trim().length > 0 ? maybePath : undefined,
-        size_bytes: (file as File).size,
-        mime_type: (file as File).type || undefined,
-      };
+        path: normalizedPath,
+        size_bytes: file.size_bytes,
+        mime_type: file.mime_type,
+      });
+      continue;
+    }
+    if (file.size <= 0) {
+      continue;
+    }
+    const maybePath = (file as File & { path?: string }).path;
+    if (typeof maybePath !== "string" || maybePath.trim().length === 0) {
+      continue;
+    }
+    files.push({
+      name: file.name,
+      path: normalizePathForLocalCore(maybePath.trim()),
+      size_bytes: file.size,
+      mime_type: file.type || undefined,
     });
-  if (files && files.length > 0) {
+  }
+  if (files.length > 0) {
     return { files };
   }
   const folderPath = input.folderPath?.trim();

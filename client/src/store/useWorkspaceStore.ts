@@ -273,6 +273,22 @@ function toWorkspaceError(message: string, error: unknown): WorkspaceError {
   };
 }
 
+function describeInvalidMediaInput(media: MediaPickInput): Record<string, unknown> {
+  return {
+    folderPath: media.folderPath ?? null,
+    fileCount: media.files?.length ?? 0,
+    files: (media.files ?? []).map((file) => {
+      const maybePath = (file as File & { path?: string }).path;
+      return {
+        name: file.name,
+        size: "size" in file ? file.size : undefined,
+        path: typeof maybePath === "string" && maybePath.trim().length > 0 ? maybePath : null,
+        hasPath: typeof maybePath === "string" && maybePath.trim().length > 0,
+      };
+    }),
+  };
+}
+
 function formatDurationLabel(durationMs: number): string {
   return `${Math.max(1, Math.round(durationMs / 1000))}s`;
 }
@@ -1366,6 +1382,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           error: {
             code: "INVALID_MEDIA_REFERENCE",
             message: "invalid_media_reference",
+            cause: JSON.stringify(describeInvalidMediaInput(media)),
           },
         });
         return;

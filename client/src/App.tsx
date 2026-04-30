@@ -5,6 +5,7 @@ import {
   getCoreBaseUrlFromElectron,
   getCoreRuntimeState,
   isElectronEnvironment,
+  isLikelyElectronShell,
   subscribeAuthDeepLink,
   subscribeCoreRuntimeState,
   type CoreRuntimeState,
@@ -20,6 +21,9 @@ function getPendingWebLoginSessionId(): string | null {
     return null;
   }
   const url = new URL(window.location.href);
+  if (url.searchParams.get("auth_client") === "electron_polling") {
+    return null;
+  }
   const status = url.searchParams.get("auth_status");
   const loginSessionId = url.searchParams.get("auth_login_session_id");
   if (status !== "authenticated" || !loginSessionId) {
@@ -62,6 +66,7 @@ function App() {
   const bootstrapAuth = useAuthStore((state) => state.bootstrap);
   const completeLoginFromDeepLink = useAuthStore((state) => state.completeLoginFromDeepLink);
   const pendingWebLoginSessionId = getPendingWebLoginSessionId();
+  const isElectronShellWithoutBridge = isLikelyElectronShell() && !isElectronEnvironment();
 
   useEffect(() => {
     if (pendingWebLoginSessionId) {
@@ -122,6 +127,15 @@ function App() {
       unsubscribe?.();
     };
   }, []);
+
+  if (isElectronShellWithoutBridge) {
+    return (
+      <main style={{ padding: 24, fontFamily: "Inter, system-ui, sans-serif" }}>
+        <h2>Electron bridge unavailable</h2>
+        <p>preload 未成功加载，无法读取本地视频文件路径。请重启桌面开发进程。</p>
+      </main>
+    );
+  }
 
   if (isElectronEnvironment() && coreRuntimeState?.status !== "ready") {
     return <DesktopBootstrapGate state={coreRuntimeState} />;

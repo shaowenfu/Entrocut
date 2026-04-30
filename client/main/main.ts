@@ -19,6 +19,12 @@ const pendingDeepLinks: string[] = [];
 
 type SecureCredentialMap = Record<string, string>;
 
+if (!app.isPackaged) {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch("disable-gpu");
+  app.commandLine.appendSwitch("disable-software-rasterizer");
+}
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 }
@@ -93,16 +99,30 @@ function flushPendingDeepLinks(): void {
   }
 }
 
+function revealWindow(window: BrowserWindow): void {
+  if (window.isDestroyed()) {
+    return;
+  }
+  if (window.isMinimized()) {
+    window.restore();
+  }
+  window.center();
+  window.show();
+  window.focus();
+}
+
 function createMainWindow(coreBaseUrl: string | null): BrowserWindow {
   const window = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 1180,
-    minHeight: 760,
+    width: 1280,
+    height: 820,
+    minWidth: 960,
+    minHeight: 640,
     autoHideMenuBar: true,
+    show: false,
+    backgroundColor: "#f6f7f9",
     icon: path.join(__dirname, "../public/icon.svg"),
     webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
+      preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
@@ -110,11 +130,15 @@ function createMainWindow(coreBaseUrl: string | null): BrowserWindow {
   });
 
   void window.loadURL(DEV_SERVER_URL);
+  window.once("ready-to-show", () => {
+    revealWindow(window);
+  });
   window.webContents.once("did-finish-load", () => {
     window.webContents.send("core:runtime-state", getCoreRuntimeState());
     if (coreBaseUrl) {
       window.webContents.send("core:runtime-base-url", coreBaseUrl);
     }
+    revealWindow(window);
   });
   mainWindow = window;
   window.on("closed", () => {
@@ -162,20 +186,18 @@ function canOpenWindowsDefaultBrowser(): boolean {
     return false;
   }
   return (
-    existsSync("/mnt/c/WINDOWS/explorer.exe") ||
-    existsSync("/mnt/c/Windows/explorer.exe") ||
     existsSync("/mnt/c/WINDOWS/system32/cmd.exe") ||
     existsSync("/mnt/c/WINDOWS/System32/cmd.exe")
   );
 }
 
-function openUrlInWindowsExplorer(rawUrl: string): boolean {
-  const explorerPath = existsSync("/mnt/c/WINDOWS/explorer.exe")
-    ? "/mnt/c/WINDOWS/explorer.exe"
-    : "/mnt/c/Windows/explorer.exe";
+function openUrlInWindowsDefaultBrowser(rawUrl: string): boolean {
+  const cmdPath = existsSync("/mnt/c/WINDOWS/System32/cmd.exe")
+    ? "/mnt/c/WINDOWS/System32/cmd.exe"
+    : "/mnt/c/WINDOWS/system32/cmd.exe";
   const child = spawn(
-    explorerPath,
-    [rawUrl],
+    cmdPath,
+    ["/c", "start", "", rawUrl],
     {
       detached: true,
       stdio: "ignore",
@@ -200,7 +222,7 @@ ipcMain.handle("auth:open-external-url", async (_event, rawUrl: string) => {
   }
   try {
     if (canOpenWindowsDefaultBrowser()) {
-      openUrlInWindowsExplorer(parsed.toString());
+      openUrlInWindowsDefaultBrowser(parsed.toString());
       return;
     }
     await shell.openExternal(parsed.toString());

@@ -40,7 +40,20 @@ function isDesktopMediaFileReference(file: File | DesktopMediaFileReference): fi
 }
 
 export function isElectronEnvironment(): boolean {
-  return typeof window !== "undefined" && typeof window.electron?.showOpenDirectory === "function";
+  const bridge = typeof window !== "undefined" ? window.electron : undefined;
+  return Boolean(
+    bridge?.showOpenDirectory ||
+    bridge?.showOpenVideos ||
+    bridge?.getPathForFile ||
+    bridge?.version
+  );
+}
+
+export function isLikelyElectronShell(): boolean {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+  return navigator.userAgent.toLowerCase().includes("electron");
 }
 
 export function normalizeMediaInput(input?: MediaPickInput): MediaPickResult | null {
@@ -48,12 +61,21 @@ export function normalizeMediaInput(input?: MediaPickInput): MediaPickResult | n
     return null;
   }
   const folderPath = input.folderPath?.trim();
-  const files = input.files?.filter((file) => {
+  const files: Array<File | DesktopMediaFileReference> = [];
+  for (const file of input.files ?? []) {
     if (isDesktopMediaFileReference(file)) {
-      return file.path.trim().length > 0;
+      const normalizedPath = normalizePathForLocalCore(file.path.trim());
+      if (normalizedPath.length > 0) {
+        files.push({ ...file, path: normalizedPath });
+      }
+      continue;
     }
-    return file.size > 0;
-  });
+    if (file.size <= 0) {
+      continue;
+    }
+    const desktopFile = toDesktopMediaFileReference(file);
+    files.push(desktopFile ?? file);
+  }
   if (hasValidFiles(files)) {
     return { files };
   }
@@ -139,6 +161,48 @@ export async function pickVideoFilesFromBrowser(): Promise<File[] | null> {
     window.addEventListener("focus", handleWindowFocus, true);
     input.click();
   });
+}
+
+export function getPathForFile(file: File): string | null {
+  const bridge = typeof window !== "undefined" ? window.electron : undefined;
+  const filePath =
+    bridge?.getPathForFile?.(file) ??
+    (file as File & { path?: string }).path ??
+    "";
+  const normalized = normalizePathForLocalCore(filePath.trim());
+  return normalized.length > 0 ? normalized : null;
+}
+
+export function normalizePathForLocalCore(nativePath: string): string {
+  const wslMatch = nativePath.match(/^\\\\wsl(?:\.localhost|\$)\\[^\\]+\\(.+)$/i);
+  if (!wslMatch) {
+    return nativePath;
+  }
+  return `/${wslMatch[1]!.replaceAll("\\", "/")}`;
+}
+
+export function toDesktopMediaFileReference(file: File): DesktopMediaFileReference | null {
+  const filePath = getPathForFile(file);
+  if (!filePath) {
+    return null;
+  }
+  return {
+    name: file.name,
+    path: filePath,
+    size_bytes: file.size,
+    mime_type: file.type || undefined,
+  };
+}
+
+export function toDesktopMediaFileReferences(files: File[]): DesktopMediaFileReference[] {
+  const references: DesktopMediaFileReference[] = [];
+  for (const file of files) {
+    const reference = toDesktopMediaFileReference(file);
+    if (reference) {
+      references.push(reference);
+    }
+  }
+  return references;
 }
 
 export async function pickMediaFromSystem(): Promise<MediaPickResult | null> {

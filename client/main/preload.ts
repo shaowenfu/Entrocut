@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 interface OpenDirectoryDialogResult {
   canceled: boolean;
@@ -58,6 +58,10 @@ const electronBridge = {
     }
     return result;
   },
+  getPathForFile(file: File): string | null {
+    const filePath = webUtils.getPathForFile(file);
+    return filePath.trim().length > 0 ? filePath : null;
+  },
   async openExternalUrl(url: string): Promise<void> {
     await ipcRenderer.invoke("auth:open-external-url", url);
   },
@@ -95,5 +99,5 @@ const electronBridge = {
     };
   },
 };
-
+console.log("[preload] loaded", process.versions.electron);
 contextBridge.exposeInMainWorld("electron", electronBridge);

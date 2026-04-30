@@ -7,11 +7,13 @@ import {
   fetchCurrentUser,
   getRefreshToken,
   initializeRefreshTokenStorage,
+  isDevLoginPollingEnabled,
   logoutCurrentUser,
   persistRefreshToken,
   refreshAccessToken,
   syncCoreAuthSessionState,
   type AuthUser,
+  waitForLoginSession,
 } from "../services/authClient";
 import { openExternalUrl } from "../services/electronBridge";
 import { getAuthToken, initializeAuthTokenStorage, persistAuthToken } from "../services/httpClient";
@@ -129,6 +131,14 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
     try {
       const session = await createGoogleLoginSession();
       await openExternalUrl(session.authorize_url);
+      if (isDevLoginPollingEnabled()) {
+        const user = await waitForLoginSession(session.login_session_id);
+        set({
+          status: "authenticated",
+          user,
+          lastError: null,
+        });
+      }
     } catch (error) {
       set({
         status: "error",
@@ -142,6 +152,14 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
     try {
       const session = await createGithubLoginSession();
       await openExternalUrl(session.authorize_url);
+      if (isDevLoginPollingEnabled()) {
+        const user = await waitForLoginSession(session.login_session_id);
+        set({
+          status: "authenticated",
+          user,
+          lastError: null,
+        });
+      }
     } catch (error) {
       set({
         status: "error",

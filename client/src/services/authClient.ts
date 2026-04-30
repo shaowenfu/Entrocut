@@ -6,9 +6,13 @@ const SERVER_BASE_URL = (
   (import.meta.env as Record<string, string | undefined>).VITE_SERVER_BASE_URL?.trim() ||
   "http://127.0.0.1:8001"
 ).replace(/\/$/, "");
+const AUTH_LOGIN_MODE = (import.meta.env as Record<string, string | undefined>).VITE_AUTH_LOGIN_MODE?.trim();
 
 const REFRESH_STORAGE_KEY = "ENTROCUT_REFRESH_TOKEN";
 const SECURE_REFRESH_STORAGE_KEY = "entrocut.auth.refresh_token";
+const ELECTRON_POLLING_REDIRECT_MARKER = "electron_polling";
+const LOGIN_POLL_INTERVAL_MS = 1_000;
+const LOGIN_POLL_TIMEOUT_MS = 120_000;
 
 let cachedRefreshToken: string | null = null;
 let refreshStorageInitialized = false;
@@ -58,6 +62,26 @@ interface RefreshResponse {
 
 function endpoint(path: string): string {
   return `${SERVER_BASE_URL}${path}`;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+export function isDevLoginPollingEnabled(): boolean {
+  return Boolean(import.meta.env.DEV && AUTH_LOGIN_MODE === "polling" && isElectronEnvironment());
+}
+
+function getClientRedirectUri(): string | undefined {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+  if (isDevLoginPollingEnabled()) {
+    const url = new URL(window.location.origin);
+    url.searchParams.set("auth_client", ELECTRON_POLLING_REDIRECT_MARKER);
+    return url.toString();
+  }
+  return isElectronEnvironment() ? undefined : `${window.location.origin}/`;
 }
 
 export async function syncCoreAuthSessionState(userId?: string | null): Promise<void> {
@@ -150,10 +174,7 @@ export async function persistRefreshToken(token: string | null): Promise<void> {
 }
 
 export async function createGoogleLoginSession(): Promise<LoginSessionCreateResponse> {
-  const clientRedirectUri =
-    isElectronEnvironment() || typeof window === "undefined"
-      ? undefined
-      : `${window.location.origin}/`;
+  const clientRedirectUri = getClientRedirectUri();
   return requestJson<LoginSessionCreateResponse>(endpoint("/api/v1/auth/login-sessions"), {
     method: "POST",
     authRequired: false,
@@ -165,10 +186,7 @@ export async function createGoogleLoginSession(): Promise<LoginSessionCreateResp
 }
 
 export async function createGithubLoginSession(): Promise<LoginSessionCreateResponse> {
-  const clientRedirectUri =
-    isElectronEnvironment() || typeof window === "undefined"
-      ? undefined
-      : `${window.location.origin}/`;
+  const clientRedirectUri = getClientRedirectUri();
   return requestJson<LoginSessionCreateResponse>(endpoint("/api/v1/auth/login-sessions"), {
     method: "POST",
     authRequired: false,
@@ -179,13 +197,16 @@ export async function createGithubLoginSession(): Promise<LoginSessionCreateResp
   });
 }
 
-export async function claimLoginSession(loginSessionId: string): Promise<AuthUser> {
-  const response = await requestJson<LoginSessionClaimResponse>(
+export async function fetchLoginSession(loginSessionId: string): Promise<LoginSessionClaimResponse> {
+  return requestJson<LoginSessionClaimResponse>(
     endpoint(`/api/v1/auth/login-sessions/${encodeURIComponent(loginSessionId)}`),
     {
       authRequired: false,
     }
   );
+}
+
+async function persistLoginSessionResult(response: LoginSessionClaimResponse): Promise<AuthUser> {
   if (!response.result?.access_token || !response.result.refresh_token) {
     throw {
       code: response.error?.code ?? "AUTH_LOGIN_SESSION_UNAVAILABLE",
@@ -197,6 +218,34 @@ export async function claimLoginSession(loginSessionId: string): Promise<AuthUse
   await persistRefreshToken(response.result.refresh_token);
   await syncCoreAuthSession(response.result.access_token, response.result.user.id);
   return response.result.user;
+}
+
+export async function claimLoginSession(loginSessionId: string): Promise<AuthUser> {
+  const response = await fetchLoginSession(loginSessionId);
+  return persistLoginSessionResult(response);
+}
+
+export async function waitForLoginSession(loginSessionId: string): Promise<AuthUser> {
+  const deadline = Date.now() + LOGIN_POLL_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const response = await fetchLoginSession(loginSessionId);
+    if (response.result?.access_token && response.result.refresh_token) {
+      return persistLoginSessionResult(response);
+    }
+    if (response.status === "failed" || response.status === "expired" || response.status === "consumed") {
+      throw {
+        code: response.error?.code ?? `AUTH_LOGIN_SESSION_${response.status.toUpperCase()}`,
+        message: response.error?.message ?? `login_session_${response.status}`,
+        status: 400,
+      };
+    }
+    await delay(LOGIN_POLL_INTERVAL_MS);
+  }
+  throw {
+    code: "AUTH_LOGIN_SESSION_TIMEOUT",
+    message: "login_session_timeout",
+    status: 408,
+  };
 }
 
 export async function fetchCurrentUser(): Promise<AuthUser> {

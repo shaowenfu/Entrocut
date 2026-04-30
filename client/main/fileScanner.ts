@@ -19,24 +19,52 @@ export interface OpenDirectoryScanResult {
 }
 
 async function toDesktopMediaFileReference(absolutePath: string): Promise<DesktopMediaFileReference | null> {
-  const stat = await fs.stat(absolutePath);
-  if (!stat.isFile()) {
-    return null;
-  }
-  const ext = path.extname(absolutePath).toLowerCase();
+  const corePath = normalizePathForLocalCore(absolutePath);
+  const ext = path.extname(corePath).toLowerCase();
   if (!VIDEO_EXTENSIONS.has(ext)) {
     return null;
   }
+  const stat = await statFirstExistingFile([corePath, absolutePath]);
+  if (stat === null && corePath === absolutePath) {
+    return null;
+  }
   return {
-    name: path.basename(absolutePath),
-    path: absolutePath,
-    size_bytes: stat.size,
+    name: basenameForNativePath(corePath),
+    path: corePath,
+    size_bytes: stat?.size,
     mime_type: undefined,
   };
 }
 
+function normalizePathForLocalCore(nativePath: string): string {
+  const wslMatch = nativePath.match(/^\\\\wsl(?:\.localhost|\$)\\[^\\]+\\(.+)$/i);
+  if (!wslMatch) {
+    return nativePath;
+  }
+  return `/${wslMatch[1]!.replaceAll("\\", "/")}`;
+}
+
+function basenameForNativePath(nativePath: string): string {
+  return path.basename(nativePath.replaceAll("\\", "/"));
+}
+
+async function statFirstExistingFile(paths: string[]): Promise<{ isFile: () => boolean; size: number } | null> {
+  for (const candidate of paths) {
+    try {
+      const stat = await fs.stat(candidate);
+      if (stat.isFile()) {
+        return stat;
+      }
+    } catch {
+      // Try the next path representation; Windows UNC and WSL paths are not interchangeable.
+    }
+  }
+  return null;
+}
+
 async function scanTopLevelVideoFiles(folderPath: string): Promise<DesktopMediaFileReference[]> {
-  const entries = await fs.readdir(folderPath, { withFileTypes: true });
+  const scanPath = normalizePathForLocalCore(folderPath);
+  const entries = await fs.readdir(scanPath, { withFileTypes: true });
   const files: DesktopMediaFileReference[] = [];
   for (const entry of entries) {
     if (!entry.isFile()) {
@@ -46,7 +74,7 @@ async function scanTopLevelVideoFiles(folderPath: string): Promise<DesktopMediaF
     if (!VIDEO_EXTENSIONS.has(ext)) {
       continue;
     }
-    const absolutePath = path.join(folderPath, entry.name);
+    const absolutePath = path.join(scanPath, entry.name);
     const fileRef = await toDesktopMediaFileReference(absolutePath);
     if (fileRef) {
       files.push(fileRef);

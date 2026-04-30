@@ -17,6 +17,7 @@ import { BrandIcon } from "../components/icons/BrandIcon";
 import { useLaunchpadStore } from "../store/useLaunchpadStore";
 import {
   isElectronEnvironment,
+  toDesktopMediaFileReferences,
 } from "../services/electronBridge";
 import "../styles/launchpad.css";
 
@@ -95,12 +96,6 @@ function LaunchpadPage() {
     }
   }
 
-  function extractDroppedPath(event: DragEvent<HTMLDivElement>): string | null {
-    const firstFile = event.dataTransfer.files?.item(0);
-    const electronPath = (firstFile as File & { path?: string } | null)?.path;
-    return typeof electronPath === "string" && electronPath.trim().length > 0 ? electronPath : null;
-  }
-
   function extractDroppedFiles(event: DragEvent<HTMLDivElement>): File[] {
     return Array.from(event.dataTransfer.files ?? []).filter((file) => file.size > 0);
   }
@@ -109,13 +104,12 @@ function LaunchpadPage() {
     event.preventDefault();
     setIsDropHovering(false);
     const droppedFiles = extractDroppedFiles(event);
-    const droppedPath = extractDroppedPath(event);
-    if (!droppedPath && droppedFiles.length === 0) {
+    const desktopFiles = toDesktopMediaFileReferences(droppedFiles);
+    if (desktopFiles.length === 0) {
       return;
     }
     await startWorkspaceFromLaunchpad({
-      folderPath: droppedFiles.length === 0 ? droppedPath ?? undefined : undefined,
-      files: droppedFiles.length > 0 ? droppedFiles : undefined,
+      files: desktopFiles,
       prompt: prompt.trim() || undefined,
     });
     if (prompt.trim()) {
@@ -223,6 +217,7 @@ function LaunchpadPage() {
           {lastError ? (
             <p className="launchpad-error-banner" role="alert" onClick={clearLastError}>
               {lastError.code}: {lastError.message}
+              {lastError.cause ? ` (${lastError.cause})` : ""}
               {lastError.requestId ? ` (request_id=${lastError.requestId})` : ""}
             </p>
           ) : null}

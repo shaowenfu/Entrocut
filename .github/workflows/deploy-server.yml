@@ -172,6 +172,10 @@ jobs:
             echo "${GHCR_PASSWORD}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
             export IMAGE_REF="${IMAGE_REF}"
             OLD_IMAGE_REF=$(docker inspect -f '{{.Config.Image}}' entrocut-server 2>/dev/null || true)
+            OLD_IMAGE_ID=""
+            if [ -n "${OLD_IMAGE_REF}" ]; then
+              OLD_IMAGE_ID=$(docker image inspect "${OLD_IMAGE_REF}" --format '{{.Id}}' 2>/dev/null || true)
+            fi
             docker compose -f docker-compose.production.yml pull
             docker compose -f docker-compose.production.yml up -d redis
 
@@ -244,12 +248,14 @@ jobs:
             done
 
             SERVER_IMAGE_REPO="ghcr.io/${{ github.repository_owner }}/entrocut-server"
-            STALE_IMAGE_IDS=$(docker image ls "${SERVER_IMAGE_REPO}" --format '{{.ID}} {{.Repository}}:{{.Tag}}' \
-              | grep -v ':latest$' \
-              | sed '/^$/d' \
-              | tail -n +3 \
-              | awk '{print $1}' \
-              | sed '/^$/d' || true)
-            if [ -n "${STALE_IMAGE_IDS}" ]; then
-              echo "${STALE_IMAGE_IDS}" | xargs docker rmi || true
-            fi
+            CURRENT_IMAGE_ID=$(docker image inspect "${IMAGE_REF}" --format '{{.Id}}')
+            docker image ls "${SERVER_IMAGE_REPO}" --format '{{.Repository}}:{{.Tag}}' | while read -r IMAGE_TAG; do
+              IMAGE_ID=$(docker image inspect "${IMAGE_TAG}" --format '{{.Id}}' 2>/dev/null || true)
+              if [ -z "${IMAGE_ID}" ]; then
+                continue
+              fi
+              if [ "${IMAGE_ID}" = "${CURRENT_IMAGE_ID}" ] || [ "${IMAGE_ID}" = "${OLD_IMAGE_ID}" ]; then
+                continue
+              fi
+              docker rmi "${IMAGE_TAG}" || true
+            done

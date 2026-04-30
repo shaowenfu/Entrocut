@@ -32,6 +32,7 @@ declare global {
       version?: string;
       showOpenDirectory?: () => Promise<OpenDirectoryResult | null>;
       showOpenVideos?: () => Promise<OpenDirectoryResult | null>;
+      getPathForFile?: (file: File) => string | null;
       openExternalUrl?: (url: string) => Promise<void>;
       getSecureCredential?: (key: string) => Promise<string | null>;
       setSecureCredential?: (key: string, value: string) => Promise<void>;

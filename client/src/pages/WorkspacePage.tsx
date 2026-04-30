@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import AccountMenu from "../components/account/AccountMenu";
 import { BrandIcon } from "../components/icons/BrandIcon";
+import { toDesktopMediaFileReferences } from "../services/electronBridge";
 import { createThumbnailFromMediaUrl, getProjectMediaSource } from "../services/localMediaRegistry";
 import { getOrCreateSessionId } from "../utils/session";
 import {
@@ -111,12 +112,6 @@ function formatOperation(op: AssistantDecisionTurn["ops"][number]): string {
     parts.push(`summary=${op.summary}`);
   }
   return parts.join(" | ");
-}
-
-function extractDroppedPath(event: DragEvent<HTMLDivElement>): string | null {
-  const firstFile = event.dataTransfer.files?.item(0);
-  const electronPath = (firstFile as File & { path?: string } | null)?.path;
-  return typeof electronPath === "string" && electronPath.trim().length > 0 ? electronPath : null;
 }
 
 function extractDroppedFiles(event: DragEvent<HTMLDivElement>): File[] {
@@ -631,14 +626,13 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   async function handleAssetDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setIsAssetDropHovering(false);
-    const droppedPath = extractDroppedPath(event);
     const droppedFiles = extractDroppedFiles(event);
-    if (!droppedPath && droppedFiles.length === 0) {
+    const desktopFiles = toDesktopMediaFileReferences(droppedFiles);
+    if (desktopFiles.length === 0) {
       return;
     }
     await uploadAssets({
-      folderPath: droppedPath ?? undefined,
-      files: droppedFiles,
+      files: desktopFiles,
     });
   }
 
@@ -871,6 +865,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
             {lastError ? (
               <p className="workspace-error-banner" role="alert" onClick={clearLastError}>
                 {lastError.code}: {lastError.message}
+                {lastError.cause ? ` (${lastError.cause})` : ""}
                 {lastError.requestId ? ` (request_id=${lastError.requestId})` : ""}
               </p>
             ) : null}
