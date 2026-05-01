@@ -57,6 +57,29 @@
       "skipFiles": [
         "<node_internals>/**"
       ]
+    },
+    {
+      "name": "Attach Client Renderer (Electron/Vite)",
+      "type": "chrome",
+      "request": "attach",
+      "port": 9222,
+      "urlFilter": "http://127.0.0.1:5173/*",
+      "webRoot": "${workspaceFolder}/client",
+      "sourceMaps": true,
+      "skipFiles": [
+        "<node_internals>/**",
+        "**/node_modules/**"
+      ]
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Debug Electron Client (Main + Renderer)",
+      "configurations": [
+        "Debug Client (Electron)",
+        "Attach Client Renderer (Electron/Vite)"
+      ],
+      "stopAll": true
     }
   ]
 }

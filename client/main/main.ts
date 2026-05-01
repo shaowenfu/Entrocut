@@ -13,6 +13,7 @@ const __dirname = path.dirname(__filename);
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
 const AUTH_PROTOCOL = "entrocut";
 const SECURE_STORE_FILE = "secure-credentials.bin";
+const DEV_CREDENTIAL_STORE_FILE = "secure-credentials.dev.json";
 
 let mainWindow: BrowserWindow | null = null;
 const pendingDeepLinks: string[] = [];
@@ -153,7 +154,33 @@ function secureStorePath(): string {
   return path.join(app.getPath("userData"), SECURE_STORE_FILE);
 }
 
+function devCredentialStorePath(): string {
+  return path.join(app.getPath("userData"), DEV_CREDENTIAL_STORE_FILE);
+}
+
+function canUseEncryptedCredentialStore(): boolean {
+  return safeStorage.isEncryptionAvailable();
+}
+
+function canUsePlaintextDevCredentialStore(): boolean {
+  return !app.isPackaged && !canUseEncryptedCredentialStore();
+}
+
 async function readSecureCredentialMap(): Promise<SecureCredentialMap> {
+  if (canUsePlaintextDevCredentialStore()) {
+    try {
+      const raw = await fs.readFile(devCredentialStorePath(), "utf8");
+      const parsed = JSON.parse(raw) as unknown;
+      return parsed && typeof parsed === "object" ? (parsed as SecureCredentialMap) : {};
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException | undefined)?.code;
+      if (code === "ENOENT") {
+        return {};
+      }
+      return {};
+    }
+  }
+
   try {
     const encrypted = await fs.readFile(secureStorePath());
     if (encrypted.length === 0) {
@@ -173,6 +200,11 @@ async function readSecureCredentialMap(): Promise<SecureCredentialMap> {
 
 async function writeSecureCredentialMap(values: SecureCredentialMap): Promise<void> {
   const serialized = JSON.stringify(values);
+  if (canUsePlaintextDevCredentialStore()) {
+    await fs.mkdir(path.dirname(devCredentialStorePath()), { recursive: true });
+    await fs.writeFile(devCredentialStorePath(), serialized);
+    return;
+  }
   const encrypted = safeStorage.encryptString(serialized);
   await fs.mkdir(path.dirname(secureStorePath()), { recursive: true });
   await fs.writeFile(secureStorePath(), encrypted);
