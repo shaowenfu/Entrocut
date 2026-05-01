@@ -1389,7 +1389,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }
 
       try {
-        registerProjectMediaSources(workspaceId, media);
+        await registerProjectMediaSources(workspaceId, media);
         const response = await importAssetsRequest(workspaceId, { media: mediaReference });
         dispatch({
           type: "ASSET_UPLOAD_STARTED",

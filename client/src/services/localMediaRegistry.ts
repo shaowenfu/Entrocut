@@ -1,8 +1,13 @@
+import {
+  registerLocalMediaFiles,
+  type DesktopMediaFileReference,
+} from "./electronBridge";
+
 interface LocalMediaSource {
   assetName: string;
   url: string;
   mimeType: string | null;
-  kind: "object_url" | "file_url";
+  kind: "object_url" | "local_media_url";
 }
 
 const projectMediaRegistry = new Map<string, Map<string, LocalMediaSource>>();
@@ -21,39 +26,57 @@ function ensureProjectRegistry(projectId: string): Map<string, LocalMediaSource>
   return created;
 }
 
-function toFileUrl(path: string): string {
-  if (path.startsWith("file://")) {
-    return path;
-  }
-  return `file://${encodeURI(path)}`;
+function isDesktopFileReference(file: File | DesktopMediaFileReference): file is DesktopMediaFileReference {
+  return "path" in file && typeof file.path === "string";
 }
 
-export function registerProjectMediaSources(
+function normalizeMediaPathKey(filePath: string): string {
+  return filePath.trim();
+}
+
+export async function registerProjectMediaSources(
   projectId: string,
   input?: {
     folderPath?: string;
-    files?: Array<File | { name: string; path: string; mime_type?: string }>;
+    files?: Array<File | DesktopMediaFileReference>;
   } | null
-): void {
+): Promise<void> {
   if (!input) {
     return;
   }
 
   const projectRegistry = ensureProjectRegistry(projectId);
   const files = input.files ?? [];
+  const desktopFiles = files.filter(isDesktopFileReference);
+  const localMediaByPath = new Map(
+    (await registerLocalMediaFiles(desktopFiles)).map((item) => [normalizeMediaPathKey(item.path), item])
+  );
+
   for (const file of files) {
-    const isDesktopFile = "path" in file && typeof file.path === "string";
-    const filePath = isDesktopFile ? file.path.trim() : ((file as File & { path?: string }).path ?? "").trim();
     const existing = projectRegistry.get(normalizeAssetName(file.name));
     if (existing?.kind === "object_url") {
       URL.revokeObjectURL(existing.url);
     }
-    const mimeType = isDesktopFile ? (file.mime_type ?? null) : ((file as File).type || null);
+
+    if (isDesktopFileReference(file)) {
+      const registered = localMediaByPath.get(normalizeMediaPathKey(file.path));
+      if (!registered) {
+        continue;
+      }
+      projectRegistry.set(normalizeAssetName(file.name), {
+        assetName: file.name,
+        url: registered.url,
+        mimeType: registered.mime_type ?? file.mime_type ?? null,
+        kind: "local_media_url",
+      });
+      continue;
+    }
+
     projectRegistry.set(normalizeAssetName(file.name), {
       assetName: file.name,
-      url: filePath ? toFileUrl(filePath) : URL.createObjectURL(file as File),
-      mimeType,
-      kind: filePath ? "file_url" : "object_url",
+      url: URL.createObjectURL(file),
+      mimeType: file.type || null,
+      kind: "object_url",
     });
   }
 }

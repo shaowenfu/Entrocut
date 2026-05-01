@@ -15,6 +15,13 @@ export interface DesktopMediaFileReference {
   mime_type?: string;
 }
 
+export interface LocalMediaRegistration {
+  name: string;
+  path: string;
+  url: string;
+  mime_type?: string;
+}
+
 export interface AuthDeepLinkPayload {
   loginSessionId: string;
   status: "authenticated";
@@ -29,7 +36,7 @@ export interface CoreRuntimeState {
   lastError: string | null;
 }
 
-export type MediaPickMode = "electron-folder" | "electron-videos" | "browser-files" | "auto";
+export type MediaPickMode = "electron-folder" | "electron-videos" | "electron-media" | "browser-files" | "auto";
 
 function hasValidFiles(files?: Array<File | DesktopMediaFileReference>): files is Array<File | DesktopMediaFileReference> {
   return Array.isArray(files) && files.length > 0;
@@ -44,6 +51,7 @@ export function isElectronEnvironment(): boolean {
   return Boolean(
     bridge?.showOpenDirectory ||
     bridge?.showOpenVideos ||
+    bridge?.showOpenMedia ||
     bridge?.getPathForFile ||
     bridge?.version
   );
@@ -109,6 +117,18 @@ export async function pickVideoFilesFromElectron(): Promise<MediaPickResult | nu
     return null;
   }
   const picked = await bridge.showOpenVideos();
+  if (!picked || picked.files.length === 0) {
+    return null;
+  }
+  return { files: picked.files };
+}
+
+export async function pickMediaFromElectron(): Promise<MediaPickResult | null> {
+  const bridge = window.electron;
+  if (!bridge?.showOpenMedia) {
+    return pickVideoFilesFromElectron();
+  }
+  const picked = await bridge.showOpenMedia();
   if (!picked || picked.files.length === 0) {
     return null;
   }
@@ -207,7 +227,7 @@ export function toDesktopMediaFileReferences(files: File[]): DesktopMediaFileRef
 
 export async function pickMediaFromSystem(): Promise<MediaPickResult | null> {
   if (isElectronEnvironment()) {
-    return pickFolderFromElectron();
+    return pickMediaFromElectron();
   }
   const mediaFromElectron = await pickFolderFromElectron();
   if (mediaFromElectron) {
@@ -227,12 +247,25 @@ export async function pickMediaByMode(mode: MediaPickMode): Promise<MediaPickRes
   if (mode === "electron-videos") {
     return pickVideoFilesFromElectron();
   }
+  if (mode === "electron-media") {
+    return pickMediaFromElectron();
+  }
   if (mode === "browser-files") {
     const files = await pickVideoFilesFromBrowser();
     return files && files.length > 0 ? { files } : null;
   }
   // auto: 保持原有 fallback 逻辑
   return pickMediaFromSystem();
+}
+
+export async function registerLocalMediaFiles(
+  files: DesktopMediaFileReference[]
+): Promise<LocalMediaRegistration[]> {
+  const bridge = typeof window !== "undefined" ? window.electron : undefined;
+  if (!bridge?.registerLocalMediaFiles) {
+    return [];
+  }
+  return bridge.registerLocalMediaFiles(files);
 }
 
 export async function openExternalUrl(url: string): Promise<void> {

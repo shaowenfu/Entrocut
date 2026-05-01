@@ -73,7 +73,7 @@ function LaunchpadPage() {
     if (isElectron) {
       return {
         title: "Drop folder or videos here",
-        subtitle: "or click to browse folder",
+        subtitle: "or click to browse videos",
       };
     }
     return {
@@ -117,8 +117,8 @@ function LaunchpadPage() {
     }
   }
 
-  async function handleBrowseMedia() {
-    await pickMediaAndStartWorkspace(prompt.trim() || undefined);
+  async function handleBrowseMedia(mode?: "electron-folder" | "electron-videos" | "electron-media") {
+    await pickMediaAndStartWorkspace(prompt.trim() || undefined, mode);
     if (prompt.trim()) {
       setPrompt("");
     }
@@ -160,7 +160,7 @@ function LaunchpadPage() {
                 if (isBusy) {
                   return;
                 }
-                void handleBrowseMedia();
+                void handleBrowseMedia(isElectron ? "electron-videos" : undefined);
               }}
               onDragOver={(event) => {
                 event.preventDefault();
@@ -209,10 +209,16 @@ function LaunchpadPage() {
               <FileVideo size={14} />
               <span>Empty Sequence</span>
             </button>
-            <button type="button" onClick={() => void handleBrowseMedia()} disabled={isCreating || isImporting}>
+            <button type="button" onClick={() => void handleBrowseMedia(isElectron ? "electron-videos" : undefined)} disabled={isCreating || isImporting}>
               <Cloud size={14} />
-              <span>{isElectron ? "Browse Folder" : "Upload Videos"}</span>
+              <span>{isElectron ? "Browse Videos" : "Upload Videos"}</span>
             </button>
+            {isElectron ? (
+              <button type="button" onClick={() => void handleBrowseMedia("electron-folder")} disabled={isCreating || isImporting}>
+                <FolderUp size={14} />
+                <span>Browse Folder</span>
+              </button>
+            ) : null}
           </div>
           {lastError ? (
             <p className="launchpad-error-banner" role="alert" onClick={clearLastError}>

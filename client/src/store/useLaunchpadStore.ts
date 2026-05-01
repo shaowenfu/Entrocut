@@ -4,6 +4,7 @@ import {
   normalizeMediaInput,
   pickMediaByMode,
   type MediaPickInput,
+  type MediaPickMode,
 } from "../services/electronBridge";
 import {
   createProject,
@@ -47,6 +48,7 @@ export type NavigationState = "idle" | "entering_workspace" | "failed";
 interface StartLaunchInput extends MediaPickInput {
   prompt?: string;
   shouldPickMedia?: boolean;
+  pickMode?: MediaPickMode;
 }
 
 type ImportMediaInput = MediaPickInput;
@@ -83,7 +85,7 @@ interface LaunchpadState {
   lastError: LaunchpadError | null;
   fetchRecentProjects: () => Promise<void>;
   startWorkspaceFromLaunchpad: (input?: StartLaunchInput) => Promise<string | null>;
-  pickMediaAndStartWorkspace: (prompt?: string) => Promise<string | null>;
+  pickMediaAndStartWorkspace: (prompt?: string, mode?: MediaPickMode) => Promise<string | null>;
   importLocalFolder: (input?: ImportMediaInput) => Promise<string | null>;
   createEmptyProject: () => Promise<string>;
   createProjectFromPrompt: (prompt: string, folderPath?: string) => Promise<string>;
@@ -348,7 +350,7 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => {
 
       if (needsMediaPick) {
         dispatch({ type: "MEDIA_PICK_STARTED" });
-        const mode = isElectronEnvironment() ? "electron-folder" : "browser-files";
+        const mode = input?.pickMode ?? (isElectronEnvironment() ? "electron-media" : "browser-files");
         media = await pickMediaByMode(mode);
         if (!media) {
           dispatch({ type: "MEDIA_PICK_CANCELLED" });
@@ -390,7 +392,7 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => {
           projectId: created.project.id,
           projectName: created.project.title,
         });
-        registerProjectMediaSources(created.project.id, media);
+        await registerProjectMediaSources(created.project.id, media);
 
         await navigateToWorkspace({
           projectId: created.project.id,
@@ -415,10 +417,11 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => {
       }
     },
 
-    pickMediaAndStartWorkspace: async (prompt) => {
+    pickMediaAndStartWorkspace: async (prompt, mode) => {
       return get().startWorkspaceFromLaunchpad({
         prompt,
         shouldPickMedia: true,
+        pickMode: mode,
       });
     },
 

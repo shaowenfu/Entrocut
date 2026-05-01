@@ -18,6 +18,13 @@ export interface OpenDirectoryScanResult {
   files: DesktopMediaFileReference[];
 }
 
+export interface LocalMediaRegistration {
+  name: string;
+  path: string;
+  url: string;
+  mime_type?: string;
+}
+
 export interface AuthDeepLinkPayload {
   loginSessionId: string;
   status: "authenticated";
@@ -58,9 +65,19 @@ const electronBridge = {
     }
     return result;
   },
+  async showOpenMedia(): Promise<OpenDirectoryScanResult | null> {
+    const result = (await ipcRenderer.invoke("dialog:open-media")) as OpenDirectoryScanResult | null;
+    if (!result || result.canceled) {
+      return null;
+    }
+    return result;
+  },
   getPathForFile(file: File): string | null {
     const filePath = webUtils.getPathForFile(file);
     return filePath.trim().length > 0 ? filePath : null;
+  },
+  async registerLocalMediaFiles(files: DesktopMediaFileReference[]): Promise<LocalMediaRegistration[]> {
+    return (await ipcRenderer.invoke("local-media:register", files)) as LocalMediaRegistration[];
   },
   async openExternalUrl(url: string): Promise<void> {
     await ipcRenderer.invoke("auth:open-external-url", url);

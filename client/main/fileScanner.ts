@@ -18,6 +18,26 @@ export interface OpenDirectoryScanResult {
   files: DesktopMediaFileReference[];
 }
 
+function mimeTypeForVideoPath(filePath: string): string | undefined {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".mp4" || ext === ".m4v") {
+    return "video/mp4";
+  }
+  if (ext === ".mov") {
+    return "video/quicktime";
+  }
+  if (ext === ".webm") {
+    return "video/webm";
+  }
+  if (ext === ".mkv") {
+    return "video/x-matroska";
+  }
+  if (ext === ".avi") {
+    return "video/x-msvideo";
+  }
+  return undefined;
+}
+
 async function toDesktopMediaFileReference(absolutePath: string): Promise<DesktopMediaFileReference | null> {
   const corePath = normalizePathForLocalCore(absolutePath);
   const ext = path.extname(corePath).toLowerCase();
@@ -32,7 +52,7 @@ async function toDesktopMediaFileReference(absolutePath: string): Promise<Deskto
     name: basenameForNativePath(corePath),
     path: corePath,
     size_bytes: stat?.size,
-    mime_type: undefined,
+    mime_type: mimeTypeForVideoPath(corePath),
   };
 }
 
@@ -62,22 +82,58 @@ async function statFirstExistingFile(paths: string[]): Promise<{ isFile: () => b
   return null;
 }
 
-async function scanTopLevelVideoFiles(folderPath: string): Promise<DesktopMediaFileReference[]> {
+async function scanVideoFiles(folderPath: string): Promise<DesktopMediaFileReference[]> {
   const scanPath = normalizePathForLocalCore(folderPath);
-  const entries = await fs.readdir(scanPath, { withFileTypes: true });
   const files: DesktopMediaFileReference[] = [];
-  for (const entry of entries) {
-    if (!entry.isFile()) {
+  const pendingDirectories = [scanPath];
+  while (pendingDirectories.length > 0) {
+    const currentDirectory = pendingDirectories.pop();
+    if (!currentDirectory) {
       continue;
     }
-    const ext = path.extname(entry.name).toLowerCase();
-    if (!VIDEO_EXTENSIONS.has(ext)) {
+    let entries;
+    try {
+      entries = await fs.readdir(currentDirectory, { withFileTypes: true });
+    } catch {
       continue;
     }
-    const absolutePath = path.join(scanPath, entry.name);
-    const fileRef = await toDesktopMediaFileReference(absolutePath);
-    if (fileRef) {
-      files.push(fileRef);
+    for (const entry of entries) {
+      const absolutePath = path.join(currentDirectory, entry.name);
+      if (entry.isDirectory()) {
+        pendingDirectories.push(absolutePath);
+        continue;
+      }
+      if (!entry.isFile()) {
+        continue;
+      }
+      const fileRef = await toDesktopMediaFileReference(absolutePath);
+      if (fileRef) {
+        files.push(fileRef);
+      }
+    }
+  }
+  return files;
+}
+
+async function collectMediaFromPaths(filePaths: string[]): Promise<DesktopMediaFileReference[]> {
+  const files: DesktopMediaFileReference[] = [];
+  for (const filePath of filePaths) {
+    const normalizedPath = normalizePathForLocalCore(filePath);
+    let stat;
+    try {
+      stat = await fs.stat(normalizedPath);
+    } catch {
+      continue;
+    }
+    if (stat.isDirectory()) {
+      files.push(...await scanVideoFiles(normalizedPath));
+      continue;
+    }
+    if (stat.isFile()) {
+      const fileRef = await toDesktopMediaFileReference(normalizedPath);
+      if (fileRef) {
+        files.push(fileRef);
+      }
     }
   }
   return files;
@@ -96,7 +152,7 @@ export function registerFileScannerIpcHandlers(): void {
     if (!folderPath) {
       return { canceled: true, folderPath: null, files: [] };
     }
-    const files = await scanTopLevelVideoFiles(folderPath);
+    const files = await scanVideoFiles(folderPath);
     return {
       canceled: false,
       folderPath,
@@ -125,6 +181,27 @@ export function registerFileScannerIpcHandlers(): void {
       canceled: false,
       folderPath: null,
       files,
+    };
+  });
+
+  ipcMain.handle("dialog:open-media", async (): Promise<OpenDirectoryScanResult> => {
+    const result = await dialog.showOpenDialog({
+      title: "Select Video Files or Media Folders",
+      properties: ["openFile", "openDirectory", "multiSelections"],
+      filters: [
+        {
+          name: "Video Files",
+          extensions: ["mp4", "mov", "m4v", "webm", "mkv", "avi"],
+        },
+      ],
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return { canceled: true, folderPath: null, files: [] };
+    }
+    return {
+      canceled: false,
+      folderPath: null,
+      files: await collectMediaFromPaths(result.filePaths),
     };
   });
 }

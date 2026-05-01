@@ -7,6 +7,10 @@ import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, ipcMain, safeStorage, shell } from "electron";
 import { getCoreRuntimeState, onCoreRuntimeState, startCore, stopCore } from "./coreSupervisor";
 import { registerFileScannerIpcHandlers } from "./fileScanner";
+import {
+  registerLocalMediaProtocolHandlers,
+  registerLocalMediaProtocolScheme,
+} from "./localMediaProtocol";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -19,6 +23,8 @@ let mainWindow: BrowserWindow | null = null;
 const pendingDeepLinks: string[] = [];
 
 type SecureCredentialMap = Record<string, string>;
+
+registerLocalMediaProtocolScheme();
 
 if (!app.isPackaged) {
   app.disableHardwareAcceleration();
@@ -322,6 +328,7 @@ app.on("open-url", (event, url) => {
 
 app.whenReady().then(async () => {
   registerProtocolClient();
+  registerLocalMediaProtocolHandlers();
 
   const unsubscribeCoreRuntime = onCoreRuntimeState((state) => {
     if (!mainWindow || mainWindow.isDestroyed()) {
