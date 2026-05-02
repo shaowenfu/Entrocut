@@ -156,11 +156,9 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const exportResult = useWorkspaceStore((state) => state.exportResult);
   const previewResult = useWorkspaceStore((state) => state.previewResult);
   const agentSteps = useWorkspaceStore((state) => state.agentSteps);
-  const runtimeState = useWorkspaceStore((state) => state.runtimeState);
   const lastError = useWorkspaceStore((state) => state.lastError);
   const initializeWorkspace = useWorkspaceStore((state) => state.initializeWorkspace);
   const setSelectionContext = useWorkspaceStore((state) => state.setSelectionContext);
-  const runAgentLoop = useWorkspaceStore((state) => state.runAgentLoop);
   const uploadAssets = useWorkspaceStore((state) => state.uploadAssets);
   const sendChat = useWorkspaceStore((state) => state.sendChat);
   const exportProject = useWorkspaceStore((state) => state.exportProject);
@@ -211,12 +209,6 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     (coreCapabilities?.can_export ?? false) &&
     !(agentTask && (agentTask.status === "queued" || agentTask.status === "running")) &&
     !(exportTask && (exportTask.status === "queued" || exportTask.status === "running"));
-  const canRunAgentLoop =
-    !isEditLocked &&
-    !isLoadingWorkspace &&
-    !(exportTask && (exportTask.status === "queued" || exportTask.status === "running")) &&
-    Boolean(runtimeState.draft.editDraft);
-
   const activeSceneIndex = useMemo(
     () =>
       previewSelection?.kind === "scene"
@@ -531,29 +523,6 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     setPromptText("");
     setIsPlaying(false);
     await sendChat(trimmed);
-  }
-
-  async function handleRunAgentLoop() {
-    if (!canRunAgentLoop) {
-      return;
-    }
-    setIsEditLocked(true);
-    setReasoningOverlay("Agent loop running...");
-    try {
-      const result = await runAgentLoop("create_retrieval_request");
-      const lastStep = result.steps[result.steps.length - 1];
-      setReasoningOverlay(
-        lastStep?.success
-          ? `Agent loop finished: ${lastStep.stopReason}`
-          : `Agent loop failed: ${lastStep?.error?.code ?? "unknown_error"}`,
-      );
-      window.setTimeout(() => setReasoningOverlay(null), 2400);
-    } catch {
-      setReasoningOverlay("Agent loop failed.");
-      window.setTimeout(() => setReasoningOverlay(null), 2400);
-    } finally {
-      setIsEditLocked(false);
-    }
   }
 
   function handleTogglePlay() {
@@ -887,9 +856,6 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
               <span>AI Copilot</span>
             </h2>
             <div className="topbar-actions">
-              <button type="button" onClick={() => void handleRunAgentLoop()} disabled={!canRunAgentLoop}>
-                Run Agent
-              </button>
               <span className="session-badge">{sessionLabel}</span>
             </div>
           </div>

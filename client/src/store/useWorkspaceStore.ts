@@ -1,22 +1,5 @@
 import { create } from "zustand";
 import {
-  assembleActionContext,
-  type ContextAssemblyResult,
-} from "../agent/contextAssembler";
-import { runExecutionLoop, type RunExecutionLoopResult } from "../agent/executionLoop";
-import { createLlmPlannerRunner } from "../agent/llmPlannerRunner";
-import { createHeuristicPlannerRunner } from "../agent/plannerRunner";
-import { createLocalToolExecutor } from "../agent/toolExecutor";
-import {
-  createEmptySessionRuntimeState,
-  type PlannerActionType,
-  recordExecutionAction,
-  syncRuntimeStateFromWorkspace,
-  updateSelectionState,
-  type RuntimeScope,
-  type SessionRuntimeState,
-} from "../agent/sessionRuntimeState";
-import {
   isElectronEnvironment,
   normalizeMediaInput,
   pickMediaByMode,
@@ -115,6 +98,13 @@ type WorkspaceLoadState = "idle" | "loading" | "ready" | "failed";
 type ChatState = "idle" | "responding" | "failed";
 type EventStreamState = "disconnected" | "connecting" | "connected";
 type ReconnectState = "idle" | "reconnecting" | "max_attempts_reached";
+type RuntimeScope = "global" | "scene" | "shot";
+
+interface SelectionContext {
+  scope: RuntimeScope;
+  selectedSceneId?: string | null;
+  selectedShotId?: string | null;
+}
 
 interface WorkspaceError {
   code: string;
@@ -189,7 +179,7 @@ type WorkspaceEvent =
 interface WorkspaceState {
   workspaceId: string | null;
   workspaceName: string | null;
-  runtimeState: SessionRuntimeState;
+  selectionContext: SelectionContext;
   editDraft: CoreEditDraft | null;
   assets: WorkspaceAssetItem[];
   clips: WorkspaceClipItem[];
@@ -232,8 +222,6 @@ interface WorkspaceState {
     selectedSceneId?: string | null;
     selectedShotId?: string | null;
   }) => void;
-  assembleActionContext: (actionType: Parameters<typeof assembleActionContext>[0]["actionType"]) => ContextAssemblyResult;
-  runAgentLoop: (actionType: PlannerActionType) => Promise<RunExecutionLoopResult>;
   uploadAssets: (input?: UploadAssetsInput) => Promise<void>;
   sendChat: (prompt: string) => Promise<void>;
   exportProject: () => Promise<ExportResult | null>;
@@ -242,8 +230,6 @@ interface WorkspaceState {
 
 const MAX_RECONNECT_ATTEMPTS = 4;
 const RECONNECT_DELAY_MS = 1200;
-const plannerRunner = createLlmPlannerRunner(createHeuristicPlannerRunner());
-const toolExecutor = createLocalToolExecutor();
 
 let projectEventsSocket: WebSocket | null = null;
 let socketProjectId: string | null = null;
@@ -529,7 +515,7 @@ function deriveProcessingPhase(
 function withDerivedFields(
   state: Pick<
     WorkspaceState,
-    | "runtimeState"
+    | "selectionContext"
     | "loadState"
     | "summaryState"
     | "coreCapabilities"
@@ -583,7 +569,7 @@ function reduceWorkspaceState(
     WorkspaceState,
     | "workspaceId"
     | "workspaceName"
-    | "runtimeState"
+    | "selectionContext"
     | "editDraft"
     | "assets"
     | "clips"
@@ -620,14 +606,13 @@ function reduceWorkspaceState(
     case "WORKSPACE_LOAD_SUCCEEDED":
       return {
         ...mapWorkspace(event.workspace, event.workspaceName),
-        runtimeState: syncRuntimeStateFromWorkspace(state.runtimeState, event.workspace),
         loadState: "ready",
         chatState: deriveChatState(mapActiveTasks(event.workspace.active_tasks), event.workspace.runtime_state),
         lastError: null,
       };
     case "WORKSPACE_LOAD_FAILED":
       return {
-        runtimeState: createEmptySessionRuntimeState(),
+        selectionContext: { scope: "global" },
         editDraft: null,
         assets: [],
         clips: [],
@@ -648,10 +633,7 @@ function reduceWorkspaceState(
       return {
         workspaceId: event.projectId,
         workspaceName: event.workspaceName,
-        runtimeState: {
-          ...createEmptySessionRuntimeState(),
-          projectId: event.projectId,
-        },
+        selectionContext: { scope: "global" },
         editDraft: null,
         pendingPrompt: event.prompt?.trim() ?? null,
         exportResult: null,
@@ -692,7 +674,6 @@ function reduceWorkspaceState(
     case "WORKSPACE_SNAPSHOT_RECEIVED":
       return {
         ...mapWorkspace(event.workspace),
-        runtimeState: syncRuntimeStateFromWorkspace(state.runtimeState, event.workspace),
         loadState: "ready",
         chatState: deriveChatState(mapActiveTasks(event.workspace.active_tasks), event.workspace.runtime_state),
         previewResult: event.workspace.preview_result ?? state.previewResult,
@@ -722,86 +703,6 @@ function reduceWorkspaceState(
       });
       return {
         editDraft: event.editDraft,
-        runtimeState: syncRuntimeStateFromWorkspace(state.runtimeState, {
-          project,
-          edit_draft: event.editDraft,
-          chat_turns: [],
-          summary_state: state.summaryState,
-          media_summary:
-            state.coreMediaSummary ?? {
-              asset_count: 0,
-              pending_asset_count: 0,
-              processing_asset_count: 0,
-              ready_asset_count: 0,
-              failed_asset_count: 0,
-              total_clip_count: 0,
-              indexed_clip_count: 0,
-              retrieval_ready: false,
-            },
-          runtime_state:
-            state.coreRuntimeState ?? {
-              goal_state: {
-                brief: null,
-                constraints: [],
-                preferences: [],
-                open_questions: [],
-                updated_at: null,
-              },
-              focus_state: {
-                scope_type: "project",
-                scene_id: null,
-                shot_id: null,
-                updated_at: null,
-              },
-              conversation_state: {
-                pending_questions: [],
-                confirmed_facts: [],
-                latest_user_feedback: "unknown",
-                updated_at: null,
-              },
-              retrieval_state: {
-                last_query: null,
-                candidate_clip_ids: [],
-                retrieval_ready: false,
-                blocking_reason: null,
-                updated_at: null,
-              },
-              execution_state: {
-                agent_run_state: "idle",
-                current_task_id: null,
-                last_tool_name: null,
-                last_error: null,
-                updated_at: null,
-              },
-              updated_at: null,
-            },
-          capabilities:
-            state.coreCapabilities ?? {
-              can_send_chat: true,
-              chat_mode: "planning_only",
-              can_retrieve: false,
-              can_inspect: false,
-              can_patch_draft: false,
-              can_preview: false,
-              can_export: false,
-              blocking_reasons: [],
-            },
-          active_tasks: state.activeTasks.map((task) => ({
-            id: task.id,
-            slot: task.slot,
-            type: task.type,
-            status: task.status,
-            owner_type: task.ownerType ?? "project",
-            owner_id: task.ownerId ?? null,
-            progress: task.progress ?? null,
-            message: task.message ?? null,
-            result: task.result ?? {},
-            error: task.error ?? null,
-            created_at: "",
-            updated_at: "",
-          })),
-          active_task: null,
-        }),
         assets,
         clips,
         storyboard,
@@ -811,11 +712,11 @@ function reduceWorkspaceState(
     }
     case "SELECTION_CONTEXT_UPDATED":
       return {
-        runtimeState: updateSelectionState(state.runtimeState, {
+        selectionContext: {
           scope: event.scope,
-          selectedSceneId: event.selectedSceneId,
-          selectedShotId: event.selectedShotId,
-        }),
+          selectedSceneId: event.selectedSceneId ?? null,
+          selectedShotId: event.selectedShotId ?? null,
+        },
       };
     case "PROJECT_UPDATED": {
       const currentProject = buildCurrentProject({
@@ -1012,8 +913,6 @@ const initialState: Omit<
   | "initializeWorkspace"
   | "bootstrapFromLaunch"
   | "setSelectionContext"
-  | "assembleActionContext"
-  | "runAgentLoop"
   | "uploadAssets"
   | "sendChat"
   | "exportProject"
@@ -1021,7 +920,7 @@ const initialState: Omit<
 > = {
   workspaceId: null,
   workspaceName: null,
-  runtimeState: createEmptySessionRuntimeState(),
+  selectionContext: { scope: "global" },
   editDraft: null,
   assets: [],
   clips: [],
@@ -1328,30 +1227,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       });
     },
 
-    assembleActionContext: (actionType) => {
-      return assembleActionContext({
-        actionType,
-        runtimeState: get().runtimeState,
-      });
-    },
-
-    runAgentLoop: async (actionType) => {
-      const result = await runExecutionLoop(
-        {
-          plannerRunner,
-          toolExecutor,
-        },
-        {
-          runtimeState: get().runtimeState,
-          actionType,
-        },
-      );
-      applyDirectPatch({
-        runtimeState: result.finalRuntimeState,
-      });
-      return result;
-    },
-
     uploadAssets: async (input) => {
       const workspaceId = get().workspaceId;
       if (!workspaceId) {
@@ -1367,7 +1242,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       let media = normalizeMediaInput(input);
       if (!media && input?.shouldPickMedia) {
         media = isElectronEnvironment()
-          ? await pickMediaByMode("electron-videos")
+          ? await pickMediaByMode("electron-media")
           : await pickMediaFromSystem();
       }
       if (!media) {
@@ -1415,7 +1290,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }
 
       try {
-        const selection = get().runtimeState.selection;
+        const selection = get().selectionContext;
         const { modelPrefs } = useAuthStore.getState();
         const response = await sendChatRequest(
           workspaceId,
@@ -1436,18 +1311,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
             byokBaseUrl: modelPrefs.byokBaseUrl,
           }
         );
-        applyDirectPatch({
-          runtimeState: recordExecutionAction(get().runtimeState, {
-            action: "apply_patch",
-            status: "running",
-            summary:
-              selection.scope === "global"
-                ? "chat_request_scope_global"
-                : `chat_request_scope_${selection.scope}`,
-            targetSceneId: selection.selectedSceneId,
-            targetShotId: selection.selectedShotId,
-          }),
-        });
         dispatch({
           type: "CHAT_REQUEST_ACCEPTED",
           task: mapTask(response.task)!,
