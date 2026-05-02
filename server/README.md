@@ -1,167 +1,369 @@
-# Server
+# EntroCut Server
 
-`server` 现在已经不只是 `auth phase 1`，而是进入了“鉴权主链已打通、云端网关逐步收口”的阶段。
+`server/` 是 EntroCut 的云端能力网关。它不负责本地剪辑、不直接管理桌面工作区文件，而是为 `core/` 和 `client/` 提供稳定的云端 `HTTP API（超文本传输接口）`：认证、用户状态、`OpenAI-compatible chat proxy（兼容 OpenAI 的聊天代理）`、素材向量化、检索、视觉精判，以及运行态健康检查。
 
-## 当前定位
+当前实现可以概括为：
 
-`server` 的角色不是本地剪辑引擎，而是 `Core -> Server` 的云端能力网关，当前重点有三条：
-
-1. `Authentication / Authorization（认证 / 授权）`
-2. `OpenAI-compatible chat proxy（兼容 OpenAI 的聊天代理）`
-3. 为后续 `credits / BYOK / retrieval / inspect` 保留稳定扩展点
-
-## 文件目录体系
-
-当前 `server` 方向建议按下面这条最小路径读：
-
-1. `server/README.md`
-   - `server` 当前定位、能力边界、阅读入口
-2. `docs/server/README.md`
-   - `server` 文档总索引，适合先看全局目录
-3. `docs/server/01_server_module_design.md`
-   - 模块边界与职责拆分
-4. `docs/server/02_server_api_inventory.md`
-   - 接口清单与 API 面收口
-5. `docs/server/03_server_auth_system_design.md`
-   - 鉴权、登录、用户链路
-6. `docs/server/04_server_openai_compatible_contract.md`
-   - `Core -> Server` 云端契约
-7. `docs/server/05_auth_implementation_spec.md`
-   - 已落地鉴权实现规范
-8. `docs/server/06_server_vector_rag_design.md`
-   - 向量、检索、`RAG（检索增强生成）`
-9. `docs/server/06a_server_retrieve_inspect_gateway_design.md`
-   - `retrieve / inspect` 网关方案
-10. `docs/server/07_server_production_hardening_plan.md`
-    - 生产加固
-11. `docs/server/08_server_staging_runbook.md`
-    - `staging（预发布）` 运维说明
-
-代码侧建议重点看：
-
-1. [`server/app/main.py`](./app/main.py)
-   - 稳定入口，重新导出 `app` 与核心单例
-2. [`server/app/bootstrap/dependencies.py`](./app/bootstrap/dependencies.py)
-   - 依赖装配、运行态对象、健康探针
-3. [`server/app/api/routes/auth.py`](./app/api/routes/auth.py)
-   - OAuth、login session、refresh、logout、`me`
-4. [`server/app/services/gateway/chat_proxy.py`](./app/services/gateway/chat_proxy.py)
-   - `OpenAI-compatible chat proxy`
-5. [`server/app/services/vector.py`](./app/services/vector.py)
-   - `vectorize / retrieval`
-6. [`server/app/services/inspect.py`](./app/services/inspect.py)
-   - `inspect` 判定链
-7. [`server/app/schemas/`](./app/schemas)
-   - 请求 / 响应 `schema（模式）`
-
-## 推荐代码阅读顺序
-
-如果目标是先把 `server` 主链梳理清楚，建议按这个顺序读代码：
-
-1. [`server/app/schemas/`](./app/schemas)
-   - 先看请求和响应 `schema（模式）`
-2. [`server/app/core/errors.py`](./app/core/errors.py)
-   - 再看错误语义
-3. [`server/app/services/auth/`](./app/services/auth)
-   - 了解登录、token、用户如何成立
-4. [`server/app/services/quota.py`](./app/services/quota.py)
-   - 了解 `credits` 和限流如何介入主链
-5. [`server/app/services/vector.py`](./app/services/vector.py)
-   - 了解向量化与检索
-6. [`server/app/services/inspect.py`](./app/services/inspect.py)
-   - 了解候选精判
-7. [`server/app/bootstrap/`](./app/bootstrap)
-   - 最后串起路由、依赖注入、日志、指标和异常处理
-
-如果只想快速抓主干，直接读 `server/app/bootstrap/dependencies.py`，再回头补 `services/gateway/chat_proxy.py` 和 `services/vector.py`。
-
-## 当前已落地能力
-
-### 鉴权与用户链路
-
-1. `POST /api/v1/auth/login-sessions`
-2. `GET /api/v1/auth/oauth/google/start`
-3. `GET /api/v1/auth/oauth/google/callback`
-4. `GET /api/v1/auth/oauth/github/start`
-5. `GET /api/v1/auth/oauth/github/callback`
-6. `GET /api/v1/auth/login-sessions/{id}`
-7. `POST /api/v1/auth/refresh`
-8. `POST /api/v1/auth/logout`
-9. `GET /api/v1/me`
-
-### 云端网关与运行态
-
-1. `POST /v1/chat/completions`
-2. `GET /health`
-3. `GET /api/v1/runtime/capabilities`
-4. `GET /`
-
-### 当前分支已并入的能力线
-
-1. `Google + GitHub OAuth`
-2. `client -> core -> server` 登录态传递链
-3. `credits_balance` 用户字段及前端展示入口
-4. `model selection + BYOK routing` 配套参数透传
-
-## 当前约束与运行说明
-
-1. `Google OAuth` 需要配置 `AUTH_GOOGLE_CLIENT_ID / AUTH_GOOGLE_CLIENT_SECRET`
-2. `GitHub OAuth` 需要配置 `AUTH_GITHUB_CLIENT_ID / AUTH_GITHUB_CLIENT_SECRET`
-3. `MongoDB Atlas` 未配置时，仓储层会退回进程内存模式，方便本地开发
-4. `Redis` 不可用时，`login_session` 会退回进程内存模式，方便本地开发
-5. `POST /v1/chat/completions` 当前主链已经受鉴权保护，但真实上游能力和计费闭环仍需继续验证
-
-补充：当前 `vectorize` 的上游输入已默认来自桌面端真实本地视频路径切分后的 contact sheet，不再依赖 `create_project` 阶段的占位 clips。
-
-## 开发辅助脚本
-
-### `scripts/issue_super_token.py` — 签发开发用超级用户 token
-
-用于在本地或 staging 环境快速获取一个长效 access token，跳过正常登录流程，方便调试鉴权保护下的 API。
-
-**做了什么：**
-1. 在 MongoDB 中创建（或复用）一个 `dev_superuser` 用户，自带极高 credits 余额
-2. 创建一条对应的 login session
-3. 签发一个有效期 100 年的 JWT，scope 包含 `user:read` 和 `chat:proxy`
-
-**用法：**
-```bash
-# 使用默认 user-id / email
-python scripts/issue_super_token.py
-
-# 自定义
-python scripts/issue_super_token.py --user-id myuser --email my@dev.local
+```text
+Client / Core
+    |
+    |  HTTP + Bearer token（持有者令牌）
+    v
+Server FastAPI
+    |
+    +-- OAuth / JWT / Refresh Token（登录与会话）
+    +-- Chat Proxy（模型调用代理）
+    +-- Credits + Rate Limit（额度与限流）
+    +-- DashScope Embedding + DashVector（多模态向量化与检索）
+    +-- Gemini Inspect（视觉候选精判）
+    +-- Metrics / Health / Runtime Capabilities（观测与能力声明）
 ```
 
-输出可直接用作 `Authorization: Bearer <token>` 测试任意受保护端点。
+## 核心目录导航
 
-> 仅限开发 / staging 使用，**禁止在生产环境运行**。
+```text
+server/
+├── README.md                         # 当前文档：server 真实代码现状与阅读入口
+├── requirements.txt                  # Python 依赖清单；当前无 pyproject.toml
+├── Dockerfile                        # 容器镜像构建入口，默认暴露 8001
+├── main.py                           # 兼容入口：导出 FastAPI app
+├── .env.example                      # 环境变量样例；真实 .env 不应提交敏感值
+├── app/
+│   ├── main.py                       # 应用稳定导出层：app 与核心 service 单例
+│   ├── bootstrap/                    # FastAPI 装配层
+│   │   ├── app.py                    # 创建 FastAPI app、注册 CORS、middleware、router
+│   │   ├── dependencies.py           # settings、store、service、metrics 等运行态单例
+│   │   ├── lifespan.py               # 启动期校验依赖、索引、健康状态
+│   │   ├── middleware.py             # request_id、结构化日志、HTTP metrics
+│   │   └── exception_handlers.py     # 统一错误 envelope 与依赖错误处理
+│   ├── api/
+│   │   ├── router.py                 # 路由聚合入口
+│   │   └── routes/
+│   │       ├── health.py             # /health、/livez、/readyz、/metrics
+│   │       ├── runtime.py            # / 与 /api/v1/runtime/capabilities
+│   │       ├── auth.py               # OAuth login session、callback、refresh、logout、me
+│   │       ├── users.py              # /user/profile 与 /user/usage
+│   │       ├── chat.py               # /v1/chat/completions
+│   │       ├── assets.py             # /v1/assets/vectorize 与 /v1/assets/retrieval
+│   │       └── inspect.py            # /v1/tools/inspect
+│   ├── core/
+│   │   ├── config.py                 # Settings（配置模型）与 RATE_CARDS（计费卡）
+│   │   ├── errors.py                 # ServerApiError 与可枚举错误工厂
+│   │   ├── observability.py          # JSON log、audit log、Prometheus-style metrics
+│   │   └── runtime_guard.py          # staging/production 强配置校验
+│   ├── schemas/                      # Pydantic schema（请求 / 响应契约）
+│   │   ├── auth.py                   # 登录会话、refresh、logout schema
+│   │   ├── user.py                   # 用户资料与用量快照 schema
+│   │   ├── runtime.py                # runtime capabilities schema
+│   │   ├── assets.py                 # vectorize / retrieval schema
+│   │   ├── inspect.py                # inspect 请求与响应 schema
+│   │   └── common.py                 # 通用 schema 占位
+│   ├── repositories/                 # 数据访问层
+│   │   ├── auth_store.py             # 组合 MongoRepository 与 LoginSessionStore
+│   │   ├── mongo_repository.py       # MongoDB 持久化；本地可回退进程内存
+│   │   └── login_session_repository.py # Redis 登录会话；本地可回退进程内存
+│   ├── services/
+│   │   ├── auth/                     # OAuth、JWT、用户 upsert、token hash 工具
+│   │   ├── gateway/                  # 模型网关、provider routing、streaming、billing
+│   │   ├── quota.py                  # Redis / memory rate limit 与 quota 辅助
+│   │   ├── vector.py                 # DashScope embedding + DashVector 写入 / 检索
+│   │   └── inspect.py                # Gemini inspect 请求校验、调用与响应归一化
+│   └── shared/
+│       └── time.py                   # UTC 时间格式化工具
+└── tests/
+    ├── test_chat_proxy.py            # chat proxy、credits、streaming、rate limit
+    ├── test_vector_routes.py         # vectorize 路由与错误语义
+    ├── test_assets_retrieval.py      # retrieval 路由与错误语义
+    ├── test_inspect_routes.py        # inspect 路由、证据校验、provider 响应归一化
+    ├── test_user_routes.py           # 用户资料与用量接口
+    ├── test_runtime_hardening.py     # production/staging 配置硬化与 metrics
+    ├── test_staging_bootstrap.py     # staging 测试登录 bootstrap
+    └── test_vector_service.py        # vector service 语义校验
+```
 
-## 当前非目标
+补充说明：
 
-当前版本仍然**不追求**：
+- `server/.env` 是本地配置文件，不应作为代码契约依赖；公开样例看 `server/.env.example`。
+- `docs/server/` 保存更细的设计文档和接口文档，但本 README 以当前代码事实为准。
+- 当前 `server/` 下没有 `scripts/` 目录；旧文档中提到的开发脚本不是现有代码的一部分。
 
-1. 复杂 `admin panel（管理后台）`
-2. 团队级 `RBAC（基于角色的访问控制）`
-3. 完整产品化的 `credits settlement（credits 结算）`
-4. 生产级稳定的 `BYOK provider compatibility（BYOK 供应商兼容矩阵）`
-5. 完整落地的 `retrieval / inspect / vectorize` 生产链路
+## 当前职责边界
 
-## 现阶段最准确的理解
+`server` 的边界是云端网关，不是剪辑引擎：
 
-可以把当前 `server` 看成：
+1. 接收 `core` 或前端传来的 authenticated request（已认证请求）。
+2. 校验 `Bearer token（持有者令牌）`，映射到用户与会话。
+3. 调用上游能力：`LLM provider（大语言模型供应商）`、`DashScope（多模态 embedding）`、`DashVector（向量数据库）`、`Gemini（视觉理解模型）`。
+4. 维护用户、登录会话、刷新令牌、额度与账本。
+5. 输出稳定的错误语义、结构化日志、审计日志和运行态能力声明。
 
-1. 鉴权底座已经成立
-2. `chat proxy` 主链已经接上
-3. 历史 `GitHub OAuth` 与 `credits/BYOK` 分支能力已经回收
-4. `core` 已开始在 agent loop 中真实调用 `POST /v1/assets/retrieval`
-5. 仍需要继续补真实上游联调、计费回归和端到端测试
+它不读取桌面本地视频文件，不生成 `EditDraft（剪辑草稿事实源）`，也不直接执行 `ffmpeg（音视频处理工具）`。这些职责属于 `core/`。
 
-## 与桌面端一体化发布的关系（2026-04）
+## 已落地能力
 
-桌面端一体化本次主要改动发生在 `client + core`：
+### 认证与用户
 
-1. Electron Main 自动托管本地 core 进程
-2. Renderer 动态获取本地 core base url
+真实路由位于 `app/api/routes/auth.py` 与 `app/api/routes/users.py`：
 
-`server` 侧接口与部署形态本次无 breaking change；`Core -> Server` 仍沿用既有 HTTP 契约。
+| API | 说明 |
+| --- | --- |
+| `POST /api/v1/auth/login-sessions` | 创建 OAuth 登录会话，返回 provider 授权 URL |
+| `GET /api/v1/auth/oauth/{provider}/start` | 跳转到 Google / GitHub OAuth |
+| `GET /api/v1/auth/oauth/{provider}/callback` | 处理 OAuth callback，签发 access / refresh token |
+| `GET /api/v1/auth/login-sessions/{id}` | 一次性领取登录结果；认证后会转为 `consumed` |
+| `GET /api/v1/auth/dev/fallback` | 本地开发回落页面 |
+| `POST /api/v1/test/bootstrap/login-session` | staging 测试 bootstrap，需 secret |
+| `POST /api/v1/auth/refresh` | 使用 refresh token 轮换新会话 |
+| `POST /api/v1/auth/logout` | 注销当前 session 与 refresh token |
+| `GET /api/v1/me` | 返回当前用户资料 |
+| `GET /user/profile` | 返回用户资料 |
+| `GET /user/usage` | 返回 credits 与用量快照 |
+
+认证链路的事实源：
+
+- 用户、身份、session、refresh token、quota ledger、credit ledger 默认进入 `MongoDB（文档数据库）`。
+- 本地缺少 `MONGODB_URI` 且允许 fallback 时，会退回进程内存。
+- `login session（登录会话）` 和 `OAuth state（OAuth 状态）` 默认进入 `Redis（内存数据结构服务）`。
+- 本地缺少或不可用 `Redis` 且允许 fallback 时，会退回进程内存。
+
+### Chat Proxy
+
+`POST /v1/chat/completions` 位于 `app/api/routes/chat.py`，行为接近 `OpenAI Chat Completions API（OpenAI 聊天补全接口）`。
+
+当前主链：
+
+1. 必须带 `Authorization: Bearer <access_token>`。
+2. 校验用户状态与 `credits_balance`。
+3. 按用户做 request / token 级 rate limit。
+4. 根据 `LLM_PROXY_MODE` 选择 provider：
+   - `mock`：本地 mock 响应。
+   - `google_gemini`：转发到 Gemini OpenAI-compatible endpoint。
+   - `upstream`：转发到自定义 OpenAI-compatible upstream。
+5. 非流式响应会结算 credits 并写入 `entro_metadata`。
+6. 流式响应会透传上游 `SSE（服务器发送事件）`，并在后台结算 usage。
+
+相关文件：
+
+- `app/services/gateway/provider_routing.py`
+- `app/services/gateway/chat_proxy.py`
+- `app/services/gateway/streaming.py`
+- `app/services/gateway/billing.py`
+
+### 向量化与检索
+
+素材向量化和检索由 `app/api/routes/assets.py` 与 `app/services/vector.py` 承载：
+
+| API | 说明 |
+| --- | --- |
+| `POST /v1/assets/vectorize` | 接收 contact sheet / keyframe 的 base64 图片，调用 DashScope embedding，写入 DashVector |
+| `POST /v1/assets/retrieval` | 将 `query_text` 编码为向量，在 DashVector 中检索候选素材 |
+
+关键约束：
+
+- 两个接口都需要 `Bearer token（持有者令牌）`。
+- `vectorize` 的 `docs[]` 不能为空，`doc.id` 不能重复。
+- `source_start_ms` 必须小于 `source_end_ms`。
+- `image_base64` 会先做 base64 合法性校验。
+- collection 不存在时，当前代码会尝试创建 DashVector collection。
+- retrieval 支持 `filter`、`topk`、`output_fields` 和 `include_vector`。
+
+### Inspect
+
+`POST /v1/tools/inspect` 位于 `app/api/routes/inspect.py`，用于让云端视觉模型对候选片段做精判。
+
+当前支持的 `mode（模式）`：
+
+- `verify`：只允许 1 个候选。
+- `compare`：只允许 2 个候选。
+- `choose`：允许 3 到 5 个候选。
+- `rank`：允许 2 到 5 个候选。
+
+每个候选必须提供：
+
+- `clip_id`
+- `asset_id`
+- 正数 `clip_duration_ms`
+- 至少一帧 `frames[]`
+- 每帧的 `timestamp_ms`、`timestamp_label`、`image_base64`
+
+当前 provider 只实现了 `google_gemini`。服务会要求上游返回 JSON，然后归一化为 `InspectResponse`，包括 `selected_clip_id`、`ranking`、`candidate_judgments` 和 `uncertainty`。
+
+### 运行态与观测
+
+| API | 说明 |
+| --- | --- |
+| `GET /` | 返回 server 基本信息与关键配置是否存在 |
+| `GET /health` | 返回服务状态、版本、环境、依赖健康与说明 |
+| `GET /livez` | 存活探针 |
+| `GET /readyz` | 就绪探针；严格环境下依赖失败会返回 503 |
+| `GET /metrics` | Prometheus-style metrics；可由 `OBSERVABILITY_ENABLE_METRICS` 关闭 |
+| `GET /api/v1/runtime/capabilities` | 返回当前保留 API surface 与云端能力可用性 |
+
+日志采用 JSON 结构化输出，并通过 `request_id` 串联请求、错误和审计事件。客户端也可以传入 `X-Request-ID`。
+
+## 错误语义
+
+统一错误响应由 `ServerApiError` 和 `ErrorEnvelope` 生成：
+
+```json
+{
+  "error": {
+    "code": "AUTH_TOKEN_MISSING",
+    "message": "Authorization header is required.",
+    "type": "auth_error",
+    "details": {
+      "request_id": "req_xxx"
+    },
+    "request_id": "req_xxx"
+  }
+}
+```
+
+典型错误码：
+
+- `AUTH_TOKEN_MISSING` / `AUTH_TOKEN_INVALID` / `AUTH_TOKEN_EXPIRED`
+- `INSUFFICIENT_CREDITS`
+- `RATE_LIMITED`
+- `VECTOR_CONFIG_ERROR`
+- `INVALID_VECTORIZE_REQUEST`
+- `EMBEDDING_PROVIDER_UNAVAILABLE`
+- `VECTOR_STORE_UNAVAILABLE`
+- `INVALID_RETRIEVAL_REQUEST`
+- `QUERY_EMBEDDING_FAILED`
+- `RETRIEVAL_FAILED`
+- `INVALID_INSPECT_REQUEST`
+- `INSPECT_EVIDENCE_MISSING`
+- `INSPECT_PROVIDER_UNAVAILABLE`
+- `INSPECT_PROVIDER_INVALID_RESPONSE`
+- `DEPENDENCY_UNAVAILABLE`
+- `SERVER_INTERNAL_ERROR`
+
+## 配置要点
+
+配置模型在 `app/core/config.py`，样例在 `.env.example`。
+
+本地开发常见配置：
+
+```bash
+APP_ENV=local
+SERVER_PORT=8001
+SERVER_BASE_URL=http://127.0.0.1:8001
+AUTH_JWT_SECRET=entrocut-dev-secret-change-me
+AUTH_DEV_FALLBACK_ENABLED=true
+ALLOW_INMEMORY_MONGO_FALLBACK=true
+ALLOW_INMEMORY_REDIS_FALLBACK=true
+LLM_PROXY_MODE=mock
+```
+
+连接真实 provider 时需要按能力补齐：
+
+```bash
+# OAuth
+AUTH_GOOGLE_CLIENT_ID=
+AUTH_GOOGLE_CLIENT_SECRET=
+AUTH_GITHUB_CLIENT_ID=
+AUTH_GITHUB_CLIENT_SECRET=
+
+# Chat / Inspect
+LLM_PROXY_MODE=google_gemini
+GOOGLE_API_KEY=
+
+# Vectorize / Retrieval
+DASHSCOPE_API_KEY=
+DASHVECTOR_API_KEY=
+DASHVECTOR_ENDPOINT=
+```
+
+`staging（预发布）` 或 `production（生产）` 下 `runtime_guard.py` 会强制：
+
+- 替换默认 `AUTH_JWT_SECRET`。
+- 关闭 `AUTH_DEV_FALLBACK_ENABLED`。
+- 配置 `MONGODB_URI` 与 `REDIS_URL`。
+- 关闭内存 fallback。
+- `production` 的 CORS 不允许包含 `localhost` 或 `127.0.0.1`。
+
+## 本地运行
+
+遵循仓库约定，Python 命令先激活虚拟环境：
+
+```bash
+cd server
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+uvicorn main:app --host 127.0.0.1 --port 8001 --reload
+```
+
+健康检查：
+
+```bash
+curl http://127.0.0.1:8001/health
+curl http://127.0.0.1:8001/readyz
+curl http://127.0.0.1:8001/api/v1/runtime/capabilities
+```
+
+容器入口见 `Dockerfile`，默认命令：
+
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8001 --proxy-headers --forwarded-allow-ips=*
+```
+
+## 测试
+
+当前测试覆盖了认证保护、chat proxy、向量化、检索、inspect、用户接口和运行态硬化：
+
+```bash
+cd server
+source venv/bin/activate
+pytest
+```
+
+建议优先关注：
+
+1. `tests/test_chat_proxy.py`
+2. `tests/test_vector_routes.py`
+3. `tests/test_assets_retrieval.py`
+4. `tests/test_inspect_routes.py`
+5. `tests/test_runtime_hardening.py`
+
+## 推荐阅读顺序
+
+如果你想从系统边界入手：
+
+1. `app/core/config.py`：先看配置面，理解当前 server 的可变参数。
+2. `app/core/errors.py`：再看错误契约，明确客户端可分支处理的失败类型。
+3. `app/bootstrap/dependencies.py`：看运行态单例如何装配。
+4. `app/api/router.py` 和 `app/api/routes/`：看真实 API surface。
+5. `app/services/auth/`：看 OAuth、JWT、refresh token 与用户 upsert。
+6. `app/services/gateway/`：看 chat proxy、streaming、billing。
+7. `app/services/vector.py` 与 `app/services/inspect.py`：看云端素材理解能力。
+8. `app/repositories/`：最后看 MongoDB / Redis fallback 细节。
+
+如果只想快速理解 `Core -> Server` 主链，读这四个文件即可：
+
+1. `app/api/routes/chat.py`
+2. `app/api/routes/assets.py`
+3. `app/api/routes/inspect.py`
+4. `app/bootstrap/dependencies.py`
+
+## 当前 Non-goals
+
+当前 `server` 明确不做：
+
+1. 不做本地视频文件扫描、切片、缩略图、preview 或 export。
+2. 不存储 `EditDraft（剪辑草稿事实源）`，也不决定最终剪辑结构。
+3. 不实现完整 `admin panel（管理后台）`。
+4. 不实现团队级 `RBAC（基于角色的访问控制）`。
+5. 不承诺完整产品化 `credits settlement（额度结算）`；当前是可回归的 MVP 账本链路。
+6. 不承诺完整 `BYOK provider compatibility（用户自带密钥供应商兼容矩阵）`。
+7. 不在生产环境允许内存 fallback、默认 JWT secret 或 dev fallback 登录页。
+8. 不把 `mock` chat proxy 视为真实模型质量能力。
+
+## 后续方向
+
+1. 收紧 `LLM_PROXY_MODE` 的可枚举配置，避免非法值只在运行时暴露。
+2. 把 `credits_balance`、`quota_*`、`RateLimitService` 的职责进一步统一，减少两套额度概念并存。
+3. 为 `VectorService` 增加更多 provider-level contract test（供应商契约测试）。
+4. 为 streaming billing 增加失败路径和中断路径回归。
+5. 明确 `Inspect` 的模型输出 schema 版本，便于 `core` 做稳定调用。
+6. 将 `docs/server/` 中仍停留在设计态的内容标注为 proposed / implemented，避免文档混淆。
