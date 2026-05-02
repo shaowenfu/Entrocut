@@ -33,6 +33,7 @@
 19. [2026-04-13 桌面端 Core 托管与打包落地日志](./2026-04-13_desktop_core_packaging_supervisor_journal.md)
 20. [2026-04-14 三个 MVP PR 合并与联调计划日志](./2026-04-14_pr_merge_and_mvp_e2e_plan_journal.md)
 21. [2026-04-15 毕设论文插图生成与 Word 写入日志](./2026-04-15_thesis_figures_and_docx_pipeline_journal.md)
+22. [2026-05-02 Client Renderer 边界收口记录](./2026-05-02_client_renderer_boundary_cleanup_journal.md)
 
 ## 当前这组日记主要覆盖的主题
 
@@ -47,6 +48,7 @@
 9. 桌面端 `core supervisor`、本地托管与打包链路落地
 10. 多个独立 PR 的集成合并与人工联调计划收口
 11. 毕设论文插图生成、模板写入与终稿收口链路
+12. `client` 端 Renderer/Main/Core 职责边界收口，删除前端 agent prototype 与 mock 数据
 
 ## 命名约定
 
