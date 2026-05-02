@@ -117,8 +117,8 @@ function LaunchpadPage() {
     }
   }
 
-  async function handleBrowseMedia(mode?: "electron-folder" | "electron-videos" | "electron-media") {
-    await pickMediaAndStartWorkspace(prompt.trim() || undefined, mode);
+  async function handleBrowseMedia() {
+    await pickMediaAndStartWorkspace(prompt.trim() || undefined, isElectron ? "electron-media" : undefined);
     if (prompt.trim()) {
       setPrompt("");
     }
@@ -160,7 +160,7 @@ function LaunchpadPage() {
                 if (isBusy) {
                   return;
                 }
-                void handleBrowseMedia(isElectron ? "electron-videos" : undefined);
+                void handleBrowseMedia();
               }}
               onDragOver={(event) => {
                 event.preventDefault();
@@ -209,16 +209,10 @@ function LaunchpadPage() {
               <FileVideo size={14} />
               <span>Empty Sequence</span>
             </button>
-            <button type="button" onClick={() => void handleBrowseMedia(isElectron ? "electron-videos" : undefined)} disabled={isCreating || isImporting}>
+            <button type="button" onClick={() => void handleBrowseMedia()} disabled={isCreating || isImporting}>
               <Cloud size={14} />
-              <span>{isElectron ? "Browse Videos" : "Upload Videos"}</span>
+              <span>{isElectron ? "Browse Media" : "Upload Videos"}</span>
             </button>
-            {isElectron ? (
-              <button type="button" onClick={() => void handleBrowseMedia("electron-folder")} disabled={isCreating || isImporting}>
-                <FolderUp size={14} />
-                <span>Browse Folder</span>
-              </button>
-            ) : null}
           </div>
           {lastError ? (
             <p className="launchpad-error-banner" role="alert" onClick={clearLastError}>

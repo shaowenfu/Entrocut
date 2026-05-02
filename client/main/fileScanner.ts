@@ -3,8 +3,10 @@ import path from "node:path";
 
 import { dialog, ipcMain } from "electron";
 
+// 桌面端媒体选择器当前接受的视频格式。
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"]);
 
+// Main Process 返回给 Renderer 的本地视频文件引用。
 export interface DesktopMediaFileReference {
   name: string;
   path: string;
@@ -12,12 +14,14 @@ export interface DesktopMediaFileReference {
   mime_type?: string;
 }
 
+// 媒体选择/扫描 IPC 的统一返回结构。
 export interface OpenDirectoryScanResult {
   canceled: boolean;
   folderPath: string | null;
   files: DesktopMediaFileReference[];
 }
 
+// 根据视频扩展名推导 MIME type，供后续播放/导入使用。
 function mimeTypeForVideoPath(filePath: string): string | undefined {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === ".mp4" || ext === ".m4v") {
@@ -38,6 +42,7 @@ function mimeTypeForVideoPath(filePath: string): string | undefined {
   return undefined;
 }
 
+// 将一个绝对路径转换成 Renderer/Core 可消费的媒体文件引用。
 async function toDesktopMediaFileReference(absolutePath: string): Promise<DesktopMediaFileReference | null> {
   const corePath = normalizePathForLocalCore(absolutePath);
   const ext = path.extname(corePath).toLowerCase();
@@ -56,6 +61,7 @@ async function toDesktopMediaFileReference(absolutePath: string): Promise<Deskto
   };
 }
 
+// 将 Windows WSL UNC 路径转换为 core 可访问的 Linux 路径。
 function normalizePathForLocalCore(nativePath: string): string {
   const wslMatch = nativePath.match(/^\\\\wsl(?:\.localhost|\$)\\[^\\]+\\(.+)$/i);
   if (!wslMatch) {
@@ -64,10 +70,12 @@ function normalizePathForLocalCore(nativePath: string): string {
   return `/${wslMatch[1]!.replaceAll("\\", "/")}`;
 }
 
+// 兼容 Windows 反斜杠路径的 basename 提取。
 function basenameForNativePath(nativePath: string): string {
   return path.basename(nativePath.replaceAll("\\", "/"));
 }
 
+// 在多种路径表示中找到第一个真实存在的文件。
 async function statFirstExistingFile(paths: string[]): Promise<{ isFile: () => boolean; size: number } | null> {
   for (const candidate of paths) {
     try {
@@ -76,12 +84,13 @@ async function statFirstExistingFile(paths: string[]): Promise<{ isFile: () => b
         return stat;
       }
     } catch {
-      // Try the next path representation; Windows UNC and WSL paths are not interchangeable.
+      // Windows UNC 和 WSL 路径不能互换，失败后继续尝试下一种表示。
     }
   }
   return null;
 }
 
+// 递归扫描目录，收集其中所有支持的视频文件。
 async function scanVideoFiles(folderPath: string): Promise<DesktopMediaFileReference[]> {
   const scanPath = normalizePathForLocalCore(folderPath);
   const files: DesktopMediaFileReference[] = [];
@@ -115,6 +124,7 @@ async function scanVideoFiles(folderPath: string): Promise<DesktopMediaFileRefer
   return files;
 }
 
+// 汇总用户选择的文件/目录；文件直接校验，目录递归扫描。
 async function collectMediaFromPaths(filePaths: string[]): Promise<DesktopMediaFileReference[]> {
   const files: DesktopMediaFileReference[] = [];
   for (const filePath of filePaths) {
@@ -139,51 +149,8 @@ async function collectMediaFromPaths(filePaths: string[]): Promise<DesktopMediaF
   return files;
 }
 
+// 注册媒体选择 IPC；Renderer 只通过 dialog:open-media 获取本地视频引用。
 export function registerFileScannerIpcHandlers(): void {
-  ipcMain.handle("dialog:open-directory", async (): Promise<OpenDirectoryScanResult> => {
-    const result = await dialog.showOpenDialog({
-      title: "Select Media Folder",
-      properties: ["openDirectory"],
-    });
-    if (result.canceled || result.filePaths.length === 0) {
-      return { canceled: true, folderPath: null, files: [] };
-    }
-    const folderPath = result.filePaths[0] ?? null;
-    if (!folderPath) {
-      return { canceled: true, folderPath: null, files: [] };
-    }
-    const files = await scanVideoFiles(folderPath);
-    return {
-      canceled: false,
-      folderPath,
-      files,
-    };
-  });
-
-  ipcMain.handle("dialog:open-videos", async (): Promise<OpenDirectoryScanResult> => {
-    const result = await dialog.showOpenDialog({
-      title: "Select Videos",
-      properties: ["openFile", "multiSelections"],
-      filters: [
-        {
-          name: "Video Files",
-          extensions: ["mp4", "mov", "m4v", "webm", "mkv", "avi"],
-        },
-      ],
-    });
-    if (result.canceled || result.filePaths.length === 0) {
-      return { canceled: true, folderPath: null, files: [] };
-    }
-    const files = (
-      await Promise.all(result.filePaths.map((filePath) => toDesktopMediaFileReference(filePath)))
-    ).filter((file): file is DesktopMediaFileReference => Boolean(file));
-    return {
-      canceled: false,
-      folderPath: null,
-      files,
-    };
-  });
-
   ipcMain.handle("dialog:open-media", async (): Promise<OpenDirectoryScanResult> => {
     const result = await dialog.showOpenDialog({
       title: "Select Video Files or Media Folders",

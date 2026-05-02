@@ -37,8 +37,6 @@ declare global {
   interface Window {
     electron?: {
       version?: string;
-      showOpenDirectory?: () => Promise<OpenDirectoryResult | null>;
-      showOpenVideos?: () => Promise<OpenDirectoryResult | null>;
       showOpenMedia?: () => Promise<OpenDirectoryResult | null>;
       getPathForFile?: (file: File) => string | null;
       registerLocalMediaFiles?: (files: DesktopMediaFileReference[]) => Promise<LocalMediaRegistration[]>;

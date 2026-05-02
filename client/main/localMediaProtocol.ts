@@ -5,9 +5,12 @@ import { Readable } from "node:stream";
 
 import { ipcMain, protocol } from "electron";
 
+// Renderer 中用于播放本地媒体的自定义协议名。
 const LOCAL_MEDIA_PROTOCOL = "entrocut-media";
+// 桌面端当前允许注册和播放的视频格式。
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"]);
 
+// Renderer 传给 Main Process 的本地媒体文件引用。
 interface DesktopMediaFileReference {
   name: string;
   path: string;
@@ -15,6 +18,7 @@ interface DesktopMediaFileReference {
   mime_type?: string;
 }
 
+// Main Process 注册本地媒体后返回给 Renderer 的播放信息。
 interface LocalMediaRegistration {
   name: string;
   path: string;
@@ -22,13 +26,16 @@ interface LocalMediaRegistration {
   mime_type?: string;
 }
 
+// 协议 token 对应的真实本地文件信息。
 interface RegisteredLocalMedia {
   path: string;
   mimeType?: string;
 }
 
+// 内存态媒体注册表；token 隔离真实文件路径，不直接暴露给协议 URL。
 const registeredMedia = new Map<string, RegisteredLocalMedia>();
 
+// 在 app ready 前注册自定义协议权限，使其支持 fetch 和 stream。
 export function registerLocalMediaProtocolScheme(): void {
   protocol.registerSchemesAsPrivileged([
     {
@@ -43,6 +50,7 @@ export function registerLocalMediaProtocolScheme(): void {
   ]);
 }
 
+// 将 Windows WSL UNC 路径转换为 core 可访问的 Linux 路径。
 function normalizePathForLocalCore(nativePath: string): string {
   const wslMatch = nativePath.match(/^\\\\wsl(?:\.localhost|\$)\\[^\\]+\\(.+)$/i);
   if (!wslMatch) {
@@ -51,6 +59,7 @@ function normalizePathForLocalCore(nativePath: string): string {
   return `/${wslMatch[1]!.replaceAll("\\", "/")}`;
 }
 
+// 根据视频扩展名推导浏览器播放所需 MIME type。
 function mimeTypeForVideoPath(filePath: string): string | undefined {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === ".mp4" || ext === ".m4v") {
@@ -71,15 +80,18 @@ function mimeTypeForVideoPath(filePath: string): string | undefined {
   return undefined;
 }
 
+// 为本地媒体生成一次性协议 token，避免 URL 直接使用真实路径。
 function createMediaToken(filePath: string): string {
   const randomPart = Math.random().toString(36).slice(2, 12);
   return `${Date.now().toString(36)}_${randomPart}_${Buffer.from(filePath).toString("base64url").slice(0, 12)}`;
 }
 
+// 生成 Renderer 可交给 video 标签播放的自定义协议 URL。
 function localMediaUrl(token: string, fileName: string): string {
   return `${LOCAL_MEDIA_PROTOCOL}://media/${encodeURIComponent(token)}/${encodeURIComponent(fileName)}`;
 }
 
+// 解析 HTTP Range header，支持视频拖动和分段读取。
 function parseRangeHeader(rangeHeader: string | null, size: number): { start: number; end: number } | null {
   if (!rangeHeader) {
     return null;
@@ -114,6 +126,7 @@ function parseRangeHeader(rangeHeader: string | null, size: number): { start: nu
   };
 }
 
+// 将本地文件片段包装成协议响应，供 Chromium 流式播放。
 function streamResponse(filePath: string, options: {
   status: number;
   start: number;
@@ -141,6 +154,7 @@ function streamResponse(filePath: string, options: {
   });
 }
 
+// 校验并注册单个本地视频文件，返回可播放协议 URL。
 async function registerLocalMediaFile(file: DesktopMediaFileReference): Promise<LocalMediaRegistration | null> {
   const filePath = normalizePathForLocalCore(file.path.trim());
   if (!path.isAbsolute(filePath)) {
@@ -170,6 +184,7 @@ async function registerLocalMediaFile(file: DesktopMediaFileReference): Promise<
   };
 }
 
+// 注册自定义协议处理器和 Renderer 调用的本地媒体注册 IPC。
 export function registerLocalMediaProtocolHandlers(): void {
   protocol.handle(LOCAL_MEDIA_PROTOCOL, async (request) => {
     const parsed = new URL(request.url);
@@ -192,6 +207,7 @@ export function registerLocalMediaProtocolHandlers(): void {
     if (size <= 0) {
       return new Response("not_found", { status: 404 });
     }
+
     const range = parseRangeHeader(request.headers.get("range"), size);
     if (request.headers.has("range") && !range) {
       return new Response("range_not_satisfiable", {
@@ -227,7 +243,7 @@ export function registerLocalMediaProtocolHandlers(): void {
           registrations.push(registration);
         }
       } catch {
-        // Invalid or inaccessible files are ignored; core import validation remains the source of truth.
+        // 无效或不可访问文件在这里只忽略，core import validation 才是事实源。
       }
     }
     return registrations;
