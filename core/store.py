@@ -107,6 +107,10 @@ class InMemoryProjectStore:
             return 100
         return None
 
+    def _asset_fingerprint_for_path(self, path_obj: Path) -> str:
+        stat = path_obj.stat()
+        return f"{path_obj.resolve()}:{stat.st_size}:{stat.st_mtime_ns}"
+
     def _normalize_asset_processing_state(
         self,
         asset_payload: dict[str, Any],
@@ -133,12 +137,16 @@ class InMemoryProjectStore:
         progress = normalized_asset.processing_progress
         if progress is None:
             progress = self._default_processing_progress(stage)
+        vector_index_state = normalized_asset.vector_index_state
+        if vector_index_state == "none" and indexed_clip_count > 0:
+            vector_index_state = "active" if normalized_asset.lifecycle_state == "active" else "inactive"
         return normalized_asset.model_copy(
             update={
                 "processing_stage": stage,
                 "processing_progress": progress,
                 "clip_count": normalized_clip_count,
                 "indexed_clip_count": indexed_clip_count,
+                "vector_index_state": vector_index_state,
                 "updated_at": normalized_asset.updated_at or default_updated_at,
             }
         )
@@ -324,9 +332,10 @@ class InMemoryProjectStore:
     def _derive_media_summary(self, record: dict[str, Any]) -> dict[str, Any]:
         draft = EditDraftModel.model_validate(record["edit_draft"])
         summary = self._default_media_summary()
-        summary["asset_count"] = len(draft.assets)
+        active_assets = [asset for asset in draft.assets if asset.lifecycle_state == "active"]
+        summary["asset_count"] = len(active_assets)
         clip_counts = _asset_clip_counts(draft.clips)
-        for asset in draft.assets:
+        for asset in active_assets:
             total_clip_count = max(int(asset.clip_count or 0), clip_counts.get(asset.id, 0))
             indexed_clip_count = min(
                 total_clip_count,
@@ -363,7 +372,7 @@ class InMemoryProjectStore:
         capabilities["can_patch_draft"] = can_edit
         capabilities["can_preview"] = bool(draft.shots)
         capabilities["can_export"] = bool(draft.shots)
-        if not draft.assets:
+        if not any(asset.lifecycle_state == "active" for asset in draft.assets):
             capabilities["blocking_reasons"].append("media_required_for_editing")
         elif not can_retrieve and not draft.shots:
             capabilities["blocking_reasons"].append("media_index_not_ready")
@@ -574,6 +583,146 @@ class InMemoryProjectStore:
         self._repository.clear_all()
         self._workspace_manager.clear_all_project_workspaces()
 
+    async def _sync_remote_asset_vector_index_state(
+        self,
+        *,
+        project_id: str,
+        asset_id: str,
+        active: bool,
+        clip_ids: list[str],
+    ) -> None:
+        if not clip_ids:
+            return
+        auth_session = await auth_session_store.snapshot()
+        access_token = auth_session.get("access_token")
+        if not access_token:
+            return
+        endpoint_url = f"{SERVER_BASE_URL}/v1/assets/vector-index-state"
+        request_headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "project_id": project_id,
+            "asset_id": asset_id,
+            "active": active,
+            "clip_ids": clip_ids,
+        }
+        try:
+            async with AsyncClient(timeout=20.0) as client:
+                response = await client.post(endpoint_url, json=payload, headers=request_headers)
+                response.raise_for_status()
+        except Exception as exc:
+            logger.warning(
+                "Failed to sync remote vector index state: project_id=%s asset_id=%s active=%s error=%s",
+                project_id,
+                asset_id,
+                active,
+                exc,
+            )
+
+    async def _set_asset_lifecycle_state(
+        self,
+        project_id: str,
+        asset_id: str,
+        *,
+        lifecycle_state: str,
+    ) -> WorkspaceSnapshotModel:
+        record = self.get_project_or_raise(project_id)
+        self._ensure_record_defaults(record)
+        active_media_task = self.get_running_task(project_id, "media")
+        active_export_task = self.get_running_task(project_id, "export")
+        if active_media_task or active_export_task:
+            active_task = active_media_task or active_export_task
+            raise CoreApiError(
+                status_code=409,
+                code="TASK_ALREADY_RUNNING",
+                message="Another media or export task is already running for this project.",
+                details={"project_id": project_id, "active_task_id": active_task.get("id") if active_task else None},
+            )
+
+        draft = EditDraftModel.model_validate(record["edit_draft"])
+        target_asset = next((asset for asset in draft.assets if asset.id == asset_id), None)
+        if target_asset is None:
+            raise CoreApiError(
+                status_code=404,
+                code="ASSET_NOT_FOUND",
+                message="Asset not found.",
+                details={"project_id": project_id, "asset_id": asset_id},
+            )
+        if lifecycle_state not in {"active", "deleted"}:
+            raise CoreApiError(
+                status_code=422,
+                code="ASSET_LIFECYCLE_STATE_INVALID",
+                message="Asset lifecycle_state must be active or deleted.",
+                details={"lifecycle_state": lifecycle_state},
+            )
+
+        now = _now_iso()
+        previous_capabilities = self._derive_project_capabilities(record)
+        previous_summary_state = record.get("summary_state")
+        vector_index_state = target_asset.vector_index_state
+        if lifecycle_state == "deleted":
+            vector_index_state = "inactive" if target_asset.indexed_clip_count > 0 else "none"
+            deleted_at = now
+            remote_active = False
+        else:
+            vector_index_state = "active" if target_asset.indexed_clip_count > 0 else "none"
+            deleted_at = None
+            remote_active = True
+
+        next_assets = []
+        for asset in draft.assets:
+            if asset.id != asset_id:
+                next_assets.append(asset)
+                continue
+            next_assets.append(
+                asset.model_copy(
+                    update={
+                        "lifecycle_state": lifecycle_state,
+                        "deleted_at": deleted_at,
+                        "vector_index_state": vector_index_state,
+                        "updated_at": now,
+                    }
+                )
+            )
+        next_draft = EditDraftModel.model_validate(
+            self._normalize_draft_assets(
+                _bump_draft(
+                    draft,
+                    assets=next_assets,
+                    updated_at=now,
+                ).model_dump()
+            )
+        )
+        record["edit_draft"] = next_draft.model_dump()
+        record["project"]["updated_at"] = now
+        media_summary = self._sync_runtime_retrieval_state(record, updated_at=now)
+        record["summary_state"] = self._derive_summary_state(record, media_summary=media_summary)
+        asset_ids = {asset_id}
+        await self.emit(project_id, "edit_draft.updated", {"edit_draft": next_draft.model_dump()})
+        await self.emit(project_id, "asset.updated", {"assets": self._select_draft_assets(next_draft, asset_ids)})
+        await self.emit(project_id, "project.updated", {"project": record["project"]})
+        await self._emit_derived_state_events(
+            project_id,
+            previous_capabilities=previous_capabilities,
+            previous_summary_state=previous_summary_state,
+        )
+        clip_ids = [clip.id for clip in next_draft.clips if clip.asset_id == asset_id]
+        await self._sync_remote_asset_vector_index_state(
+            project_id=project_id,
+            asset_id=asset_id,
+            active=remote_active,
+            clip_ids=clip_ids,
+        )
+        return self.workspace_snapshot(project_id)
+
+    async def soft_delete_asset(self, project_id: str, asset_id: str) -> WorkspaceSnapshotModel:
+        return await self._set_asset_lifecycle_state(project_id, asset_id, lifecycle_state="deleted")
+
+    async def restore_asset(self, project_id: str, asset_id: str) -> WorkspaceSnapshotModel:
+        return await self._set_asset_lifecycle_state(project_id, asset_id, lifecycle_state="active")
+
     async def queue_assets_import(self, project_id: str, media: MediaReference) -> TaskModel:
         auth_session = await auth_session_store.snapshot()
         if not auth_session.get("access_token"):
@@ -595,6 +744,7 @@ class InMemoryProjectStore:
                 message="folder_path is not a direct ingest input. Scan the folder and submit media.files[].",
             )
         validated_files: list[dict[str, str]] = []
+        fingerprints_by_path: dict[str, str] = {}
         for file_ref in _media_file_refs(media):
             file_path = (file_ref.path or "").strip()
             if not file_path:
@@ -626,6 +776,7 @@ class InMemoryProjectStore:
                     message="Media file path points to a directory.",
                     details={"file_name": file_ref.name, "path": file_path},
                 )
+            fingerprints_by_path[file_path] = self._asset_fingerprint_for_path(path_obj)
             validated_files.append({"name": file_ref.name, "path": file_path})
         media = MediaReference(files=validated_files)
 
@@ -634,39 +785,82 @@ class InMemoryProjectStore:
         now = _now_iso()
         previous_capabilities = self._derive_project_capabilities(record)
         previous_summary_state = record.get("summary_state")
+        draft = EditDraftModel.model_validate(record["edit_draft"])
+        restored_asset_ids: set[str] = set()
+        pending_file_refs = []
+        next_assets = list(draft.assets)
+        for file_ref in _media_file_refs(media):
+            file_path = (file_ref.path or "").strip()
+            fingerprint = fingerprints_by_path.get(file_path)
+            restored = False
+            for index, asset in enumerate(next_assets):
+                fingerprint_matches = bool(fingerprint and asset.fingerprint == fingerprint)
+                source_path_matches = bool(asset.source_path and asset.source_path == file_path)
+                if (
+                    asset.lifecycle_state == "deleted"
+                    and asset.processing_stage == "ready"
+                    and asset.indexed_clip_count > 0
+                    and (fingerprint_matches or source_path_matches)
+                ):
+                    next_assets[index] = asset.model_copy(
+                        update={
+                            "lifecycle_state": "active",
+                            "deleted_at": None,
+                            "fingerprint": fingerprint or asset.fingerprint,
+                            "vector_index_state": "active",
+                            "updated_at": now,
+                        }
+                    )
+                    restored_asset_ids.add(asset.id)
+                    restored = True
+                    break
+            if not restored:
+                pending_file_refs.append(file_ref)
+
         pending_assets = _build_assets(
-            media,
+            MediaReference(files=pending_file_refs),
             processing_stage="pending",
             processing_progress=0,
             updated_at=now,
         )
-        if not pending_assets:
+        pending_assets = [
+            asset.model_copy(
+                update={
+                    "fingerprint": fingerprints_by_path.get(asset.source_path or ""),
+                    "vector_index_state": "none",
+                }
+            )
+            for asset in pending_assets
+        ]
+        if not pending_assets and not restored_asset_ids:
             raise CoreApiError(
                 status_code=422,
                 code="MEDIA_REFERENCE_REQUIRED",
                 message="At least one media file is required.",
             )
-        draft = EditDraftModel.model_validate(record["edit_draft"])
         next_draft = EditDraftModel.model_validate(
             self._normalize_draft_assets(
                 _bump_draft(
                     draft,
-                    assets=[*draft.assets, *pending_assets],
+                    assets=[*next_assets, *pending_assets],
                     updated_at=now,
                 ).model_dump()
             )
         )
         record["edit_draft"] = next_draft.model_dump()
         asset_ids = {asset.id for asset in pending_assets}
+        changed_asset_ids = asset_ids | restored_asset_ids
+        task_status = "queued" if pending_assets else "succeeded"
         task = TaskModel(
             id=_entity_id("task_ingest"),
             slot="media",
             type="ingest",
-            status="queued",
+            status=task_status,
             owner_type="project",
             owner_id=project_id,
-            progress=0,
-            message="Media ingest queued",
+            progress=0 if pending_assets else 100,
+            message="Media ingest queued" if pending_assets else "Media assets restored",
+            result={"asset_ids": sorted(restored_asset_ids)} if restored_asset_ids and not pending_assets else {},
             created_at=now,
             updated_at=now,
         )
@@ -675,7 +869,7 @@ class InMemoryProjectStore:
         media_summary = self._sync_runtime_retrieval_state(record, updated_at=now)
         record["summary_state"] = self._derive_summary_state(record, media_summary=media_summary)
         await self.emit(project_id, "edit_draft.updated", {"edit_draft": next_draft.model_dump()})
-        await self.emit(project_id, "asset.updated", {"assets": self._select_draft_assets(next_draft, asset_ids)})
+        await self.emit(project_id, "asset.updated", {"assets": self._select_draft_assets(next_draft, changed_asset_ids)})
         await self.emit(
             project_id,
             "task.updated",
@@ -686,8 +880,17 @@ class InMemoryProjectStore:
             previous_capabilities=previous_capabilities,
             previous_summary_state=previous_summary_state,
         )
-        background_task = asyncio.create_task(self._run_assets_import(project_id, task, asset_ids))
-        self._register_background_task(project_id, background_task)
+        for restored_asset_id in restored_asset_ids:
+            restored_clip_ids = [clip.id for clip in next_draft.clips if clip.asset_id == restored_asset_id]
+            await self._sync_remote_asset_vector_index_state(
+                project_id=project_id,
+                asset_id=restored_asset_id,
+                active=True,
+                clip_ids=restored_clip_ids,
+            )
+        if pending_assets:
+            background_task = asyncio.create_task(self._run_assets_import(project_id, task, asset_ids))
+            self._register_background_task(project_id, background_task)
         return task
 
     async def queue_asset_retry(self, project_id: str, asset_id: str) -> TaskModel:
@@ -925,6 +1128,8 @@ class InMemoryProjectStore:
                             "clip_id": clip.id,
                             "asset_id": clip.asset_id,
                             "project_id": project_id,
+                            "asset_state": "active",
+                            "asset_active": True,
                             "source_start_ms": clip.source_start_ms,
                             "source_end_ms": clip.source_end_ms,
                             "frame_count": 4,

@@ -9,9 +9,11 @@ import {
 } from "../services/electronBridge";
 import {
   createProjectEventsSocket,
+  deleteAsset as deleteAssetRequest,
   exportProject as exportProjectRequest,
   getWorkspace,
   importAssets as importAssetsRequest,
+  restoreAsset as restoreAssetRequest,
   retryAsset as retryAssetRequest,
   sendChat as sendChatRequest,
   toMediaReference,
@@ -29,6 +31,8 @@ import {
   type CoreShot,
   type CoreTask,
   type CoreWorkspaceSnapshot,
+  type AssetLifecycleState,
+  type AssetVectorIndexState,
   type ProjectSummaryState,
   type TaskSlot,
   type TaskStatus,
@@ -43,6 +47,10 @@ export interface WorkspaceAssetItem {
   duration: string;
   type: "video" | "audio";
   sourcePath?: string | null;
+  lifecycleState: AssetLifecycleState;
+  deletedAt?: string | null;
+  fingerprint?: string | null;
+  vectorIndexState: AssetVectorIndexState;
   processingStage: string;
   processingProgress?: number | null;
   clipCount: number;
@@ -227,6 +235,8 @@ interface WorkspaceState {
   }) => void;
   uploadAssets: (input?: UploadAssetsInput) => Promise<void>;
   retryAsset: (assetId: string) => Promise<void>;
+  deleteAsset: (assetId: string) => Promise<void>;
+  restoreAsset: (assetId: string) => Promise<void>;
   sendChat: (prompt: string) => Promise<void>;
   exportProject: () => Promise<ExportResult | null>;
   clearLastError: () => void;
@@ -311,6 +321,10 @@ function mapAssets(editDraft: CoreEditDraft): WorkspaceAssetItem[] {
     duration: formatDurationLabel(asset.duration_ms),
     type: asset.type,
     sourcePath: asset.source_path ?? null,
+    lifecycleState: asset.lifecycle_state ?? "active",
+    deletedAt: asset.deleted_at ?? null,
+    fingerprint: asset.fingerprint ?? null,
+    vectorIndexState: asset.vector_index_state ?? "none",
     processingStage: asset.processing_stage ?? "pending",
     processingProgress: asset.processing_progress ?? null,
     clipCount: asset.clip_count ?? 0,
@@ -320,7 +334,8 @@ function mapAssets(editDraft: CoreEditDraft): WorkspaceAssetItem[] {
 }
 
 function mapClips(editDraft: CoreEditDraft): WorkspaceClipItem[] {
-  const assetsById = new Map(editDraft.assets.map((asset) => [asset.id, asset]));
+  const activeAssets = editDraft.assets.filter((asset) => (asset.lifecycle_state ?? "active") === "active");
+  const assetsById = new Map(activeAssets.map((asset) => [asset.id, asset]));
   return editDraft.clips.map((clip, index) => ({
     id: clip.id,
     parent: assetsById.get(clip.asset_id)?.name ?? "Unknown Asset",
@@ -332,7 +347,7 @@ function mapClips(editDraft: CoreEditDraft): WorkspaceClipItem[] {
         : "n/a",
     desc: clip.visual_desc,
     thumbClass: clip.thumbnail_ref ?? clipThumbClass(index),
-  }));
+  })).filter((clip) => clip.parent !== "Unknown Asset");
 }
 
 function mapStoryboard(editDraft: CoreEditDraft): StoryboardScene[] {
@@ -919,6 +934,8 @@ const initialState: Omit<
   | "setSelectionContext"
   | "uploadAssets"
   | "retryAsset"
+  | "deleteAsset"
+  | "restoreAsset"
   | "sendChat"
   | "exportProject"
   | "clearLastError"
@@ -1304,6 +1321,60 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         dispatch({
           type: "ASSET_UPLOAD_FAILED",
           error: toWorkspaceError("retry_asset_failed", error),
+        });
+      }
+    },
+
+    deleteAsset: async (assetId) => {
+      const workspaceId = get().workspaceId;
+      if (!workspaceId) {
+        applyDirectPatch({
+          lastError: {
+            code: "WORKSPACE_NOT_READY",
+            message: "workspace_not_ready",
+          },
+        });
+        return;
+      }
+
+      try {
+        const response = await deleteAssetRequest(workspaceId, assetId);
+        dispatch({
+          type: "WORKSPACE_LOAD_SUCCEEDED",
+          workspace: response.workspace,
+          workspaceName: get().workspaceName ?? undefined,
+        });
+      } catch (error) {
+        dispatch({
+          type: "ASSET_UPLOAD_FAILED",
+          error: toWorkspaceError("delete_asset_failed", error),
+        });
+      }
+    },
+
+    restoreAsset: async (assetId) => {
+      const workspaceId = get().workspaceId;
+      if (!workspaceId) {
+        applyDirectPatch({
+          lastError: {
+            code: "WORKSPACE_NOT_READY",
+            message: "workspace_not_ready",
+          },
+        });
+        return;
+      }
+
+      try {
+        const response = await restoreAssetRequest(workspaceId, assetId);
+        dispatch({
+          type: "WORKSPACE_LOAD_SUCCEEDED",
+          workspace: response.workspace,
+          workspaceName: get().workspaceName ?? undefined,
+        });
+      } catch (error) {
+        dispatch({
+          type: "ASSET_UPLOAD_FAILED",
+          error: toWorkspaceError("restore_asset_failed", error),
         });
       }
     },

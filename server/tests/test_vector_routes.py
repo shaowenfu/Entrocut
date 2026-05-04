@@ -149,6 +149,35 @@ class TestVectorizeSuccess:
         assert body["results"][0]["id"] == "clip_001"
         assert body["results"][0]["status"] == "inserted"
 
+    def test_vector_index_state_updates_successfully(self, client: TestClient, auth_headers: dict[str, str]) -> None:
+        mock_result = {
+            "collection_name": "entrocut_assets",
+            "partition": "default",
+            "project_id": "proj_001",
+            "asset_id": "asset_001",
+            "active": False,
+            "updated_count": 2,
+            "skipped_count": 0,
+        }
+
+        with patch("app.main.vector_service.set_asset_vector_index_state", return_value=mock_result):
+            response = client.post(
+                "/v1/assets/vector-index-state",
+                headers=auth_headers,
+                json={
+                    "project_id": "proj_001",
+                    "asset_id": "asset_001",
+                    "active": False,
+                    "clip_ids": ["clip_001", "clip_002"],
+                },
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["asset_id"] == "asset_001"
+        assert body["active"] is False
+        assert body["updated_count"] == 2
+
 
 class TestVectorizeErrors:
     def test_returns_error_on_invalid_request_error(self, client: TestClient, auth_headers: dict[str, str]) -> None:

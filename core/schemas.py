@@ -6,7 +6,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 ProjectLifecycleState = Literal["active", "archived"]
+AssetLifecycleState = Literal["active", "deleted"]
 AssetProcessingStage = Literal["pending", "segmenting", "vectorizing", "ready", "failed"]
+AssetVectorIndexState = Literal["none", "active", "inactive"]
 AssetType = Literal["video", "audio"]
 TaskSlot = Literal["media", "agent", "preview", "export"]
 TaskType = Literal["ingest", "index", "chat", "render"]
@@ -124,6 +126,10 @@ class AssetModel(BaseModel):
     duration_ms: int
     type: AssetType
     source_path: str | None = None
+    lifecycle_state: AssetLifecycleState = "active"
+    deleted_at: str | None = None
+    fingerprint: str | None = None
+    vector_index_state: AssetVectorIndexState = "none"
     processing_stage: AssetProcessingStage = "pending"
     processing_progress: int | None = None
     clip_count: int = 0

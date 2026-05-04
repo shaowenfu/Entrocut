@@ -32,11 +32,12 @@ async def retrieve_candidates(
             "clip_id",
             "asset_id",
             "project_id",
+            "asset_state",
             "source_start_ms",
             "source_end_ms",
             "frame_count",
         ],
-        "filter": f'project_id == "{project_id}"',
+        "filter": f'project_id == "{project_id}" and asset_state == "active"',
     }
     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
 
@@ -56,7 +57,8 @@ async def retrieve_candidates(
     if not isinstance(raw_matches, list):
         raw_matches = []
 
-    clips_by_id = {clip.id: clip for clip in draft.clips}
+    active_asset_ids = {asset.id for asset in draft.assets if asset.lifecycle_state == "active"}
+    clips_by_id = {clip.id: clip for clip in draft.clips if clip.asset_id in active_asset_ids}
     normalized_matches: list[dict[str, Any]] = []
     for item in raw_matches:
         if not isinstance(item, dict):

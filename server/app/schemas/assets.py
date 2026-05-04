@@ -13,6 +13,8 @@ class VectorizeDocFields(BaseModel):
     clip_id: str = Field(..., min_length=1, max_length=128)
     asset_id: str = Field(..., min_length=1, max_length=128)
     project_id: str = Field(..., min_length=1, max_length=128)
+    asset_state: str = Field(default="active", min_length=1, max_length=32)
+    asset_active: bool = True
     source_start_ms: int = Field(..., ge=0)
     source_end_ms: int = Field(..., gt=0)
     frame_count: int | None = Field(default=None, ge=1)
@@ -87,3 +89,22 @@ class AssetRetrievalResponse(BaseModel):
     query: RetrievalQuery
     matches: list[RetrievalMatch]
     usage: dict[str, int]
+
+
+class AssetVectorIndexStateRequest(BaseModel):
+    collection_name: str = "entrocut_assets"
+    partition: str = "default"
+    project_id: str = Field(..., min_length=1, max_length=128)
+    asset_id: str = Field(..., min_length=1, max_length=128)
+    active: bool
+    clip_ids: list[str] = Field(default_factory=list)
+
+
+class AssetVectorIndexStateResponse(BaseModel):
+    collection_name: str
+    partition: str
+    project_id: str
+    asset_id: str
+    active: bool
+    updated_count: int
+    skipped_count: int = 0

@@ -21,6 +21,7 @@ from ..core.errors import (
 )
 from ..schemas.assets import (
     AssetRetrievalRequest,
+    AssetVectorIndexStateRequest,
     VectorizeRequest,
 )
 
@@ -324,6 +325,64 @@ class VectorService:
                 "embedding_doc_count": len(payload.docs),
                 "dashvector_write_units": len(payload.docs),
             },
+        }
+
+    def set_asset_vector_index_state(self, payload: AssetVectorIndexStateRequest) -> dict[str, Any]:
+        state = "active" if payload.active else "deleted"
+        if not payload.clip_ids:
+            return {
+                "collection_name": payload.collection_name,
+                "partition": payload.partition,
+                "project_id": payload.project_id,
+                "asset_id": payload.asset_id,
+                "active": payload.active,
+                "updated_count": 0,
+                "skipped_count": 0,
+            }
+        try:
+            from dashvector import Doc
+
+            collection = self._get_collection(payload.collection_name)
+            docs = [
+                Doc(
+                    id=clip_id,
+                    fields={
+                        "project_id": payload.project_id,
+                        "asset_id": payload.asset_id,
+                        "clip_id": clip_id,
+                        "asset_state": state,
+                        "asset_active": payload.active,
+                    },
+                )
+                for clip_id in payload.clip_ids
+            ]
+            result = collection.update(docs, partition=payload.partition)
+            result_code = getattr(result, "code", getattr(result, "status_code", None))
+            if result_code not in {0, "0"}:
+                raise vectorize_write_failed(
+                    "DashVector update failed.",
+                    details={
+                        "collection_name": payload.collection_name,
+                        "status_code": result_code,
+                        "message": getattr(result, "message", None),
+                    },
+                )
+        except ServerApiError:
+            raise
+        except Exception as exc:
+            logger.exception("DashVector asset state update failed")
+            raise vector_store_unavailable(
+                f"DashVector asset state update failed: {exc}",
+                details={"collection_name": payload.collection_name, "error_type": type(exc).__name__},
+            ) from exc
+        return {
+            "collection_name": payload.collection_name,
+            "partition": payload.partition,
+            "project_id": payload.project_id,
+            "asset_id": payload.asset_id,
+            "active": payload.active,
+            "updated_count": len(payload.clip_ids),
+            "skipped_count": 0,
         }
 
     def retrieve(self, payload: AssetRetrievalRequest) -> dict[str, Any]:

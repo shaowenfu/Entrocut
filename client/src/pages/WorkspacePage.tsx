@@ -18,6 +18,8 @@ import {
   Send,
   Sparkles,
   Tag,
+  Trash2,
+  Undo2,
   Upload,
   Wand2,
 } from "lucide-react";
@@ -164,6 +166,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string>>({});
   const [isAssetDropHovering, setIsAssetDropHovering] = useState(false);
   const [isAssetPickerOpen, setIsAssetPickerOpen] = useState(false);
+  const [showDeletedAssets, setShowDeletedAssets] = useState(false);
 
   const assets = useWorkspaceStore((state) => state.assets);
   const clips = useWorkspaceStore((state) => state.clips);
@@ -190,6 +193,8 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const setSelectionContext = useWorkspaceStore((state) => state.setSelectionContext);
   const uploadAssets = useWorkspaceStore((state) => state.uploadAssets);
   const retryAsset = useWorkspaceStore((state) => state.retryAsset);
+  const deleteAsset = useWorkspaceStore((state) => state.deleteAsset);
+  const restoreAsset = useWorkspaceStore((state) => state.restoreAsset);
   const sendChat = useWorkspaceStore((state) => state.sendChat);
   const exportProject = useWorkspaceStore((state) => state.exportProject);
   const clearLastError = useWorkspaceStore((state) => state.clearLastError);
@@ -246,6 +251,11 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
         ? storyboard.findIndex((scene) => scene.id === previewSelection.sceneId)
         : -1,
     [previewSelection, storyboard]
+  );
+  const deletedAssetCount = assets.filter((asset) => asset.lifecycleState === "deleted").length;
+  const visibleAssets = useMemo(
+    () => assets.filter((asset) => (showDeletedAssets ? asset.lifecycleState === "deleted" : asset.lifecycleState !== "deleted")),
+    [assets, showDeletedAssets]
   );
 
   const selectedClip = useMemo(() => {
@@ -816,7 +826,19 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                   ) : null}
                 </div>
 
-                {assets.length === 0 ? (
+                {deletedAssetCount > 0 ? (
+                  <div className="asset-lifecycle-toggle">
+                    <button
+                      type="button"
+                      className={showDeletedAssets ? "is-active" : ""}
+                      onClick={() => setShowDeletedAssets((current) => !current)}
+                    >
+                      {showDeletedAssets ? "Show Active" : `Deleted (${deletedAssetCount})`}
+                    </button>
+                  </div>
+                ) : null}
+
+                {visibleAssets.length === 0 ? (
                   <EmptyMediaGuidance
                     onUploadClick={handleAssetBrowse}
                     isDisabled={!canUploadAssets}
@@ -824,9 +846,10 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                   />
                 ) : (
                   <div className="asset-grid">
-                    {assets.map((asset) => {
+                    {visibleAssets.map((asset) => {
                       const isReady = asset.processingStage === "ready";
                       const isFailed = asset.processingStage === "failed";
+                      const isDeleted = asset.lifecycleState === "deleted";
                       const isLoading = !isReady && !isFailed;
                       const progress = asset.processingProgress ?? 0;
                       const assetErrorTitle = formatAssetError(asset.lastError);
@@ -836,10 +859,10 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                           key={asset.id}
                           className={`asset-card ${
                             previewSelection?.kind === "asset" && previewSelection.assetId === asset.id ? "is-active" : ""
-                          } ${!isReady ? "is-processing" : ""}`}
+                          } ${!isReady ? "is-processing" : ""} ${isDeleted ? "is-deleted" : ""}`}
                           title={assetErrorTitle || asset.name}
                           onClick={() => {
-                            if (isReady) {
+                            if (isReady && !isDeleted) {
                               setPreviewSelection({ kind: "asset", assetId: asset.id });
                               setCurrentTimeSec(0);
                               setIsPlaying(true);
@@ -868,21 +891,52 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                             )}
                             {isReady && <span>{asset.duration}</span>}
                           </div>
-                          {isFailed ? (
+                          {isFailed || isReady || isDeleted ? (
                             <div className="asset-card-actions">
-                              <button
-                                type="button"
-                                className="asset-card-action"
-                                title={assetErrorTitle ? `Retry: ${assetErrorTitle}` : "Retry asset"}
-                                aria-label={`retry ${asset.name}`}
-                                disabled={!canUploadAssets}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  void retryAsset(asset.id);
-                                }}
-                              >
-                                <RefreshCw size={13} />
-                              </button>
+                              {isFailed && !isDeleted ? (
+                                <button
+                                  type="button"
+                                  className="asset-card-action"
+                                  title={assetErrorTitle ? `Retry: ${assetErrorTitle}` : "Retry asset"}
+                                  aria-label={`retry ${asset.name}`}
+                                  disabled={!canUploadAssets}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void retryAsset(asset.id);
+                                  }}
+                                >
+                                  <RefreshCw size={13} />
+                                </button>
+                              ) : null}
+                              {isDeleted ? (
+                                <button
+                                  type="button"
+                                  className="asset-card-action"
+                                  title="Restore asset"
+                                  aria-label={`restore ${asset.name}`}
+                                  disabled={!canUploadAssets}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void restoreAsset(asset.id);
+                                  }}
+                                >
+                                  <Undo2 size={13} />
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="asset-card-action"
+                                  title="Delete asset"
+                                  aria-label={`delete ${asset.name}`}
+                                  disabled={!canUploadAssets}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void deleteAsset(asset.id);
+                                  }}
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              )}
                             </div>
                           ) : null}
                           <p title={asset.name}>{asset.name}</p>

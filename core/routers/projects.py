@@ -64,6 +64,18 @@ async def retry_asset(project_id: str, asset_id: str) -> TaskResponse:
     return TaskResponse(task=task)
 
 
+@router.delete("/api/v1/projects/{project_id}/assets/{asset_id}", response_model=GetWorkspaceResponse)
+async def delete_asset(project_id: str, asset_id: str) -> GetWorkspaceResponse:
+    workspace = await store.soft_delete_asset(project_id, asset_id)
+    return GetWorkspaceResponse(workspace=workspace)
+
+
+@router.post("/api/v1/projects/{project_id}/assets/{asset_id}:restore", response_model=GetWorkspaceResponse)
+async def restore_asset(project_id: str, asset_id: str) -> GetWorkspaceResponse:
+    workspace = await store.restore_asset(project_id, asset_id)
+    return GetWorkspaceResponse(workspace=workspace)
+
+
 @router.post("/api/v1/projects/{project_id}/chat", response_model=TaskResponse)
 async def chat(project_id: str, payload: ChatRequest, request: Request) -> TaskResponse:
     routing_mode = (request.headers.get("X-Routing-Mode") or "Platform").strip()

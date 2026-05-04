@@ -12,6 +12,10 @@ export type ProjectSummaryState =
 export type ProjectLifecycleState = "active" | "archived";
 // 媒体资产处理阶段。
 export type AssetProcessingStage = "pending" | "segmenting" | "vectorizing" | "ready" | "failed";
+// 媒体资产生命周期。
+export type AssetLifecycleState = "active" | "deleted";
+// 云端向量索引可见性状态。
+export type AssetVectorIndexState = "none" | "active" | "inactive";
 
 // core 支持的媒体资产类型。
 export type AssetType = "video" | "audio";
@@ -45,6 +49,10 @@ export interface CoreAsset {
   duration_ms: number;
   type: AssetType;
   source_path?: string | null;
+  lifecycle_state?: AssetLifecycleState;
+  deleted_at?: string | null;
+  fingerprint?: string | null;
+  vector_index_state?: AssetVectorIndexState;
   processing_stage?: AssetProcessingStage;
   processing_progress?: number | null;
   clip_count?: number;
@@ -495,6 +503,22 @@ export async function importAssets(projectId: string, payload: ImportAssetsReque
 // 重新触发单个素材的媒体处理。
 export async function retryAsset(projectId: string, assetId: string): Promise<TaskResponse> {
   return requestJson<TaskResponse>(buildCoreUrl(`/api/v1/projects/${projectId}/assets/${assetId}:retry`), {
+    method: "POST",
+    authRequired: false,
+  });
+}
+
+// 软删除单个素材。
+export async function deleteAsset(projectId: string, assetId: string): Promise<GetWorkspaceResponse> {
+  return requestJson<GetWorkspaceResponse>(buildCoreUrl(`/api/v1/projects/${projectId}/assets/${assetId}`), {
+    method: "DELETE",
+    authRequired: false,
+  });
+}
+
+// 恢复被软删除的素材。
+export async function restoreAsset(projectId: string, assetId: string): Promise<GetWorkspaceResponse> {
+  return requestJson<GetWorkspaceResponse>(buildCoreUrl(`/api/v1/projects/${projectId}/assets/${assetId}:restore`), {
     method: "POST",
     authRequired: false,
   });

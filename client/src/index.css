@@ -426,6 +426,29 @@ textarea {
   cursor: not-allowed;
 }
 
+.asset-lifecycle-toggle {
+  display: flex;
+  justify-content: flex-end;
+  margin: -2px 0 8px;
+}
+
+.asset-lifecycle-toggle button {
+  height: 26px;
+  border: 1px solid var(--line-subtle);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+  font-size: 10px;
+  cursor: pointer;
+  padding: 0 8px;
+}
+
+.asset-lifecycle-toggle button.is-active,
+.asset-lifecycle-toggle button:hover {
+  border-color: rgba(132, 142, 198, 0.55);
+  color: #d5dcf7;
+}
+
 /* 媒体资产卡片网格。 */
 .asset-grid {
   display: grid;
@@ -453,9 +476,15 @@ textarea {
   background: rgba(53, 94, 201, 0.14);
 }
 
+.asset-card.is-deleted {
+  opacity: 0.72;
+  border-style: dashed;
+}
+
 .asset-card-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 5px;
   margin: -2px 0 5px;
 }
 

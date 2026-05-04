@@ -1,6 +1,8 @@
 from .assets import (
     AssetRetrievalRequest,
     AssetRetrievalResponse,
+    AssetVectorIndexStateRequest,
+    AssetVectorIndexStateResponse,
     RetrievalMatch,
     RetrievalQuery,
     VectorizeDoc,
@@ -32,6 +34,8 @@ __all__ = [
     "AssetReference",
     "AssetRetrievalRequest",
     "AssetRetrievalResponse",
+    "AssetVectorIndexStateRequest",
+    "AssetVectorIndexStateResponse",
     "AssetVector",
     "CandidateJudgment",
     "InspectCandidate",

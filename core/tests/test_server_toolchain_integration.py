@@ -624,6 +624,10 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
                 row[1] for row in connection.execute("PRAGMA table_info(assets)").fetchall()
             }
             self.assertIn("processing_stage", asset_columns)
+            self.assertIn("lifecycle_state", asset_columns)
+            self.assertIn("deleted_at", asset_columns)
+            self.assertIn("fingerprint", asset_columns)
+            self.assertIn("vector_index_state", asset_columns)
             self.assertIn("processing_progress", asset_columns)
             self.assertIn("clip_count", asset_columns)
             self.assertIn("indexed_clip_count", asset_columns)
@@ -797,6 +801,61 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self.assertEqual(retried_asset["indexed_clip_count"], 2)
         self.assertIsNone(retried_asset["last_error"])
         self.assertEqual(len(retried_clips), 2)
+
+    def test_asset_soft_delete_restore_and_reimport_reuses_ready_asset(self) -> None:
+        source_file = Path(CORE_TEST_APPDATA_DIR.name) / "restore-source.mp4"
+        source_file.write_bytes(b"restore media placeholder")
+
+        response = self.client.post("/api/v1/projects", json={})
+        self.assertEqual(response.status_code, 200)
+        project_id = response.json()["project"]["id"]
+        self._set_auth_session()
+
+        with (
+            patch("store.detect_scenes", return_value=[(0, 6000), (6000, 12000)]),
+            patch("store.extract_and_stitch_frames", return_value="dummy_b64"),
+        ):
+            import_response = self.client.post(
+                f"/api/v1/projects/{project_id}/assets:import",
+                json={"media": {"files": [{"name": source_file.name, "path": str(source_file)}]}},
+            )
+            self.assertEqual(import_response.status_code, 200)
+            ready_workspace = self._poll_task_idle(project_id)
+        asset = ready_workspace["edit_draft"]["assets"][0]
+        self.assertEqual(asset["processing_stage"], "ready")
+        self.assertEqual(asset["lifecycle_state"], "active")
+        self.assertEqual(ready_workspace["media_summary"]["asset_count"], 1)
+
+        delete_response = self.client.delete(f"/api/v1/projects/{project_id}/assets/{asset['id']}")
+        self.assertEqual(delete_response.status_code, 200)
+        deleted_workspace = delete_response.json()["workspace"]
+        deleted_asset = deleted_workspace["edit_draft"]["assets"][0]
+        self.assertEqual(deleted_asset["lifecycle_state"], "deleted")
+        self.assertEqual(deleted_asset["vector_index_state"], "inactive")
+        self.assertEqual(deleted_workspace["media_summary"]["asset_count"], 0)
+        self.assertEqual(deleted_workspace["media_summary"]["retrieval_ready"], False)
+
+        reimport_response = self.client.post(
+            f"/api/v1/projects/{project_id}/assets:import",
+            json={"media": {"files": [{"name": source_file.name, "path": str(source_file)}]}},
+        )
+        self.assertEqual(reimport_response.status_code, 200)
+        self.assertEqual(reimport_response.json()["task"]["status"], "succeeded")
+        restored_workspace = self.client.get(f"/api/v1/projects/{project_id}").json()["workspace"]
+        restored_assets = restored_workspace["edit_draft"]["assets"]
+        self.assertEqual(len(restored_assets), 1)
+        self.assertEqual(restored_assets[0]["id"], asset["id"])
+        self.assertEqual(restored_assets[0]["lifecycle_state"], "active")
+        self.assertEqual(restored_assets[0]["vector_index_state"], "active")
+        self.assertEqual(restored_workspace["media_summary"]["asset_count"], 1)
+
+        delete_again_response = self.client.delete(f"/api/v1/projects/{project_id}/assets/{asset['id']}")
+        self.assertEqual(delete_again_response.status_code, 200)
+        restore_response = self.client.post(f"/api/v1/projects/{project_id}/assets/{asset['id']}:restore")
+        self.assertEqual(restore_response.status_code, 200)
+        explicit_restore_workspace = restore_response.json()["workspace"]
+        self.assertEqual(explicit_restore_workspace["edit_draft"]["assets"][0]["lifecycle_state"], "active")
+        self.assertEqual(explicit_restore_workspace["media_summary"]["asset_count"], 1)
 
     def test_partial_media_processing_keeps_editing_capability_when_existing_clips_exist(self) -> None:
         project_id, _ = self._create_project()

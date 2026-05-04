@@ -20,7 +20,7 @@ from app.core.errors import (
     vector_store_unavailable,
     vectorize_write_failed,
 )
-from app.schemas import AssetRetrievalRequest, VectorizeRequest
+from app.schemas import AssetRetrievalRequest, AssetVectorIndexStateRequest, VectorizeRequest
 from app.services.vector import VectorService
 
 
@@ -201,6 +201,30 @@ class TestInsertDocs:
                 )
 
         mock_collection.insert.assert_called_once()
+
+    def test_updates_asset_vector_index_state(self, vector_service: VectorService) -> None:
+        mock_collection = MagicMock()
+        mock_result = MagicMock()
+        mock_result.code = 0
+        mock_collection.update.return_value = mock_result
+        mock_doc_class = MagicMock(return_value=MagicMock())
+        mock_dashvector = MagicMock()
+        mock_dashvector.Doc = mock_doc_class
+        payload = AssetVectorIndexStateRequest.model_validate(
+            {
+                "project_id": "proj_001",
+                "asset_id": "asset_001",
+                "active": False,
+                "clip_ids": ["clip_001", "clip_002"],
+            }
+        )
+
+        with patch.dict("sys.modules", {"dashvector": mock_dashvector}):
+            with patch.object(vector_service, "_get_collection", return_value=mock_collection):
+                result = vector_service.set_asset_vector_index_state(payload)
+
+        assert result["updated_count"] == 2
+        mock_collection.update.assert_called_once()
 
     def test_insert_docs_raises_write_failed(self, vector_service: VectorService) -> None:
         mock_collection = MagicMock()

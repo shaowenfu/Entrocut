@@ -8,7 +8,14 @@ from pydantic import ValidationError
 from ...bootstrap.dependencies import get_current_user, logger, metrics, settings, vector_service
 from ...core.errors import ServerApiError, invalid_retrieval_request, invalid_vectorize_request
 from ...core.observability import log_audit_event, log_event
-from ...schemas.assets import AssetRetrievalRequest, AssetRetrievalResponse, VectorizeRequest, VectorizeResponse
+from ...schemas.assets import (
+    AssetRetrievalRequest,
+    AssetRetrievalResponse,
+    AssetVectorIndexStateRequest,
+    AssetVectorIndexStateResponse,
+    VectorizeRequest,
+    VectorizeResponse,
+)
 
 
 router = APIRouter(tags=["assets"])
@@ -128,3 +135,46 @@ async def assets_retrieval(
         details={"match_count": len(result.get("matches", [])), "topk": payload.topk},
     )
     return AssetRetrievalResponse(**result)
+
+
+@router.post("/v1/assets/vector-index-state", response_model=AssetVectorIndexStateResponse)
+async def asset_vector_index_state(
+    request: Request,
+    current: dict = Depends(get_current_user),
+) -> AssetVectorIndexStateResponse:
+    try:
+        raw_payload = await request.json()
+    except json.JSONDecodeError as exc:
+        raise invalid_vectorize_request("Request body must be valid JSON.") from exc
+    try:
+        payload = AssetVectorIndexStateRequest.model_validate(raw_payload)
+    except ValidationError as exc:
+        raise invalid_vectorize_request(
+            "Vector index state request validation failed.",
+            details={"validation_errors": exc.errors()},
+        ) from exc
+    log_event(
+        logger,
+        "vector_index_state_update_started",
+        service="server",
+        env=settings.app_env,
+        request_id=getattr(request.state, "request_id", None),
+        user_id=current["user"]["_id"],
+        project_id=payload.project_id,
+        asset_id=payload.asset_id,
+        active=payload.active,
+    )
+    result = vector_service.set_asset_vector_index_state(payload)
+    metrics.inc("server_vector_index_state_updates_total", status="success")
+    log_audit_event(
+        "audit_vector_index_state_updated",
+        env=settings.app_env,
+        request_id=getattr(request.state, "request_id", None),
+        actor_user_id=current["user"]["_id"],
+        action="assets.vector_index_state",
+        result="success",
+        target_type="asset",
+        target_id=payload.asset_id,
+        details={"project_id": payload.project_id, "active": payload.active, "updated_count": result["updated_count"]},
+    )
+    return AssetVectorIndexStateResponse(**result)

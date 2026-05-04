@@ -111,6 +111,10 @@ class LocalStateRepository:
                     size_bytes INTEGER,
                     modified_at TEXT,
                     content_hash TEXT,
+                    lifecycle_state TEXT NOT NULL DEFAULT 'active',
+                    deleted_at TEXT,
+                    fingerprint TEXT,
+                    vector_index_state TEXT NOT NULL DEFAULT 'none',
                     processing_stage TEXT NOT NULL DEFAULT 'pending',
                     processing_progress INTEGER,
                     clip_count INTEGER NOT NULL DEFAULT 0,
@@ -189,6 +193,10 @@ class LocalStateRepository:
                     id,
                     source_path,
                     file_name,
+                    lifecycle_state,
+                    deleted_at,
+                    fingerprint,
+                    vector_index_state,
                     processing_stage,
                     processing_progress,
                     clip_count,
@@ -443,6 +451,10 @@ class LocalStateRepository:
                     size_bytes,
                     modified_at,
                     content_hash,
+                    lifecycle_state,
+                    deleted_at,
+                    fingerprint,
+                    vector_index_state,
                     processing_stage,
                     processing_progress,
                     clip_count,
@@ -451,7 +463,7 @@ class LocalStateRepository:
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     asset["id"],
@@ -461,6 +473,12 @@ class LocalStateRepository:
                     None,
                     None,
                     None,
+                    asset.get("lifecycle_state") or "active",
+                    asset.get("deleted_at"),
+                    asset.get("fingerprint"),
+                    asset.get("vector_index_state") or (
+                        "active" if processing_stage == "ready" and int(indexed_clip_count or 0) > 0 else "none"
+                    ),
                     processing_stage,
                     processing_progress,
                     clip_count,
@@ -586,6 +604,10 @@ class LocalStateRepository:
         self._ensure_column(connection, "tasks", "result_json", "TEXT")
         self._ensure_column(connection, "tasks", "error_json", "TEXT")
         self._ensure_column(connection, "assets", "processing_stage", "TEXT NOT NULL DEFAULT 'pending'")
+        self._ensure_column(connection, "assets", "lifecycle_state", "TEXT NOT NULL DEFAULT 'active'")
+        self._ensure_column(connection, "assets", "deleted_at", "TEXT")
+        self._ensure_column(connection, "assets", "fingerprint", "TEXT")
+        self._ensure_column(connection, "assets", "vector_index_state", "TEXT NOT NULL DEFAULT 'none'")
         self._ensure_column(connection, "assets", "processing_progress", "INTEGER")
         self._ensure_column(connection, "assets", "clip_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column(connection, "assets", "indexed_clip_count", "INTEGER NOT NULL DEFAULT 0")
@@ -702,6 +724,10 @@ class LocalStateRepository:
             "id": str(row["id"]),
             "source_path": row["source_path"],
             "name": row["file_name"],
+            "lifecycle_state": row["lifecycle_state"] or "active",
+            "deleted_at": row["deleted_at"],
+            "fingerprint": row["fingerprint"],
+            "vector_index_state": row["vector_index_state"] or "none",
             "processing_stage": processing_stage,
             "processing_progress": processing_progress,
             "clip_count": int(row["clip_count"] or 0),
@@ -726,6 +752,10 @@ class LocalStateRepository:
             indexed_clip_count = int(merged.get("indexed_clip_count", 0) or 0)
             if row is not None:
                 merged["source_path"] = row["source_path"] or merged.get("source_path")
+                merged["lifecycle_state"] = row["lifecycle_state"] or merged.get("lifecycle_state") or "active"
+                merged["deleted_at"] = row["deleted_at"]
+                merged["fingerprint"] = row["fingerprint"] or merged.get("fingerprint")
+                merged["vector_index_state"] = row["vector_index_state"] or merged.get("vector_index_state") or "none"
                 merged["processing_stage"] = row["processing_stage"] or merged.get("processing_stage")
                 merged["processing_progress"] = row["processing_progress"]
                 clip_count = max(clip_count, int(row["clip_count"] or 0))
@@ -745,6 +775,10 @@ class LocalStateRepository:
                 merged["processing_progress"] = self._default_processing_progress(merged["processing_stage"])
             merged["clip_count"] = clip_count
             merged["indexed_clip_count"] = indexed_clip_count
+            merged["lifecycle_state"] = merged.get("lifecycle_state") or "active"
+            merged["vector_index_state"] = merged.get("vector_index_state") or (
+                "active" if indexed_clip_count > 0 else "none"
+            )
             merged_assets.append(merged)
         next_draft = dict(draft)
         next_draft["assets"] = merged_assets
