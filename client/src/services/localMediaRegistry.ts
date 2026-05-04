@@ -3,6 +3,7 @@ import {
   type DesktopMediaFileReference,
 } from "./electronBridge";
 
+// Renderer 可播放的本地媒体源。
 interface LocalMediaSource {
   assetName: string;
   url: string;
@@ -10,12 +11,15 @@ interface LocalMediaSource {
   kind: "object_url" | "local_media_url";
 }
 
+// 按 projectId 隔离的媒体源注册表。
 const projectMediaRegistry = new Map<string, Map<string, LocalMediaSource>>();
 
+// 归一化资产名，用于宽松匹配 core asset 和本地文件。
 function normalizeAssetName(assetName: string): string {
   return assetName.trim().toLowerCase();
 }
 
+// 获取或创建项目级媒体注册表。
 function ensureProjectRegistry(projectId: string): Map<string, LocalMediaSource> {
   const existing = projectMediaRegistry.get(projectId);
   if (existing) {
@@ -26,14 +30,17 @@ function ensureProjectRegistry(projectId: string): Map<string, LocalMediaSource>
   return created;
 }
 
+// 判断文件是否是 Electron 桌面文件引用。
 function isDesktopFileReference(file: File | DesktopMediaFileReference): file is DesktopMediaFileReference {
   return "path" in file && typeof file.path === "string";
 }
 
+// 归一化媒体路径作为 Map key。
 function normalizeMediaPathKey(filePath: string): string {
   return filePath.trim();
 }
 
+// 注册项目媒体源：桌面文件转 local media URL，浏览器 File 转 object URL。
 export async function registerProjectMediaSources(
   projectId: string,
   input?: {
@@ -81,6 +88,7 @@ export async function registerProjectMediaSources(
   }
 }
 
+// 根据 projectId 和 assetName 查找可播放媒体源。
 export function getProjectMediaSource(projectId: string, assetName: string): LocalMediaSource | null {
   const projectRegistry = projectMediaRegistry.get(projectId);
   if (!projectRegistry) {
@@ -89,6 +97,7 @@ export function getProjectMediaSource(projectId: string, assetName: string): Loc
   return projectRegistry.get(normalizeAssetName(assetName)) ?? null;
 }
 
+// 从视频 URL 抽取一帧生成 JPEG data URL 缩略图。
 export async function createThumbnailFromMediaUrl(
   mediaUrl: string,
   options?: {
@@ -112,12 +121,14 @@ export async function createThumbnailFromMediaUrl(
     video.playsInline = true;
     video.crossOrigin = "anonymous";
 
+    // 释放 video 元素持有的媒体资源。
     const cleanup = () => {
       video.pause();
       video.removeAttribute("src");
       video.load();
     };
 
+    // 统一失败出口：清理资源并返回 null。
     const fail = () => {
       cleanup();
       resolve(null);
@@ -151,6 +162,7 @@ export async function createThumbnailFromMediaUrl(
   });
 }
 
+// 清理项目媒体源，并释放浏览器 object URL。
 export function clearProjectMediaSources(projectId: string): void {
   const projectRegistry = projectMediaRegistry.get(projectId);
   if (!projectRegistry) {

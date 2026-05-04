@@ -7,27 +7,34 @@
 /* Legacy Variables - 逐步迁移到 tokens.css */
 :root {
   /* 保留旧变量以兼容现有代码，但引用设计令牌 */
+  /* 背景色变量：页面底色、面板色、柔和面板色。 */
   --bg-base: var(--color-bg-base);
   --bg-panel: var(--color-bg-panel);
   --bg-panel-soft: var(--color-bg-panel-soft);
+  /* 边框变量：弱分割线和强分割线。 */
   --line-subtle: var(--color-border-subtle);
   --line-strong: var(--color-border-strong);
+  /* 强调色变量：主色、紫色补色、青色补色。 */
   --accent-indigo: var(--color-primary);
   --accent-purple: #9a63ff;
   --accent-cyan: var(--color-accent);
+  /* 文本变量：主文本、次级文本、弱文本。 */
   --text-primary: var(--color-text-primary);
   --text-muted: var(--color-text-muted);
   --text-faint: var(--color-text-faint);
+  /* 阴影变量：面板阴影和选中态光效。 */
   --shadow-panel: 0 22px 48px rgba(0, 0, 0, 0.42);
   --shadow-accent: 0 0 22px rgba(109, 99, 255, 0.22);
 }
 
+/* 全局盒模型归一化，避免 padding/border 改变元素实际宽高。 */
 *,
 *::before,
 *::after {
   box-sizing: border-box;
 }
 
+/* 让 React 根节点占满视口，移除浏览器默认外边距。 */
 html,
 body,
 #root {
@@ -36,6 +43,7 @@ body,
   margin: 0;
 }
 
+/* 应用级字体、文字颜色和全局背景。 */
 body {
   font-family: "IBM Plex Sans", "MiSans", "PingFang SC", "Microsoft YaHei", sans-serif;
   color: var(--text-primary);
@@ -45,12 +53,14 @@ body {
     #020204;
 }
 
+/* 表单控件继承应用字体和文字颜色。 */
 button,
 textarea {
   font: inherit;
   color: inherit;
 }
 
+/* Workspace 根容器：固定占满窗口，内部由三列工作区布局承载。 */
 .workspace-root {
   height: 100vh;
   width: 100vw;
@@ -60,6 +70,7 @@ textarea {
   background: transparent;
 }
 
+/* Workspace 顶栏：承载返回、路径、健康状态、账户等全局操作。 */
 .topbar {
   height: 52px;
   display: flex;
@@ -72,12 +83,14 @@ textarea {
   backdrop-filter: blur(14px);
 }
 
+/* 顶栏左侧：返回按钮、品牌、路径。 */
 .topbar-left {
   display: flex;
   align-items: center;
   gap: 14px;
 }
 
+/* 返回 Launchpad 的按钮。 */
 .topbar-back-btn {
   gap: 6px;
   border: 1px solid var(--line-subtle);
@@ -89,12 +102,14 @@ textarea {
   font-size: 11px;
 }
 
+/* 品牌区域：图标和应用名。 */
 .brand {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
+/* 品牌图标外壳。 */
 .brand-icon-shell {
   display: inline-flex;
   align-items: center;
@@ -115,12 +130,14 @@ textarea {
   font-weight: 600;
 }
 
+/* 顶栏内部分隔线。 */
 .topbar-divider {
   width: 1px;
   height: 16px;
   background: var(--line-subtle);
 }
 
+/* 当前 workspace 路径提示。 */
 .workspace-path {
   display: inline-flex;
   align-items: center;
@@ -134,24 +151,28 @@ textarea {
   font-weight: 500;
 }
 
+/* 顶栏右侧：健康状态、账号、导出等操作。 */
 .topbar-right {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
+/* Workspace 运行状态组。 */
 .workspace-status-cluster {
   display: inline-flex;
   align-items: center;
   gap: 8px;
 }
 
+/* 服务健康状态组。 */
 .health-cluster {
   display: inline-flex;
   align-items: center;
   gap: 8px;
 }
 
+/* 状态胶囊：健康状态和锁定状态共用基础样式。 */
 .health-pill,
 .lock-pill {
   display: inline-flex;
@@ -168,49 +189,58 @@ textarea {
   font-family: "IBM Plex Sans", "MiSans", sans-serif;
 }
 
+/* core 在线状态。 */
 .health-pill-online {
   color: #b7f3d5;
   border-color: rgba(68, 222, 138, 0.36);
 }
 
+/* core 检查中状态。 */
 .health-pill-checking {
   color: #f0de9d;
   border-color: rgba(240, 205, 120, 0.36);
 }
 
+/* core 离线状态。 */
 .health-pill-offline {
   color: #f7b0b0;
   border-color: rgba(241, 91, 91, 0.4);
 }
 
+/* 健康状态小圆点基础样式。 */
 .health-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
 }
 
+/* 在线圆点呼吸动效。 */
 .health-dot-online {
   background: #44de8a;
   box-shadow: 0 0 8px rgba(68, 222, 138, 0.6);
   animation: breathe 1.6s ease-in-out infinite;
 }
 
+/* 检查中圆点呼吸动效。 */
 .health-dot-checking {
   background: #f0cd78;
   box-shadow: 0 0 8px rgba(240, 205, 120, 0.64);
   animation: breathe 1.4s ease-in-out infinite;
 }
 
+/* 离线圆点静态红色提示。 */
 .health-dot-offline {
   background: #f15b5b;
   box-shadow: 0 0 6px rgba(241, 91, 91, 0.48);
 }
 
+/* 锁定状态胶囊。 */
 .lock-pill {
   color: #f0cd98;
   border-color: rgba(240, 205, 152, 0.36);
 }
 
+/* 通用图标按钮。 */
 .icon-btn {
   border: 0;
   background: transparent;
@@ -232,6 +262,7 @@ textarea {
   background: rgba(255, 255, 255, 0.08);
 }
 
+/* 导出按钮。 */
 .export-btn {
   border: 0;
   color: #ffffff;
@@ -252,6 +283,7 @@ textarea {
   cursor: not-allowed;
 }
 
+/* Workspace 主体区域：媒体栏、Copilot 栏、预览/时间线栏。 */
 .workspace-main {
   flex: 1;
   display: flex;
@@ -261,6 +293,7 @@ textarea {
   gap: 12px;
 }
 
+/* 通用暗色面板基础样式。 */
 .panel {
   background: rgba(9, 9, 11, 0.86);
   border: 1px solid var(--line-subtle);
@@ -269,11 +302,13 @@ textarea {
   min-height: 0;
 }
 
+/* 左侧媒体列容器。 */
 .media-column {
   display: flex;
   flex-direction: column;
 }
 
+/* 媒体/片段切换标签。 */
 .media-tabs {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -313,12 +348,14 @@ textarea {
   background: rgba(255, 255, 255, 0.1);
 }
 
+/* 媒体列滚动内容区。 */
 .media-body {
   flex: 1;
   overflow: auto;
   padding: 10px;
 }
 
+/* 资产导入入口。 */
 .asset-upload-entry {
   border: 1px dashed rgba(132, 142, 198, 0.5);
   border-radius: 10px;
@@ -350,12 +387,14 @@ textarea {
   opacity: 0.55;
 }
 
+/* 媒体资产卡片网格。 */
 .asset-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
+/* 单个媒体资产卡片。 */
 .asset-card {
   border: 1px solid var(--line-subtle);
   border-radius: 10px;
@@ -375,6 +414,7 @@ textarea {
   background: rgba(53, 94, 201, 0.14);
 }
 
+/* 媒体缩略图容器。 */
 .asset-thumb {
   aspect-ratio: 16 / 9;
   border-radius: 8px;
@@ -416,6 +456,7 @@ textarea {
   text-overflow: ellipsis;
 }
 
+/* 空资产提示卡片占满整行。 */
 .asset-card-empty {
   grid-column: 1 / -1;
 }
@@ -425,12 +466,14 @@ textarea {
   line-height: 1.45;
 }
 
+/* 片段列表容器。 */
 .clip-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
+/* 单个片段卡片。 */
 .clip-card {
   border: 1px solid var(--line-subtle);
   border-radius: 10px;
@@ -453,12 +496,14 @@ textarea {
   background: rgba(53, 94, 201, 0.14);
 }
 
+/* 片段头部：父素材和分数。 */
 .clip-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
+/* 片段来源素材标识。 */
 .clip-parent {
   display: inline-flex;
   align-items: center;
@@ -468,6 +513,7 @@ textarea {
   font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
 }
 
+/* 片段评分徽标。 */
 .clip-score {
   padding: 2px 7px;
   border-radius: 999px;
@@ -478,17 +524,20 @@ textarea {
   font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
 }
 
+/* 片段时间范围。 */
 .clip-range {
   font-size: 10px;
   color: var(--text-muted);
   font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
 }
 
+/* 片段主体：缩略图和描述。 */
 .clip-body {
   display: flex;
   gap: 8px;
 }
 
+/* 片段缩略图容器。 */
 .clip-thumb {
   width: 56px;
   aspect-ratio: 16 / 9;
@@ -520,6 +569,7 @@ textarea {
   font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
 }
 
+/* 默认缩略图占位背景色。 */
 .thumb-blue {
   background: rgba(30, 61, 116, 0.8);
 }
@@ -543,6 +593,7 @@ textarea {
   line-height: 1.35;
 }
 
+/* 列宽拖拽手柄。 */
 .resize-handle {
   width: 8px;
   margin-inline: -6px;
@@ -573,6 +624,7 @@ textarea {
   color: rgba(74, 211, 245, 0.72);
 }
 
+/* Copilot 聊天列容器。 */
 .copilot-column {
   display: flex;
   flex-direction: column;
@@ -580,6 +632,7 @@ textarea {
   position: relative;
 }
 
+/* Copilot 聊天列头部。 */
 .copilot-header {
   padding: 14px 14px 12px;
   border-bottom: 1px solid var(--line-subtle);
@@ -607,6 +660,7 @@ textarea {
   color: transparent;
 }
 
+/* 当前 session 标识。 */
 .session-badge {
   font-size: 10px;
   color: var(--text-faint);
@@ -617,6 +671,7 @@ textarea {
   font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
 }
 
+/* 聊天消息滚动区。 */
 .chat-thread {
   flex: 1;
   overflow: auto;
@@ -626,6 +681,7 @@ textarea {
   gap: 16px;
 }
 
+/* 单行聊天消息容器。 */
 .chat-row {
   display: flex;
 }
@@ -634,6 +690,7 @@ textarea {
   justify-content: flex-end;
 }
 
+/* 聊天气泡。 */
 .chat-bubble {
   max-width: 86%;
   background: rgba(255, 255, 255, 0.06);
@@ -645,6 +702,7 @@ textarea {
   color: #d9dff4;
 }
 
+/* Agent 决策展示卡。 */
 .decision-card {
   width: 100%;
   border: 1px solid var(--line-subtle);
@@ -679,6 +737,7 @@ textarea {
   color: #8892ff;
 }
 
+/* 决策正文区域。 */
 .decision-content {
   padding: 12px;
 }
@@ -690,6 +749,7 @@ textarea {
   line-height: 1.5;
 }
 
+/* 决策操作列表。 */
 .decision-ops {
   border-radius: 7px;
   background: rgba(0, 0, 0, 0.35);
@@ -718,6 +778,7 @@ textarea {
   font-size: 11px;
 }
 
+/* Agent 思考中提示。 */
 .thinking-box {
   border: 1px dashed rgba(132, 142, 198, 0.46);
   background: rgba(104, 101, 248, 0.08);
@@ -734,6 +795,7 @@ textarea {
   animation: spin 1s linear infinite;
 }
 
+/* 快捷建议横向列表。 */
 .suggestion-row {
   border-top: 1px solid var(--line-subtle);
   padding: 10px 10px 0;
@@ -763,6 +825,7 @@ textarea {
   cursor: not-allowed;
 }
 
+/* 聊天输入区域。 */
 .composer-wrap {
   border-top: 1px solid var(--line-subtle);
   padding: 10px;
@@ -812,6 +875,7 @@ textarea {
   cursor: not-allowed;
 }
 
+/* 右侧预览和 storyboard 主列。 */
 .stage-column {
   flex: 1;
   min-width: 0;
@@ -823,6 +887,7 @@ textarea {
   box-shadow: var(--shadow-panel);
 }
 
+/* 视频预览面板。 */
 .preview-panel {
   flex: 1;
   min-height: 300px;
@@ -831,6 +896,7 @@ textarea {
   flex-direction: column;
 }
 
+/* 预览画布外框。 */
 .preview-frame {
   flex: 1;
   min-height: 0;
@@ -844,6 +910,7 @@ textarea {
   overflow: hidden;
 }
 
+/* 实际视频元素。 */
 .preview-video {
   position: absolute;
   inset: 0;
@@ -854,6 +921,7 @@ textarea {
   background: #050608;
 }
 
+/* 无视频时的预览背景层。 */
 .preview-layer {
   position: absolute;
   inset: 0;
@@ -863,6 +931,7 @@ textarea {
   opacity: 0.9;
 }
 
+/* 预览空状态/加载状态中心提示。 */
 .preview-center {
   z-index: 1;
   display: flex;
@@ -886,6 +955,7 @@ textarea {
   animation: spin 1s linear infinite;
 }
 
+/* 预览左上角时间码。 */
 .timecode {
   position: absolute;
   top: 12px;
@@ -900,6 +970,7 @@ textarea {
   font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
 }
 
+/* 预览底部媒体元信息。 */
 .preview-meta {
   position: absolute;
   left: 12px;
@@ -927,6 +998,7 @@ textarea {
   line-height: 1.4;
 }
 
+/* 预览右上角缩略图浮层。 */
 .preview-thumbnail-chip {
   position: absolute;
   right: 12px;
@@ -947,6 +1019,7 @@ textarea {
   object-fit: cover;
 }
 
+/* Agent reasoning 文案覆盖层。 */
 .reasoning-overlay {
   position: absolute;
   left: 50%;
@@ -963,6 +1036,7 @@ textarea {
   padding: 7px 10px;
 }
 
+/* 播放进度控制条。 */
 .scrubber {
   height: 48px;
   margin-top: 8px;
@@ -971,6 +1045,7 @@ textarea {
   gap: 12px;
 }
 
+/* 进度条轨道。 */
 .scrubber-track {
   flex: 1;
   height: 5px;
@@ -980,6 +1055,7 @@ textarea {
   cursor: pointer;
 }
 
+/* 已播放进度。 */
 .scrubber-progress {
   width: 33%;
   height: 100%;
@@ -987,6 +1063,7 @@ textarea {
   background: linear-gradient(110deg, var(--accent-indigo), var(--accent-purple), var(--accent-cyan));
 }
 
+/* 当前播放位置拖拽点。 */
 .scrubber-thumb {
   width: 10px;
   height: 10px;
@@ -1000,6 +1077,7 @@ textarea {
   box-shadow: 0 0 10px rgba(255, 255, 255, 0.45);
 }
 
+/* 进度条右侧时间文本。 */
 .scrubber-time {
   width: 80px;
   text-align: right;
@@ -1008,6 +1086,7 @@ textarea {
   font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
 }
 
+/* 底部 storyboard 面板。 */
 .storyboard-panel {
   height: 35%;
   min-height: 200px;
@@ -1018,10 +1097,12 @@ textarea {
   flex-direction: column;
 }
 
+/* storyboard 头部。 */
 .storyboard-head {
   margin-bottom: 10px;
 }
 
+/* storyboard 标题。 */
 .storyboard-title {
   display: inline-flex;
   align-items: center;
@@ -1048,6 +1129,7 @@ textarea {
   font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
 }
 
+/* storyboard 横向滚动轨道。 */
 .storyboard-rail {
   flex: 1;
   min-height: 0;
@@ -1058,6 +1140,7 @@ textarea {
   padding-bottom: 6px;
 }
 
+/* 单个 storyboard 场景卡片。 */
 .story-card {
   min-width: 170px;
   max-width: 210px;
@@ -1072,6 +1155,7 @@ textarea {
   background: rgba(255, 255, 255, 0.02);
 }
 
+/* 场景缩略图容器。 */
 .story-thumb {
   overflow: hidden;
   position: relative;
@@ -1101,6 +1185,7 @@ textarea {
   animation: patchPulse 1.2s ease-in-out;
 }
 
+/* 场景缩略图占位状态。 */
 .story-thumb {
   height: 52px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
@@ -1129,6 +1214,7 @@ textarea {
   font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
 }
 
+/* 场景卡片正文。 */
 .story-body {
   padding: 10px;
   display: flex;
@@ -1158,6 +1244,7 @@ textarea {
   color: #90a0ef;
 }
 
+/* 当前活动场景底部高亮线。 */
 .story-active-line {
   height: 2px;
   width: 100%;
@@ -1165,6 +1252,7 @@ textarea {
   animation: pulse 1.2s ease-in-out infinite;
 }
 
+/* storyboard 末尾占位卡。 */
 .story-end {
   min-width: 110px;
   border: 1px dashed rgba(255, 255, 255, 0.14);
@@ -1180,6 +1268,7 @@ textarea {
   background: rgba(255, 255, 255, 0.02);
 }
 
+/* 场景背景色变体。 */
 .scene-bg-blue {
   background: rgba(83, 105, 229, 0.08);
 }
@@ -1200,6 +1289,7 @@ textarea {
   background: rgba(33, 167, 194, 0.1);
 }
 
+/* 场景边框色变体。 */
 .scene-blue {
   border-color: rgba(85, 132, 255, 0.42);
 }
@@ -1220,6 +1310,7 @@ textarea {
   border-color: rgba(77, 217, 244, 0.45);
 }
 
+/* Launchpad 根容器。 */
 .launchpad-root {
   min-height: 100vh;
   width: 100vw;
@@ -1231,6 +1322,7 @@ textarea {
     #09090b;
 }
 
+/* Launchpad 顶栏：品牌、搜索、账号。 */
 .launchpad-topbar {
   height: 64px;
   display: grid;
@@ -1243,6 +1335,7 @@ textarea {
   backdrop-filter: blur(14px);
 }
 
+/* Launchpad 品牌区。 */
 .launchpad-brand {
   display: inline-flex;
   align-items: center;
@@ -1252,6 +1345,7 @@ textarea {
   letter-spacing: 0.01em;
 }
 
+/* Launchpad 品牌图标。 */
 .launchpad-brand-icon {
   width: 30px;
   height: 30px;
@@ -1263,6 +1357,7 @@ textarea {
   box-shadow: 0 8px 22px rgba(75, 94, 230, 0.36);
 }
 
+/* Launchpad 搜索框。 */
 .launchpad-search {
   width: 100%;
   border: 1px solid rgba(255, 255, 255, 0.14);
@@ -1306,6 +1401,7 @@ textarea {
   font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
 }
 
+/* Launchpad 用户头像入口。 */
 .launchpad-user {
   justify-self: end;
   width: 34px;
@@ -1320,6 +1416,7 @@ textarea {
   font-weight: 600;
 }
 
+/* Launchpad 主体：导入意图区和最近项目区。 */
 .launchpad-main {
   flex: 1;
   display: grid;
@@ -1327,12 +1424,14 @@ textarea {
   min-height: 0;
 }
 
+/* Launchpad 两个主区域的通用布局。 */
 .intent-zone,
 .recent-zone {
   min-height: 0;
   padding: 44px 40px;
 }
 
+/* 左侧导入意图区。 */
 .intent-zone {
   border-right: 1px solid var(--line-subtle);
   display: flex;
@@ -1340,6 +1439,7 @@ textarea {
   justify-content: center;
 }
 
+/* 导入意图区标题。 */
 .intent-heading h1 {
   margin: 0;
   font-size: 32px;
@@ -1360,6 +1460,7 @@ textarea {
   line-height: 1.55;
 }
 
+/* 拖拽导入外框。 */
 .intent-drop-shell {
   margin-top: 32px;
   border-radius: 24px;
@@ -1374,6 +1475,7 @@ textarea {
   box-shadow: 0 16px 42px rgba(57, 79, 210, 0.32);
 }
 
+/* 拖拽导入点击区域。 */
 .intent-drop-surface {
   border-radius: 23px 23px 0 0;
   border-bottom: 1px dashed rgba(255, 255, 255, 0.12);
@@ -1396,6 +1498,7 @@ textarea {
   cursor: not-allowed;
 }
 
+/* 导入图标容器。 */
 .intent-drop-icon {
   width: 80px;
   height: 80px;
@@ -1421,6 +1524,7 @@ textarea {
   color: #7f879f;
 }
 
+/* 创建 workspace 的意图输入行。 */
 .intent-input-row {
   height: 70px;
   border-radius: 0 0 23px 23px;
@@ -1464,6 +1568,7 @@ textarea {
   color: #b8beff;
 }
 
+/* Launchpad 辅助操作按钮组。 */
 .intent-actions {
   margin-top: 18px;
   display: flex;
@@ -1494,6 +1599,7 @@ textarea {
   cursor: not-allowed;
 }
 
+/* Launchpad 错误提示。 */
 .launchpad-error-banner {
   margin: 14px 0 0;
   border: 1px solid rgba(241, 91, 91, 0.4);
@@ -1506,6 +1612,7 @@ textarea {
   cursor: pointer;
 }
 
+/* Workspace 错误提示。 */
 .workspace-error-banner {
   margin: 10px 0 0;
   border: 1px solid rgba(241, 91, 91, 0.4);
@@ -1518,11 +1625,13 @@ textarea {
   cursor: pointer;
 }
 
+/* 最近项目区域。 */
 .recent-zone {
   position: relative;
   overflow: auto;
 }
 
+/* 最近项目标题行。 */
 .recent-head {
   display: flex;
   align-items: center;
@@ -1552,12 +1661,14 @@ textarea {
   cursor: pointer;
 }
 
+/* 最近项目卡片网格。 */
 .recent-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
 
+/* 最近项目卡和归档卡的共享外观。 */
 .recent-card,
 .archive-card {
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1565,6 +1676,7 @@ textarea {
   border-radius: 18px;
 }
 
+/* 单个最近项目卡。 */
 .recent-card {
   overflow: hidden;
   cursor: pointer;
@@ -1577,6 +1689,7 @@ textarea {
   background: rgba(255, 255, 255, 0.04);
 }
 
+/* 最近项目缩略图区域。 */
 .recent-thumb {
   height: 136px;
   padding: 10px;
@@ -1594,6 +1707,7 @@ textarea {
   pointer-events: none;
 }
 
+/* Launchpad 缩略图背景变体。 */
 .launch-thumb-cyan {
   background: linear-gradient(145deg, #085277, #11295f);
 }
@@ -1610,18 +1724,21 @@ textarea {
   background: linear-gradient(145deg, #6e2e4d, #5d2d1e);
 }
 
+/* 缩略图前景内容层级。 */
 .recent-thumb-top,
 .recent-thumb h3 {
   position: relative;
   z-index: 1;
 }
 
+/* 缩略图顶部状态行。 */
 .recent-thumb-top {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
 }
 
+/* 项目存储位置标识。 */
 .storage-pill {
   display: inline-flex;
   align-items: center;
@@ -1635,6 +1752,7 @@ textarea {
   font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
 }
 
+/* 最近项目卡片右上角操作按钮。 */
 .recent-thumb button {
   border: 0;
   width: 28px;
@@ -1662,6 +1780,7 @@ textarea {
   text-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
 }
 
+/* 最近项目元信息区域。 */
 .recent-meta {
   padding: 12px;
   display: flex;
@@ -1670,6 +1789,7 @@ textarea {
   background: rgba(9, 9, 11, 0.72);
 }
 
+/* 最近项目元信息顶部行。 */
 .recent-meta-top {
   display: flex;
   align-items: center;
@@ -1678,6 +1798,7 @@ textarea {
   color: #8991a8;
 }
 
+/* AI 状态标识。 */
 .ai-status {
   display: inline-flex;
   align-items: center;
@@ -1710,6 +1831,7 @@ textarea {
   margin-right: 6px;
 }
 
+/* 归档入口卡。 */
 .archive-card {
   min-height: 230px;
   border-style: dashed;
@@ -1728,12 +1850,14 @@ textarea {
   background: rgba(255, 255, 255, 0.05);
 }
 
+/* 旋转动画：加载图标使用。 */
 @keyframes spin {
   to {
     transform: rotate(360deg);
   }
 }
 
+/* 透明度脉冲动画：当前场景高亮使用。 */
 @keyframes pulse {
   0%,
   100% {
@@ -1744,6 +1868,7 @@ textarea {
   }
 }
 
+/* 呼吸动画：在线/检查中状态圆点使用。 */
 @keyframes breathe {
   0%,
   100% {
@@ -1756,6 +1881,7 @@ textarea {
   }
 }
 
+/* patch 应用后的场景卡片扩散光效。 */
 @keyframes patchPulse {
   0% {
     box-shadow: 0 0 0 0 rgba(114, 124, 255, 0.72);
@@ -1768,6 +1894,7 @@ textarea {
   }
 }
 
+/* 中等屏幕：Launchpad 单列化，Workspace 三列改纵向堆叠。 */
 @media (max-width: 1200px) {
   .launchpad-main {
     grid-template-columns: 1fr;
@@ -1811,6 +1938,7 @@ textarea {
   }
 }
 
+/* 小屏幕：隐藏 Launchpad 搜索并压缩页面边距。 */
 @media (max-width: 900px) {
   .launchpad-topbar {
     grid-template-columns: 1fr auto;
@@ -1832,7 +1960,7 @@ textarea {
   }
 }
 
-/* Empty Media Guidance */
+/* Empty Media Guidance：未导入媒体时的引导空状态。 */
 .empty-media-guidance {
   display: flex;
   flex-direction: column;
@@ -1891,7 +2019,7 @@ textarea {
   color: var(--text-faint);
 }
 
-/* Chat Limitation Notice */
+/* Chat Limitation Notice：聊天能力受限时的提示。 */
 .chat-limitation-notice {
   display: inline-flex;
   align-items: center;
@@ -1913,7 +2041,7 @@ textarea {
  * 使用设计令牌的覆盖样式
  * ============================================ */
 
-/* Workspace 特定覆盖样式 */
+/* Workspace 特定覆盖样式：当前三列默认宽度。 */
 .media-column {
   width: 320px !important;
 }

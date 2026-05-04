@@ -235,10 +235,29 @@ npm run electron:build:win
 
 ## Electron 调试口径
 
-Electron 调试要区分两个进程：
+`Electron` 调试需要区分两个进程：
 
-- `Main Process`：`client/main/**/*.ts`
-- `Renderer Process`：`client/src/**/*.ts(x)`
+1. `Main Process（主进程）`
+   - 对应 `client/main/main.ts` 和 `client/main/preload.ts`
+   - 使用 VS Code 配置：`Debug Client (Electron)`
+
+2. `Renderer Process（渲染进程）`
+   - 对应 `client/src/**/*.ts(x)`，例如 `src/services/authClient.ts`、`src/store/useAuthStore.ts`、`src/App.tsx`
+   - 使用 VS Code 配置：`Attach Client Renderer (Electron/Vite)`
+
+正确操作顺序：
+
+1. 先彻底停止旧的 `npm run electron:dev`、旧 `Electron` 窗口和旧 VS Code debug session
+2. 在 VS Code `Run and Debug` 中启动 `Debug Client (Electron)`
+3. 等 `Electron` 窗口出现，并确认 `Vite` 页面已经加载
+4. 再启动 `Attach Client Renderer (Electron/Vite)`
+5. 此时再在 `client/src/**/*.ts(x)` 中打断点
+
+也可以直接使用 VS Code compound（组合调试）：
+
+```text
+Debug Electron Client (Main + Renderer)
+```
 
 典型断点位置：
 

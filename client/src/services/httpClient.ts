@@ -1,3 +1,4 @@
+// 后端统一错误响应结构。
 export interface ErrorEnvelope {
   error: {
     code: string;
@@ -6,6 +7,7 @@ export interface ErrorEnvelope {
   };
 }
 
+// 前端内部统一使用的 HTTP 错误对象。
 export interface AppHttpError {
   code: string;
   message: string;
@@ -15,13 +17,19 @@ export interface AppHttpError {
   details?: Record<string, unknown>;
 }
 
+// 默认请求超时时间。
 const DEFAULT_TIMEOUT_MS = 10000;
+// 旧版 access token 的 localStorage key。
 const AUTH_STORAGE_KEY = "ENTROCUT_AUTH_TOKEN";
+// 桌面端安全存储中的 access token key。
 const SECURE_AUTH_STORAGE_KEY = "entrocut.auth.access_token";
 
+// 内存中的 access token 缓存。
 let cachedAuthToken: string | null = null;
+// 防止重复初始化 token 存储。
 let authStorageInitialized = false;
 
+// 生成请求追踪 id，用于前后端日志串联。
 function randomRequestId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return `req_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
@@ -30,10 +38,12 @@ function randomRequestId(): string {
   return `req_${suffix}`;
 }
 
+// 保持错误对象类型稳定，后续可集中扩展错误规范化。
 function toHttpError(error: AppHttpError): AppHttpError {
   return error;
 }
 
+// 读取当前 access token，优先级：环境变量 > 内存缓存 > localStorage。
 export function getAuthToken(): string | null {
   const env = import.meta.env as Record<string, string | undefined>;
   const envToken = env.VITE_AUTH_TOKEN?.trim();
@@ -50,6 +60,7 @@ export function getAuthToken(): string | null {
   return saved?.trim() || null;
 }
 
+// 更新内存 access token；浏览器持久化交给 persistAuthToken。
 export function setAuthToken(token: string): void {
   const normalized = token.trim();
   cachedAuthToken = normalized || null;
@@ -62,6 +73,7 @@ export function setAuthToken(token: string): void {
   }
 }
 
+// 初始化 access token 存储，并把旧 localStorage token 迁移到 Electron secure store。
 export async function initializeAuthTokenStorage(): Promise<void> {
   if (authStorageInitialized) {
     return;
@@ -102,6 +114,7 @@ export async function initializeAuthTokenStorage(): Promise<void> {
   cachedAuthToken = legacyToken;
 }
 
+// 持久化 access token：桌面端写 secure store，Web fallback 写 localStorage。
 export async function persistAuthToken(token: string): Promise<void> {
   const normalized = token.trim();
   cachedAuthToken = normalized || null;
@@ -125,6 +138,7 @@ export async function persistAuthToken(token: string): Promise<void> {
   window.localStorage.setItem(AUTH_STORAGE_KEY, normalized);
 }
 
+// 把非 2xx HTTP 响应解析成 AppHttpError。
 async function parseError(response: Response): Promise<AppHttpError> {
   const requestId = response.headers.get("x-request-id") ?? undefined;
   try {
@@ -141,7 +155,7 @@ async function parseError(response: Response): Promise<AppHttpError> {
       });
     }
   } catch {
-    // ignore parse error
+    // 响应体不是标准错误 JSON 时，使用通用 HTTP 错误。
   }
   return toHttpError({
     code: "HTTP_ERROR",
@@ -151,12 +165,14 @@ async function parseError(response: Response): Promise<AppHttpError> {
   });
 }
 
+// requestJson 的扩展参数：支持 JSON body、超时和是否强制认证。
 type RequestJsonInit = Omit<RequestInit, "body"> & {
   body?: unknown;
   timeoutMs?: number;
   authRequired?: boolean;
 };
 
+// 统一 JSON 请求入口：自动加 token、request id、超时和错误规范化。
 export async function requestJson<T>(url: string, init?: RequestJsonInit): Promise<T> {
   const controller = new AbortController();
   const timeoutMs = init?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
