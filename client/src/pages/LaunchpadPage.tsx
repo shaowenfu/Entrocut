@@ -18,6 +18,7 @@ import { useLaunchpadStore } from "../store/useLaunchpadStore";
 import {
   isElectronEnvironment,
   toDesktopMediaFileReferences,
+  type MediaPickMode,
 } from "../services/electronBridge";
 import "../styles/launchpad.css";
 
@@ -31,6 +32,7 @@ function LaunchpadPage() {
   const [prompt, setPrompt] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [isDropHovering, setIsDropHovering] = useState(false);
+  const [isMediaPickerOpen, setIsMediaPickerOpen] = useState(false);
   const [hintIndex, setHintIndex] = useState(0);
   const recentProjects = useLaunchpadStore((state) => state.recentProjects);
   const projectsLoadState = useLaunchpadStore((state) => state.projectsLoadState);
@@ -112,16 +114,30 @@ function LaunchpadPage() {
       files: desktopFiles,
       prompt: prompt.trim() || undefined,
     });
+    setIsMediaPickerOpen(false);
     if (prompt.trim()) {
       setPrompt("");
     }
   }
 
-  async function handleBrowseMedia() {
-    await pickMediaAndStartWorkspace(prompt.trim() || undefined, isElectron ? "electron-media" : undefined);
-    if (prompt.trim()) {
+  async function handleBrowseMedia(mode?: MediaPickMode) {
+    const pickMode = mode ?? (isElectron ? "electron-files" : "browser-files");
+    const projectId = await pickMediaAndStartWorkspace(prompt.trim() || undefined, pickMode);
+    setIsMediaPickerOpen(false);
+    if (projectId && prompt.trim()) {
       setPrompt("");
     }
+  }
+
+  function handleBrowseSurfaceClick() {
+    if (isBusy) {
+      return;
+    }
+    if (isElectron) {
+      setIsMediaPickerOpen((current) => !current);
+      return;
+    }
+    void handleBrowseMedia("browser-files");
   }
 
   return (
@@ -156,12 +172,7 @@ function LaunchpadPage() {
           <div className={`intent-drop-shell ${isDropHovering ? "is-hovering" : ""}`}>
             <div
               className={`intent-drop-surface ${isBusy ? "is-disabled" : ""}`}
-              onClick={() => {
-                if (isBusy) {
-                  return;
-                }
-                void handleBrowseMedia();
-              }}
+              onClick={handleBrowseSurfaceClick}
               onDragOver={(event) => {
                 event.preventDefault();
                 setIsDropHovering(true);
@@ -175,6 +186,29 @@ function LaunchpadPage() {
               <h3>{dropZoneText.title}</h3>
               <p>{dropZoneText.subtitle}</p>
             </div>
+
+            {isElectron && isMediaPickerOpen ? (
+              <div className="intent-media-menu" role="menu" aria-label="media source">
+                <button
+                  type="button"
+                  onClick={() => void handleBrowseMedia("electron-files")}
+                  disabled={isBusy}
+                  role="menuitem"
+                >
+                  <FileVideo size={15} />
+                  <span>Select Videos</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleBrowseMedia("electron-folder")}
+                  disabled={isBusy}
+                  role="menuitem"
+                >
+                  <FolderUp size={15} />
+                  <span>Select Folder</span>
+                </button>
+              </div>
+            ) : null}
 
             <div className="intent-input-row">
               <Sparkles size={14} />
@@ -209,7 +243,18 @@ function LaunchpadPage() {
               <FileVideo size={14} />
               <span>Empty Sequence</span>
             </button>
-            <button type="button" onClick={() => void handleBrowseMedia()} disabled={isCreating || isImporting}>
+            <button
+              type="button"
+              onClick={() => {
+                if (isElectron) {
+                  setIsMediaPickerOpen((current) => !current);
+                  return;
+                }
+                void handleBrowseMedia("browser-files");
+              }}
+              disabled={isCreating || isImporting}
+              aria-expanded={isMediaPickerOpen}
+            >
               <Cloud size={14} />
               <span>{isElectron ? "Browse Media" : "Upload Videos"}</span>
             </button>

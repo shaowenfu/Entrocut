@@ -356,6 +356,10 @@ textarea {
 }
 
 /* 资产导入入口。 */
+.asset-upload-picker {
+  margin-bottom: 10px;
+}
+
 .asset-upload-entry {
   border: 1px dashed rgba(132, 142, 198, 0.5);
   border-radius: 10px;
@@ -372,6 +376,10 @@ textarea {
   transition: border-color 0.2s ease, background 0.2s ease;
 }
 
+.asset-upload-picker .asset-upload-entry {
+  margin-bottom: 0;
+}
+
 .asset-upload-entry:hover {
   border-color: rgba(132, 142, 198, 0.75);
   background: rgba(108, 116, 255, 0.14);
@@ -385,6 +393,37 @@ textarea {
 .asset-upload-entry.is-disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+.asset-upload-menu {
+  margin-top: 6px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.asset-upload-menu button {
+  height: 32px;
+  border: 1px solid var(--line-subtle);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #c7cce0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.asset-upload-menu button:hover:not(:disabled) {
+  border-color: rgba(132, 142, 198, 0.55);
+  background: rgba(108, 116, 255, 0.12);
+}
+
+.asset-upload-menu button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 /* 媒体资产卡片网格。 */
@@ -1989,6 +2028,13 @@ textarea {
   font-size: 12px;
   max-width: 280px;
   line-height: 1.5;
+}
+
+.empty-media-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
 }
 
 .empty-media-guidance button {

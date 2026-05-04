@@ -350,7 +350,7 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => {
 
       if (needsMediaPick) {
         dispatch({ type: "MEDIA_PICK_STARTED" });
-        const mode = input?.pickMode ?? (isElectronEnvironment() ? "electron-media" : "browser-files");
+        const mode = input?.pickMode ?? (isElectronEnvironment() ? "electron-files" : "browser-files");
         media = await pickMediaByMode(mode);
         if (!media) {
           dispatch({ type: "MEDIA_PICK_CANCELLED" });

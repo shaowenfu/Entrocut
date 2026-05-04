@@ -149,12 +149,12 @@ async function collectMediaFromPaths(filePaths: string[]): Promise<DesktopMediaF
   return files;
 }
 
-// 注册媒体选择 IPC；Renderer 只通过 dialog:open-media 获取本地视频引用。
+// 注册媒体选择 IPC；文件和目录分开选择，避免平台文件弹窗退化成只能选目录。
 export function registerFileScannerIpcHandlers(): void {
-  ipcMain.handle("dialog:open-media", async (): Promise<OpenDirectoryScanResult> => {
+  const openMediaFiles = async (): Promise<OpenDirectoryScanResult> => {
     const result = await dialog.showOpenDialog({
-      title: "Select Video Files or Media Folders",
-      properties: ["openFile", "openDirectory", "multiSelections"],
+      title: "Select Video Files",
+      properties: ["openFile", "multiSelections"],
       filters: [
         {
           name: "Video Files",
@@ -170,5 +170,28 @@ export function registerFileScannerIpcHandlers(): void {
       folderPath: null,
       files: await collectMediaFromPaths(result.filePaths),
     };
+  };
+
+  const openMediaFolder = async (): Promise<OpenDirectoryScanResult> => {
+    const result = await dialog.showOpenDialog({
+      title: "Select Media Folder",
+      properties: ["openDirectory"],
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return { canceled: true, folderPath: null, files: [] };
+    }
+    const folderPath = result.filePaths[0] ?? null;
+    return {
+      canceled: false,
+      folderPath,
+      files: await collectMediaFromPaths(result.filePaths),
+    };
+  };
+
+  ipcMain.handle("dialog:open-media-files", openMediaFiles);
+  ipcMain.handle("dialog:open-media-folder", openMediaFolder);
+  ipcMain.handle("dialog:open-media", async (): Promise<OpenDirectoryScanResult> => {
+    const fileResult = await openMediaFiles();
+    return fileResult;
   });
 }

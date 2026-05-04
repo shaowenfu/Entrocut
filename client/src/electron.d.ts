@@ -63,6 +63,10 @@ declare global {
       version?: string;
       // 打开媒体选择框，返回视频文件或目录扫描结果。
       showOpenMedia?: () => Promise<OpenDirectoryResult | null>;
+      // 打开视频文件选择框，支持单个或多个视频。
+      showOpenMediaFiles?: () => Promise<OpenDirectoryResult | null>;
+      // 打开媒体文件夹选择框，并递归扫描其中的视频。
+      showOpenMediaFolder?: () => Promise<OpenDirectoryResult | null>;
       // 从 File 对象读取 Electron 注入的真实本地路径。
       getPathForFile?: (file: File) => string | null;
       // 把本地文件注册为 Renderer 可访问的协议 URL。

@@ -53,6 +53,24 @@ const electronBridge = {
     return result;
   },
 
+  // 打开视频文件选择框。
+  async showOpenMediaFiles(): Promise<OpenDirectoryScanResult | null> {
+    const result = (await ipcRenderer.invoke("dialog:open-media-files")) as OpenDirectoryScanResult | null;
+    if (!result || result.canceled) {
+      return null;
+    }
+    return result;
+  },
+
+  // 打开媒体文件夹选择框，并递归扫描其中的视频。
+  async showOpenMediaFolder(): Promise<OpenDirectoryScanResult | null> {
+    const result = (await ipcRenderer.invoke("dialog:open-media-folder")) as OpenDirectoryScanResult | null;
+    if (!result || result.canceled) {
+      return null;
+    }
+    return result;
+  },
+
   // 从浏览器 File 对象取出真实本地路径；普通网页环境不可用。
   getPathForFile(file: File): string | null {
     const filePath = webUtils.getPathForFile(file);

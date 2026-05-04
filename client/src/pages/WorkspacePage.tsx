@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Download,
   Film,
+  FolderUp,
   GripVertical,
   Layers,
   ListVideo,
@@ -21,7 +22,11 @@ import {
 } from "lucide-react";
 import AccountMenu from "../components/account/AccountMenu";
 import { BrandIcon } from "../components/icons/BrandIcon";
-import { toDesktopMediaFileReferences } from "../services/electronBridge";
+import {
+  isElectronEnvironment,
+  toDesktopMediaFileReferences,
+  type MediaPickMode,
+} from "../services/electronBridge";
 import { createThumbnailFromMediaUrl, getProjectMediaSource } from "../services/localMediaRegistry";
 import { getOrCreateSessionId } from "../utils/session";
 import {
@@ -58,19 +63,27 @@ function isDecisionTurn(turn: ChatTurn): turn is AssistantDecisionTurn {
 }
 
 interface EmptyMediaGuidanceProps {
-  onUploadClick: () => void;
+  onUploadClick: (mode?: MediaPickMode) => void;
   isDisabled: boolean;
+  isElectron: boolean;
 }
 
-function EmptyMediaGuidance({ onUploadClick, isDisabled }: EmptyMediaGuidanceProps) {
+function EmptyMediaGuidance({ onUploadClick, isDisabled, isElectron }: EmptyMediaGuidanceProps) {
   return (
     <div className="empty-media-guidance">
       <Upload size={32} />
       <h3>Start with a plan or upload media</h3>
       <p>You can discuss the edit goal first, then upload videos when you are ready to cut.</p>
-      <button onClick={onUploadClick} disabled={isDisabled}>
-        Upload Videos
-      </button>
+      <div className="empty-media-actions">
+        <button onClick={() => onUploadClick(isElectron ? "electron-files" : "browser-files")} disabled={isDisabled}>
+          Upload Videos
+        </button>
+        {isElectron ? (
+          <button onClick={() => onUploadClick("electron-folder")} disabled={isDisabled}>
+            Select Folder
+          </button>
+        ) : null}
+      </div>
       <small>Or drag and drop files directly into this panel</small>
     </div>
   );
@@ -139,6 +152,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const [previewSelection, setPreviewSelection] = useState<PreviewSelection>(null);
   const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string>>({});
   const [isAssetDropHovering, setIsAssetDropHovering] = useState(false);
+  const [isAssetPickerOpen, setIsAssetPickerOpen] = useState(false);
 
   const assets = useWorkspaceStore((state) => state.assets);
   const clips = useWorkspaceStore((state) => state.clips);
@@ -179,6 +193,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   );
   const safeTotalDurationSec = Math.max(1, totalDurationSec);
   const sessionLabel = `Session #${sessionId.slice(-8).toUpperCase()}`;
+  const isElectron = useMemo(() => isElectronEnvironment(), []);
   const mediaTask = activeTasks.find((task) => task.slot === "media") ?? null;
   const exportTask = activeTasks.find((task) => task.slot === "export") ?? null;
   const agentTask = activeTasks.find((task) => task.slot === "agent") ?? null;
@@ -598,8 +613,21 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     setIsPlaying(true);
   }
 
-  async function handleAssetBrowse() {
-    await uploadAssets({ shouldPickMedia: true });
+  async function handleAssetBrowse(mode?: MediaPickMode) {
+    const pickMode = mode ?? (isElectron ? "electron-files" : "browser-files");
+    setIsAssetPickerOpen(false);
+    await uploadAssets({ shouldPickMedia: true, pickMode });
+  }
+
+  function handleAssetUploadEntryClick() {
+    if (!canUploadAssets) {
+      return;
+    }
+    if (isElectron) {
+      setIsAssetPickerOpen((current) => !current);
+      return;
+    }
+    void handleAssetBrowse("browser-files");
   }
 
   async function handleAssetDrop(event: DragEvent<HTMLDivElement>) {
@@ -610,6 +638,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     if (desktopFiles.length === 0) {
       return;
     }
+    setIsAssetPickerOpen(false);
     await uploadAssets({
       files: desktopFiles,
     });
@@ -733,30 +762,53 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
           <div className="media-body">
             {mediaTab === "assets" ? (
               <>
-                <div
-                  className={`asset-upload-entry ${isAssetDropHovering ? "is-hovering" : ""} ${
-                    !canUploadAssets ? "is-disabled" : ""
-                  }`}
-                  onClick={() => {
-                    if (canUploadAssets) {
-                      void handleAssetBrowse();
-                    }
-                  }}
-                  onDragOver={(event) => {
-                    event.preventDefault();
-                    setIsAssetDropHovering(true);
-                  }}
-                  onDragLeave={() => setIsAssetDropHovering(false)}
-                  onDrop={handleAssetDrop}
-                >
-                  <Upload size={14} />
-                  <span>Upload videos or drop folder here</span>
+                <div className="asset-upload-picker">
+                  <div
+                    className={`asset-upload-entry ${isAssetDropHovering ? "is-hovering" : ""} ${
+                      !canUploadAssets ? "is-disabled" : ""
+                    }`}
+                    onClick={handleAssetUploadEntryClick}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      setIsAssetDropHovering(true);
+                    }}
+                    onDragLeave={() => setIsAssetDropHovering(false)}
+                    onDrop={handleAssetDrop}
+                    aria-expanded={isAssetPickerOpen}
+                  >
+                    <Upload size={14} />
+                    <span>{isElectron ? "Upload videos or select folder" : "Upload videos"}</span>
+                  </div>
+
+                  {isElectron && isAssetPickerOpen ? (
+                    <div className="asset-upload-menu" role="menu" aria-label="asset upload source">
+                      <button
+                        type="button"
+                        onClick={() => void handleAssetBrowse("electron-files")}
+                        disabled={!canUploadAssets}
+                        role="menuitem"
+                      >
+                        <Film size={14} />
+                        <span>Select Videos</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleAssetBrowse("electron-folder")}
+                        disabled={!canUploadAssets}
+                        role="menuitem"
+                      >
+                        <FolderUp size={14} />
+                        <span>Select Folder</span>
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
 
                 {assets.length === 0 ? (
                   <EmptyMediaGuidance
                     onUploadClick={handleAssetBrowse}
                     isDisabled={!canUploadAssets}
+                    isElectron={isElectron}
                   />
                 ) : (
                   <div className="asset-grid">

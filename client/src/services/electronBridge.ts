@@ -43,8 +43,8 @@ export interface CoreRuntimeState {
   lastError: string | null;
 }
 
-// 媒体选择模式：强制 Electron、强制浏览器文件、或自动。
-export type MediaPickMode = "electron-media" | "browser-files" | "auto";
+// 媒体选择模式：桌面端文件/文件夹、浏览器文件、或自动。
+export type MediaPickMode = "electron-media" | "electron-files" | "electron-folder" | "browser-files" | "auto";
 
 // 判断文件列表是否非空。
 function hasValidFiles(files?: Array<File | DesktopMediaFileReference>): files is Array<File | DesktopMediaFileReference> {
@@ -60,6 +60,8 @@ function isDesktopMediaFileReference(file: File | DesktopMediaFileReference): fi
 export function isElectronEnvironment(): boolean {
   const bridge = typeof window !== "undefined" ? window.electron : undefined;
   return Boolean(
+    bridge?.showOpenMediaFiles ||
+    bridge?.showOpenMediaFolder ||
     bridge?.showOpenMedia ||
     bridge?.getPathForFile ||
     bridge?.version
@@ -104,17 +106,37 @@ export function normalizeMediaInput(input?: MediaPickInput): MediaPickResult | n
   return null;
 }
 
-// 调用 Electron 原生媒体选择框。
-export async function pickMediaFromElectron(): Promise<MediaPickResult | null> {
+// 调用 Electron 原生视频文件选择框。
+export async function pickVideoFilesFromElectron(): Promise<MediaPickResult | null> {
   const bridge = window.electron;
-  if (!bridge?.showOpenMedia) {
+  const picker = bridge?.showOpenMediaFiles ?? bridge?.showOpenMedia;
+  if (!picker) {
     return null;
   }
-  const picked = await bridge.showOpenMedia();
+  const picked = await picker();
   if (!picked || picked.files.length === 0) {
     return null;
   }
-  return { files: picked.files };
+  return { folderPath: picked.folderPath ?? undefined, files: picked.files };
+}
+
+// 调用 Electron 原生媒体文件夹选择框。
+export async function pickVideoFolderFromElectron(): Promise<MediaPickResult | null> {
+  const bridge = window.electron;
+  const picker = bridge?.showOpenMediaFolder ?? bridge?.showOpenMedia;
+  if (!picker) {
+    return null;
+  }
+  const picked = await picker();
+  if (!picked || picked.files.length === 0) {
+    return null;
+  }
+  return { folderPath: picked.folderPath ?? undefined, files: picked.files };
+}
+
+// 兼容旧调用：默认选择视频文件，不再退化成只选目录。
+export async function pickMediaFromElectron(): Promise<MediaPickResult | null> {
+  return pickVideoFilesFromElectron();
 }
 
 // 浏览器 fallback：用隐藏 input 选择视频文件。
@@ -217,7 +239,7 @@ export function toDesktopMediaFileReferences(files: File[]): DesktopMediaFileRef
 // 按当前运行环境选择媒体：Electron 优先，浏览器 fallback。
 export async function pickMediaFromSystem(): Promise<MediaPickResult | null> {
   if (isElectronEnvironment()) {
-    return pickMediaFromElectron();
+    return pickVideoFilesFromElectron();
   }
   const files = await pickVideoFilesFromBrowser();
   if (!files || files.length === 0) {
@@ -228,8 +250,11 @@ export async function pickMediaFromSystem(): Promise<MediaPickResult | null> {
 
 // 按指定模式选择媒体。
 export async function pickMediaByMode(mode: MediaPickMode): Promise<MediaPickResult | null> {
-  if (mode === "electron-media") {
-    return pickMediaFromElectron();
+  if (mode === "electron-media" || mode === "electron-files") {
+    return pickVideoFilesFromElectron();
+  }
+  if (mode === "electron-folder") {
+    return pickVideoFolderFromElectron();
   }
   if (mode === "browser-files") {
     const files = await pickVideoFilesFromBrowser();

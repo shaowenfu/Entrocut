@@ -5,6 +5,7 @@ import {
   pickMediaByMode,
   pickMediaFromSystem,
   type MediaPickInput,
+  type MediaPickMode,
 } from "../services/electronBridge";
 import {
   createProjectEventsSocket,
@@ -123,6 +124,7 @@ interface BootstrapInput {
 
 interface UploadAssetsInput extends MediaPickInput {
   shouldPickMedia?: boolean;
+  pickMode?: MediaPickMode;
 }
 
 interface ExportResult extends CoreExportResult {}
@@ -1241,9 +1243,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
       let media = normalizeMediaInput(input);
       if (!media && input?.shouldPickMedia) {
-        media = isElectronEnvironment()
-          ? await pickMediaByMode("electron-media")
-          : await pickMediaFromSystem();
+        const mode = input.pickMode ?? (isElectronEnvironment() ? "electron-files" : "browser-files");
+        media = input.pickMode ? await pickMediaByMode(mode) : await pickMediaFromSystem();
       }
       if (!media) {
         dispatch({ type: "ASSET_UPLOAD_CANCELLED" });
