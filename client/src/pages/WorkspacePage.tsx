@@ -7,6 +7,7 @@ import {
   Film,
   FolderUp,
   GripVertical,
+  KeyRound,
   Layers,
   ListVideo,
   Loader2,
@@ -16,6 +17,7 @@ import {
   RefreshCw,
   Scissors,
   Send,
+  Settings2,
   Sparkles,
   Tag,
   Trash2,
@@ -703,12 +705,21 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
           <label className="health-pill" style={{ gap: 6 }} title={modelCatalogWarning ?? undefined}>
             <span>Model</span>
             <select
-              value={modelPrefs.selectedModel}
+              value={modelPrefs.routingMode === "BYOK" ? "byok:custom" : modelPrefs.selectedModel}
               onChange={(event) => {
                 const model = event.target.value;
+                if (model === "byok:custom") {
+                  const byokModel = modelPrefs.byokModel.trim() || "custom";
+                  setModelPrefs({
+                    routingMode: "BYOK",
+                    selectedModel: `byok:${byokModel}`,
+                    byokModel,
+                  });
+                  return;
+                }
                 setModelPrefs({
                   selectedModel: model,
-                  routingMode: model.startsWith("byok:") ? "BYOK" : "Platform",
+                  routingMode: "Platform",
                 });
               }}
             >
@@ -725,26 +736,75 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                 ))}
               </optgroup>
               <optgroup label="BYOK">
-                <option value="byok:gpt-4o-mini">BYOK gpt-4o-mini</option>
-                <option value="byok:gpt-4o">BYOK gpt-4o</option>
+                <option value="byok:custom">BYOK Custom</option>
               </optgroup>
             </select>
           </label>
           {modelPrefs.routingMode === "BYOK" ? (
-            <input
-              style={{
-                maxWidth: 220,
-                padding: "6px 10px",
-                borderRadius: 10,
-                border: "1px solid rgba(255, 255, 255, 0.08)",
-                background: "rgba(255, 255, 255, 0.04)",
-                color: "inherit",
-              }}
-              type="password"
-              placeholder="BYOK API Key"
-              value={modelPrefs.byokKey}
-              onChange={(event) => setModelPrefs({ byokKey: event.target.value })}
-            />
+            <details className="byok-config">
+              <summary>
+                <Settings2 size={13} />
+                <span>BYOK</span>
+              </summary>
+              <div className="byok-config-panel">
+                <label>
+                  <span>Model</span>
+                  <input
+                    type="text"
+                    value={modelPrefs.byokModel}
+                    onChange={(event) => {
+                      const byokModel = event.target.value;
+                      setModelPrefs({
+                        byokModel,
+                        selectedModel: `byok:${byokModel.trim() || "custom"}`,
+                        routingMode: "BYOK",
+                      });
+                    }}
+                    placeholder="gpt-4o-mini"
+                  />
+                </label>
+                <label>
+                  <span>Base URL</span>
+                  <input
+                    type="url"
+                    value={modelPrefs.byokBaseUrl}
+                    onChange={(event) => setModelPrefs({ byokBaseUrl: event.target.value })}
+                    placeholder="https://api.openai.com"
+                  />
+                </label>
+                <label>
+                  <span>Chat Path</span>
+                  <input
+                    type="text"
+                    value={modelPrefs.byokChatPath}
+                    onChange={(event) => setModelPrefs({ byokChatPath: event.target.value })}
+                    placeholder="/v1/chat/completions"
+                  />
+                </label>
+                <label>
+                  <span>API Key</span>
+                  <div className="byok-key-row">
+                    <KeyRound size={13} />
+                    <input
+                      type="password"
+                      value={modelPrefs.byokKey}
+                      onChange={(event) => setModelPrefs({ byokKey: event.target.value })}
+                      placeholder="sk-..."
+                    />
+                  </div>
+                </label>
+                <label>
+                  <span>Headers JSON</span>
+                  <textarea
+                    value={modelPrefs.byokHeadersJson}
+                    onChange={(event) => setModelPrefs({ byokHeadersJson: event.target.value })}
+                    spellCheck={false}
+                    rows={3}
+                    placeholder='{"HTTP-Referer":"https://entrocut.local"}'
+                  />
+                </label>
+              </div>
+            </details>
           ) : null}
           <button
             className="export-btn"

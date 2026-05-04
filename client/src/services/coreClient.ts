@@ -369,6 +369,8 @@ export interface ChatRoutingOptions {
   mode: "Platform" | "BYOK";
   byokKey?: string;
   byokBaseUrl?: string;
+  byokChatPath?: string;
+  byokHeadersJson?: string;
 }
 
 // 导出请求参数。
@@ -538,6 +540,12 @@ export async function sendChat(
   }
   if (routing.mode === "BYOK" && routing.byokBaseUrl) {
     headers["X-BYOK-BaseURL"] = routing.byokBaseUrl;
+  }
+  if (routing.mode === "BYOK" && routing.byokChatPath) {
+    headers["X-BYOK-Chat-Path"] = routing.byokChatPath;
+  }
+  if (routing.mode === "BYOK" && routing.byokHeadersJson) {
+    headers["X-BYOK-Headers"] = routing.byokHeadersJson;
   }
   return requestJson<TaskResponse>(buildCoreUrl(`/api/v1/projects/${projectId}/chat`), {
     method: "POST",

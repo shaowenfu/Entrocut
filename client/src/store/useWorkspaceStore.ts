@@ -1393,11 +1393,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       try {
         const selection = get().selectionContext;
         const { modelPrefs } = useAuthStore.getState();
+        const selectedModel =
+          modelPrefs.routingMode === "BYOK"
+            ? modelPrefs.byokModel.trim() || "gpt-4o-mini"
+            : modelPrefs.selectedModel.replace(/^byok:/, "");
         const response = await sendChatRequest(
           workspaceId,
           {
             prompt: trimmedPrompt,
-            model: modelPrefs.selectedModel.replace(/^byok:/, ""),
+            model: selectedModel,
             target:
               selection.scope === "global"
                 ? undefined
@@ -1410,6 +1414,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
             mode: modelPrefs.routingMode,
             byokKey: modelPrefs.byokKey,
             byokBaseUrl: modelPrefs.byokBaseUrl,
+            byokChatPath: modelPrefs.byokChatPath,
+            byokHeadersJson: modelPrefs.byokHeadersJson,
           }
         );
         dispatch({

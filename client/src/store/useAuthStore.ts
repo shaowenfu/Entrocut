@@ -17,7 +17,7 @@ import {
   type RuntimeModelItem,
   waitForLoginSession,
 } from "../services/authClient";
-import { openExternalUrl } from "../services/electronBridge";
+import { deleteSecureCredential, getSecureCredential, openExternalUrl, setSecureCredential } from "../services/electronBridge";
 import { getAuthToken, initializeAuthTokenStorage, persistAuthToken } from "../services/httpClient";
 
 type AuthStatus = "idle" | "authenticating" | "authenticated" | "anonymous" | "error";
@@ -29,7 +29,10 @@ interface ModelPreferences {
   selectedModel: string;
   routingMode: RoutingMode;
   byokKey: string;
+  byokModel: string;
   byokBaseUrl: string;
+  byokChatPath: string;
+  byokHeadersJson: string;
 }
 
 interface AuthStoreState {
@@ -53,26 +56,47 @@ interface AuthStoreState {
 }
 
 const MODEL_PREFS_KEY = "ENTROCUT_MODEL_PREFS";
+const BYOK_KEY_CREDENTIAL_ID = "entrocut.byok.api_key";
 const DEFAULT_PLATFORM_MODEL = "entro-reasoning-v1";
+const DEFAULT_BYOK_MODEL = "gpt-4o-mini";
+const DEFAULT_BYOK_BASE_URL = "https://api.openai.com";
+const DEFAULT_BYOK_CHAT_PATH = "/v1/chat/completions";
+const DEFAULT_BYOK_HEADERS_JSON = "{}";
+
+function defaultModelPrefs(): ModelPreferences {
+  return {
+    selectedModel: DEFAULT_PLATFORM_MODEL,
+    routingMode: "Platform",
+    byokKey: "",
+    byokModel: DEFAULT_BYOK_MODEL,
+    byokBaseUrl: DEFAULT_BYOK_BASE_URL,
+    byokChatPath: DEFAULT_BYOK_CHAT_PATH,
+    byokHeadersJson: DEFAULT_BYOK_HEADERS_JSON,
+  };
+}
 
 function loadModelPrefs(): ModelPreferences {
   if (typeof window === "undefined") {
-    return { selectedModel: DEFAULT_PLATFORM_MODEL, routingMode: "Platform", byokKey: "", byokBaseUrl: "https://api.openai.com" };
+    return defaultModelPrefs();
   }
   try {
     const raw = window.localStorage.getItem(MODEL_PREFS_KEY);
     if (!raw) {
-      return { selectedModel: DEFAULT_PLATFORM_MODEL, routingMode: "Platform", byokKey: "", byokBaseUrl: "https://api.openai.com" };
+      return defaultModelPrefs();
     }
     const parsed = JSON.parse(raw) as Partial<ModelPreferences>;
+    const defaults = defaultModelPrefs();
     return {
-      selectedModel: parsed.selectedModel?.trim() || DEFAULT_PLATFORM_MODEL,
+      selectedModel: parsed.selectedModel?.trim() || defaults.selectedModel,
       routingMode: parsed.routingMode === "BYOK" ? "BYOK" : "Platform",
-      byokKey: parsed.byokKey?.trim() || "",
-      byokBaseUrl: parsed.byokBaseUrl?.trim() || "https://api.openai.com",
+      byokKey: "",
+      byokModel: parsed.byokModel?.trim() || defaults.byokModel,
+      byokBaseUrl: parsed.byokBaseUrl?.trim() || defaults.byokBaseUrl,
+      byokChatPath: parsed.byokChatPath?.trim() || defaults.byokChatPath,
+      byokHeadersJson: parsed.byokHeadersJson?.trim() || defaults.byokHeadersJson,
     };
   } catch {
-    return { selectedModel: DEFAULT_PLATFORM_MODEL, routingMode: "Platform", byokKey: "", byokBaseUrl: "https://api.openai.com" };
+    return defaultModelPrefs();
   }
 }
 
@@ -80,7 +104,17 @@ function persistModelPrefs(prefs: ModelPreferences): void {
   if (typeof window === "undefined") {
     return;
   }
-  window.localStorage.setItem(MODEL_PREFS_KEY, JSON.stringify(prefs));
+  const { byokKey: _byokKey, ...safePrefs } = prefs;
+  window.localStorage.setItem(MODEL_PREFS_KEY, JSON.stringify(safePrefs));
+}
+
+async function persistByokKey(value: string): Promise<void> {
+  const trimmed = value.trim();
+  if (trimmed) {
+    await setSecureCredential(BYOK_KEY_CREDENTIAL_ID, trimmed);
+    return;
+  }
+  await deleteSecureCredential(BYOK_KEY_CREDENTIAL_ID);
 }
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -101,6 +135,10 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
   modelPrefs: loadModelPrefs(),
 
   bootstrap: async () => {
+    const storedByokKey = await getSecureCredential(BYOK_KEY_CREDENTIAL_ID);
+    if (storedByokKey) {
+      set((state) => ({ modelPrefs: { ...state.modelPrefs, byokKey: storedByokKey } }));
+    }
     await initializeAuthTokenStorage();
     await initializeRefreshTokenStorage();
     const accessToken = getAuthToken();
@@ -271,6 +309,9 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
   },
 
   setModelPrefs: (patch) => {
+    if (typeof patch.byokKey === "string") {
+      void persistByokKey(patch.byokKey);
+    }
     set((state) => {
       const next = { ...state.modelPrefs, ...patch };
       persistModelPrefs(next);

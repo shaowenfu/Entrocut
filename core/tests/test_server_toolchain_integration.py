@@ -162,6 +162,54 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self.assertIn("placeholder_edit_draft_applied", op_actions)
         self.assertEqual(core_server.store.pending_background_task_count(project_id), 0)
 
+    def test_byok_chat_uses_custom_endpoint_model_and_headers(self) -> None:
+        response = self.client.post("/api/v1/projects", json={"title": "BYOK Custom"})
+        self.assertEqual(response.status_code, 200)
+        project_id = response.json()["project"]["id"]
+        planner_json = (
+            '{"status":"final","reasoning_summary":"byok custom route",'
+            '"assistant_reply":"已使用自定义 BYOK 路由。","tool_name":null,'
+            '"tool_input_summary":null,"draft_strategy":"no_change"}'
+        )
+
+        async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
+            self.assertEqual(url, "https://llm.example.com/custom/chat")
+            self.assertEqual(json["model"], "custom-planner-model")
+            self.assertEqual(headers["Authorization"], "Bearer test-byok-key")
+            self.assertEqual(headers["X-Custom-Provider"], "demo")
+
+            class _DummyResponse:
+                status_code = 200
+
+                @staticmethod
+                def json() -> dict[str, Any]:
+                    return {
+                        "choices": [{"message": {"content": planner_json}}],
+                        "usage": {"prompt_tokens": 40, "completion_tokens": 12, "total_tokens": 52},
+                    }
+
+                text = planner_json
+
+            return _DummyResponse()
+
+        with patch("httpx.AsyncClient.post", fake_post):
+            chat_response = self.client.post(
+                f"/api/v1/projects/{project_id}/chat",
+                headers={
+                    "X-Routing-Mode": "BYOK",
+                    "X-BYOK-Key": "test-byok-key",
+                    "X-BYOK-BaseURL": "https://llm.example.com",
+                    "X-BYOK-Chat-Path": "/custom/chat",
+                    "X-BYOK-Headers": '{"X-Custom-Provider":"demo"}',
+                },
+                json={"prompt": "使用我的自定义模型", "model": "custom-planner-model"},
+            )
+            self.assertEqual(chat_response.status_code, 200)
+            workspace = self._poll_workspace(project_id)
+
+        self.assertEqual(len([turn for turn in workspace["chat_turns"] if turn.get("role") == "assistant"]), 1)
+        self.assertEqual(workspace["runtime_state"]["execution_state"]["agent_run_state"], "idle")
+
     def test_chat_runs_tool_step_then_replans_to_final(self) -> None:
         project_id, _ = self._create_project()
         self._set_auth_session()

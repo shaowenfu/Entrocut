@@ -1257,6 +1257,8 @@ class InMemoryProjectStore:
         routing_mode: str,
         byok_key: str | None,
         byok_base_url: str | None,
+        byok_chat_path: str | None,
+        byok_headers_json: str | None,
         agent_loop_max_iterations: int,
     ) -> TaskModel:
         normalized_prompt = _trimmed(prompt)
@@ -1339,6 +1341,8 @@ class InMemoryProjectStore:
                 routing_mode,
                 byok_key,
                 byok_base_url,
+                byok_chat_path,
+                byok_headers_json,
                 agent_loop_max_iterations,
             )
         )
@@ -1395,6 +1399,8 @@ class InMemoryProjectStore:
         routing_mode: str,
         byok_key: str | None,
         byok_base_url: str | None,
+        byok_chat_path: str | None,
+        byok_headers_json: str | None,
         agent_loop_max_iterations: int,
     ) -> None:
         from agent import _run_chat_agent_loop
@@ -1442,6 +1448,8 @@ class InMemoryProjectStore:
                 routing_mode=routing_mode,
                 byok_key=byok_key,
                 byok_base_url=byok_base_url,
+                byok_chat_path=byok_chat_path,
+                byok_headers_json=byok_headers_json,
                 agent_loop_max_iterations=agent_loop_max_iterations,
             )
             decision = loop_result.final_decision

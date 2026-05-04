@@ -96,6 +96,8 @@ async def chat(project_id: str, payload: ChatRequest, request: Request) -> TaskR
         normalized_mode,
         request.headers.get("X-BYOK-Key"),
         request.headers.get("X-BYOK-BaseURL"),
+        request.headers.get("X-BYOK-Chat-Path"),
+        request.headers.get("X-BYOK-Headers"),
         _agent_loop_max_iterations_resolver(),
     )
     return TaskResponse(task=task)
