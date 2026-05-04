@@ -193,6 +193,8 @@ def get_current_user(authorization: str | None = Header(default=None)) -> dict[s
             message="The current user is suspended.",
             error_type="auth_error",
         )
+    quota_service.ensure_user_quota_defaults(user)
+    user["credits_balance"] = int(user.get("remaining_quota") or 0)
     return {"user": user, "token_payload": payload}
 
 

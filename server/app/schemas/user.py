@@ -10,6 +10,9 @@ class UserProfile(BaseModel):
     avatar_url: str | None = None
     status: str
     credits_balance: int = 0
+    quota_total: int = 0
+    remaining_quota: int = 0
+    quota_status: str = "healthy"
 
 
 class MeResponse(BaseModel):
@@ -22,6 +25,9 @@ class UserProfileResponse(BaseModel):
 
 class UserUsageSnapshot(BaseModel):
     credits_balance: int = 0
+    quota_total: int = 0
+    remaining_quota: int = 0
+    quota_status: str = "healthy"
     consumed_tokens_today: int = 0
     consumed_tokens_this_month: int = 0
     request_count_today: int = 0

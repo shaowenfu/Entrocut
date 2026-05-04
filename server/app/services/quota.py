@@ -137,6 +137,7 @@ class QuotaService:
         user["quota_total"] = quota_total
         user["remaining_quota"] = remaining_quota
         user["quota_status"] = quota_status
+        user["credits_balance"] = remaining_quota
         return user
 
     def _effective_low_watermark(self, quota_total: int) -> int:
@@ -192,4 +193,5 @@ class QuotaService:
                 "quota_status": updated_user.get("quota_status", user.get("quota_status")),
             }
         )
+        user["credits_balance"] = int(user.get("remaining_quota") or 0)
         return user

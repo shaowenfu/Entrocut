@@ -1,5 +1,13 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { ChevronDown, Github, LogIn, LogOut, ShieldCheck, WalletCards } from "lucide-react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
+import { ChevronDown, Github, LogIn, LogOut, RefreshCw, ShieldCheck, WalletCards } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useAuthStore } from "../../store/useAuthStore";
 import "./AccountMenu.css";
@@ -110,7 +118,10 @@ function AccountMenu({ variant = "workspace" }: AccountMenuProps) {
   const startGoogleLogin = useAuthStore((state) => state.startGoogleLogin);
   const startGithubLogin = useAuthStore((state) => state.startGithubLogin);
   const logout = useAuthStore((state) => state.logout);
+  const refreshUser = useAuthStore((state) => state.refreshUser);
+  const isRefreshingUser = useAuthStore((state) => state.isRefreshingUser);
   const isAuthenticating = authStatus === "authenticating";
+  const quotaBalance = authUser?.remaining_quota ?? authUser?.credits_balance;
 
   const displayName = useMemo(
     () => getDisplayName(authUser?.email, authUser?.display_name),
@@ -118,8 +129,8 @@ function AccountMenu({ variant = "workspace" }: AccountMenuProps) {
   );
   const initials = useMemo(() => getInitials(displayName), [displayName]);
   const credits = useMemo(
-    () => getCreditsSummary(authStatus, authUser?.credits_balance),
-    [authStatus, authUser?.credits_balance]
+    () => getCreditsSummary(authStatus, quotaBalance),
+    [authStatus, quotaBalance]
   );
   const profileLabel = authStatus === "authenticated" ? "Signed in" : "Guest session";
   const profileDetail =
@@ -214,6 +225,14 @@ function AccountMenu({ variant = "workspace" }: AccountMenuProps) {
   async function handleGithubLogin() {
     setIsOpen(false);
     await startGithubLogin();
+  }
+
+  async function handleRefreshCredits(event: ReactMouseEvent<HTMLButtonElement>) {
+    event.stopPropagation();
+    if (authStatus !== "authenticated" || isRefreshingUser) {
+      return;
+    }
+    await refreshUser();
   }
 
   const popoverStyle: (CSSProperties & Record<"--account-popover-arrow-left", string>) | undefined = popoverPosition
@@ -332,6 +351,21 @@ function AccountMenu({ variant = "workspace" }: AccountMenuProps) {
         <span className="account-credits-eyebrow">Credits</span>
         <strong>{credits.label}</strong>
       </button>
+
+      {authStatus === "authenticated" ? (
+        <button
+          type="button"
+          className={`account-refresh-button ${isRefreshingUser ? "is-refreshing" : ""}`}
+          onClick={(event) => {
+            void handleRefreshCredits(event);
+          }}
+          disabled={isRefreshingUser}
+          aria-label="refresh credits"
+          title="Refresh credits"
+        >
+          <RefreshCw size={13} />
+        </button>
+      ) : null}
 
       <button
         type="button"

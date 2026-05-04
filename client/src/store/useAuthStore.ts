@@ -33,11 +33,13 @@ interface AuthStoreState {
   status: AuthStatus;
   user: AuthUser | null;
   lastError: string | null;
+  isRefreshingUser: boolean;
   modelPrefs: ModelPreferences;
   bootstrap: () => Promise<void>;
   startGoogleLogin: () => Promise<void>;
   startGithubLogin: () => Promise<void>;
   completeLoginFromDeepLink: (loginSessionId: string) => Promise<void>;
+  refreshUser: () => Promise<void>;
   logout: () => Promise<void>;
   clearError: () => void;
   setModelPrefs: (patch: Partial<ModelPreferences>) => void;
@@ -84,6 +86,7 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
   status: "idle",
   user: null,
   lastError: null,
+  isRefreshingUser: false,
   modelPrefs: loadModelPrefs(),
 
   bootstrap: async () => {
@@ -185,6 +188,25 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
     }
   },
 
+  refreshUser: async () => {
+    set({ isRefreshingUser: true, lastError: null });
+    try {
+      const user = await fetchCurrentUser();
+      await syncCoreAuthSessionState(user.id);
+      set({
+        status: "authenticated",
+        user,
+        isRefreshingUser: false,
+        lastError: null,
+      });
+    } catch (error) {
+      set({
+        isRefreshingUser: false,
+        lastError: errorMessage(error, "user_refresh_failed"),
+      });
+    }
+  },
+
   logout: async () => {
     try {
       await logoutCurrentUser();
@@ -196,6 +218,7 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
     set({
       status: "anonymous",
       user: null,
+      isRefreshingUser: false,
       lastError: null,
     });
   },

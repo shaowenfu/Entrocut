@@ -23,8 +23,17 @@ def stored_user_id(user: dict[str, Any]) -> str:
 
 
 def build_entro_metadata(user: dict[str, Any]) -> dict[str, Any]:
+    remaining_quota = int(
+        user.get("remaining_quota")
+        if user.get("remaining_quota") is not None
+        else user.get("credits_balance") or 0
+    )
+    quota_total = int(user.get("quota_total") if user.get("quota_total") is not None else remaining_quota)
     return {
-        "credits_balance": int(user.get("credits_balance") or 0),
+        "credits_balance": remaining_quota,
+        "quota_total": quota_total,
+        "remaining_quota": remaining_quota,
+        "quota_status": str(user.get("quota_status") or ("exhausted" if remaining_quota <= 0 else "healthy")),
         "user_id": stored_user_id(user),
     }
 

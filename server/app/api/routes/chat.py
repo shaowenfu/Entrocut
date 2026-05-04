@@ -4,11 +4,11 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse
 
 from ...bootstrap.dependencies import (
-    RATE_CARDS,
     get_current_user,
     logger,
     metrics,
     provider_dependency_status,
+    quota_service,
     rate_limit_service,
     request_id,
     settings,
@@ -16,7 +16,7 @@ from ...bootstrap.dependencies import (
 )
 from ...core.observability import log_audit_event, log_event
 from ...core.errors import ServerApiError
-from ...services.gateway.billing import build_entro_metadata, settle_chat_billing, stored_user_id
+from ...services.gateway.billing import build_entro_metadata, stored_user_id
 from ...services.gateway.chat_proxy import build_chat_completion_payload, estimate_prompt_tokens, upstream_chat_stream
 from ...services.gateway.provider_routing import effective_llm_proxy_mode
 from ...services.gateway.streaming import mock_streaming_chat_response
@@ -59,13 +59,7 @@ async def chat_completions(
         payload["stream_options"] = {**stream_options, "include_usage": True}
     else:
         payload["stream_options"] = {"include_usage": True}
-    if int(current["user"].get("credits_balance") or 0) <= 0:
-        raise ServerApiError(
-            status_code=402,
-            code="INSUFFICIENT_CREDITS",
-            message="Insufficient credits balance.",
-            error_type="payment_required",
-        )
+    quota_service.assert_can_chat(current["user"])
     rate_limit_service.consume_prompt_budget(
         user_id=stored_user_id(current["user"]),
         prompt_tokens=estimate_prompt_tokens(messages),
@@ -105,16 +99,15 @@ async def chat_completions(
     usage = body.get("usage") if isinstance(body, dict) else None
     prompt_tokens = int((usage or {}).get("prompt_tokens") or 0) if isinstance(usage, dict) else 0
     completion_tokens = int((usage or {}).get("completion_tokens") or 0) if isinstance(usage, dict) else 0
-    credits_balance = settle_chat_billing(
-        current=current,
+    quota_service.record_chat_usage(
+        user=current["user"],
+        session_id=str(current["token_payload"]["sid"]),
         request_id=current_request_id,
-        model=str(payload.get("model") or settings.llm_default_model),
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        provider=provider_name,
-        rate_cards=RATE_CARDS,
-        store=store,
+        exposed_model=str(payload.get("model") or settings.llm_default_model),
+        provider_model=str(body.get("_provider_model")) if isinstance(body, dict) and body.get("_provider_model") else None,
+        usage=usage if isinstance(usage, dict) else None,
     )
+    credits_balance = int(current["user"].get("remaining_quota") or 0)
     if isinstance(usage, dict):
         rate_limit_service.add_completion_tokens(
             user_id=stored_user_id(current["user"]),

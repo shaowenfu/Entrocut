@@ -144,6 +144,7 @@ class MongoRepository:
             "quota_total": quota_total,
             "remaining_quota": remaining_quota,
             "quota_status": quota_status,
+            "credits_balance": remaining_quota,
             "updated_at": to_iso(now_utc()),
         }
         if users is None:

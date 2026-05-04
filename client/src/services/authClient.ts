@@ -34,6 +34,9 @@ export interface AuthUser {
   avatar_url?: string | null;
   status: string;
   credits_balance: number;
+  quota_total: number;
+  remaining_quota: number;
+  quota_status: string;
 }
 
 // 创建第三方登录 session 的响应。

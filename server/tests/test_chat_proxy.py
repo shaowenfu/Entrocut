@@ -165,12 +165,16 @@ def test_google_gemini_chat_proxy_normalizes_usage_and_preserves_virtual_model(m
         "total_tokens": 24,
     }
     assert body["entro_metadata"]["user_id"] == user["_id"]
-    assert body["entro_metadata"]["credits_balance"] == 99_999
+    assert body["entro_metadata"]["credits_balance"] == 4297
+    assert body["entro_metadata"]["remaining_quota"] == 4297
 
 
 def test_chat_completions_rejects_insufficient_credits(monkeypatch) -> None:
     _configure_local_runtime(monkeypatch)
     user = _create_user()
+    user["quota_total"] = 4321
+    user["remaining_quota"] = 0
+    user["quota_status"] = "exhausted"
     user["credits_balance"] = 0
     bundle = token_service.issue_session_bundle(user)
     client = TestClient(app)
@@ -190,7 +194,7 @@ def test_chat_completions_rejects_insufficient_credits(monkeypatch) -> None:
     )
 
     assert response.status_code == 402
-    assert response.json()["error"]["code"] == "INSUFFICIENT_CREDITS"
+    assert response.json()["error"]["code"] == "QUOTA_EXCEEDED"
 
 
 def test_chat_completions_rejects_rate_limited_user(monkeypatch) -> None:
