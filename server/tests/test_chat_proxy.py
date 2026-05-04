@@ -102,6 +102,31 @@ def test_chat_completions_requires_bearer_token() -> None:
     assert response.json()["error"]["code"] == "AUTH_TOKEN_MISSING"
 
 
+def test_mock_chat_proxy_returns_planner_decision_json(monkeypatch) -> None:
+    _configure_local_runtime(monkeypatch)
+    monkeypatch.setattr(settings, "llm_proxy_mode", "mock")
+    user = _create_user()
+    bundle = token_service.issue_session_bundle(user)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {bundle['access_token']}"},
+        json={
+            "model": "entro-reasoning-v1",
+            "stream": False,
+            "messages": [{"role": "user", "content": "Make a fast travel opener."}],
+        },
+    )
+
+    assert response.status_code == 200
+    content = response.json()["choices"][0]["message"]["content"]
+    decision = json.loads(content)
+    assert decision["status"] == "final"
+    assert decision["draft_strategy"] == "placeholder_first_cut"
+    assert decision["tool_name"] is None
+
+
 def test_google_gemini_chat_proxy_normalizes_usage_and_preserves_virtual_model(monkeypatch) -> None:
     async def fake_post(self, url: str, json: dict[str, Any], headers: dict[str, str]) -> _DummyResponse:
         assert url == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"

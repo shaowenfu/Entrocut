@@ -25,7 +25,7 @@ from .auth import (
 )
 from .common import AssetReference, AssetVector
 from .inspect import CandidateJudgment, InspectCandidate, InspectCriterion, InspectFrame, InspectRequest, InspectResponse
-from .runtime import RuntimeCapabilitiesResponse, RuntimeCapabilityItem
+from .runtime import RuntimeCapabilitiesResponse, RuntimeCapabilityItem, RuntimeModelItem, RuntimeModelsResponse
 from .user import MeResponse, UserProfile, UserProfileResponse, UserUsageResponse, UserUsageSnapshot
 
 __all__ = [
@@ -51,6 +51,8 @@ __all__ = [
     "RetrievalQuery",
     "RuntimeCapabilitiesResponse",
     "RuntimeCapabilityItem",
+    "RuntimeModelItem",
+    "RuntimeModelsResponse",
     "StagingBootstrapLoginSessionRequest",
     "StagingBootstrapLoginSessionResponse",
     "TokenBundle",

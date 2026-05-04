@@ -146,6 +146,10 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const chatTurns = useWorkspaceStore((state) => state.chatTurns);
   const modelPrefs = useAuthStore((state) => state.modelPrefs);
   const setModelPrefs = useAuthStore((state) => state.setModelPrefs);
+  const platformModels = useAuthStore((state) => state.platformModels);
+  const modelCatalogState = useAuthStore((state) => state.modelCatalogState);
+  const modelCatalogWarning = useAuthStore((state) => state.modelCatalogWarning);
+  const refreshModelCatalog = useAuthStore((state) => state.refreshModelCatalog);
   const loadState = useWorkspaceStore((state) => state.loadState);
   const chatState = useWorkspaceStore((state) => state.chatState);
   const summaryState = useWorkspaceStore((state) => state.summaryState);
@@ -295,6 +299,12 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   useEffect(() => {
     void initializeWorkspace(workspaceId, workspaceName);
   }, [initializeWorkspace, workspaceId, workspaceName]);
+
+  useEffect(() => {
+    if (modelCatalogState === "idle") {
+      void refreshModelCatalog();
+    }
+  }, [modelCatalogState, refreshModelCatalog]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -639,7 +649,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
             {isEditLocked && !isExporting ? <span className="lock-pill">EDIT LOCKED</span> : null}
           </div>
           <AccountMenu />
-          <label className="health-pill" style={{ gap: 6 }}>
+          <label className="health-pill" style={{ gap: 6 }} title={modelCatalogWarning ?? undefined}>
             <span>Model</span>
             <select
               value={modelPrefs.selectedModel}
@@ -651,10 +661,22 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                 });
               }}
             >
-              <option value="gpt-4o-mini">gpt-4o-mini (0.018 Credits/1K in)</option>
-              <option value="gpt-4o">gpt-4o (0.6 Credits/1K in)</option>
-              <option value="byok:gpt-4o-mini">BYOK gpt-4o-mini</option>
-              <option value="byok:gpt-4o">BYOK gpt-4o</option>
+              <optgroup label="Platform">
+                {platformModels.length === 0 ? (
+                  <option value={modelPrefs.routingMode === "Platform" ? modelPrefs.selectedModel : "entro-reasoning-v1"}>
+                    {modelCatalogState === "loading" ? "Loading models..." : "entro-reasoning-v1"}
+                  </option>
+                ) : null}
+                {platformModels.map((model) => (
+                  <option key={model.id} value={model.id} disabled={!model.available}>
+                    {model.label} ({model.id})
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="BYOK">
+                <option value="byok:gpt-4o-mini">BYOK gpt-4o-mini</option>
+                <option value="byok:gpt-4o">BYOK gpt-4o</option>
+              </optgroup>
             </select>
           </label>
           {modelPrefs.routingMode === "BYOK" ? (

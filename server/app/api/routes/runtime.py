@@ -5,15 +5,61 @@ from typing import Any
 from fastapi import APIRouter
 
 from ...bootstrap.dependencies import inspect_service, provider_dependency_status, settings
-from ...schemas.runtime import RuntimeCapabilitiesResponse
+from ...schemas.runtime import RuntimeCapabilitiesResponse, RuntimeModelItem, RuntimeModelsResponse
 from ...services.gateway.provider_routing import effective_llm_proxy_mode
 
 
 router = APIRouter(tags=["runtime"])
 
 
+def _runtime_models() -> RuntimeModelsResponse:
+    provider_status = provider_dependency_status()
+    provider_mode = effective_llm_proxy_mode(settings)
+    provider_name = str(provider_status.get("mode") or provider_mode)
+    upstream_model = None
+    warnings: list[str] = []
+    reason = None
+    available = bool(provider_status.get("ok"))
+
+    if provider_mode == "google_gemini":
+        upstream_model = settings.llm_gemini_default_model.strip() or "gemini-2.5-flash"
+    elif provider_mode == "upstream":
+        upstream_model = (
+            settings.llm_upstream_default_model.strip()
+            if settings.llm_upstream_default_model
+            else settings.llm_default_model
+        )
+    elif provider_mode == "mock":
+        upstream_model = "mock-planner-json"
+        warnings.append("planner_chat_is_using_mock_json_provider")
+    else:
+        available = False
+        reason = "provider_not_configured"
+
+    if not available and reason is None:
+        reason = str(provider_status.get("error") or "provider_unavailable")
+
+    return RuntimeModelsResponse(
+        default_model=settings.llm_default_model,
+        provider_mode=provider_mode,
+        platform_models=[
+            RuntimeModelItem(
+                id=settings.llm_default_model,
+                label="Entro Reasoning",
+                available=available,
+                route=provider_name,
+                upstream_model=upstream_model,
+                provider=provider_name,
+                reason=reason,
+            )
+        ],
+        warnings=warnings,
+    )
+
+
 @router.get("/api/v1/runtime/capabilities", response_model=RuntimeCapabilitiesResponse)
 def runtime_capabilities() -> RuntimeCapabilitiesResponse:
+    models = _runtime_models()
     return RuntimeCapabilitiesResponse(
         service="server",
         version=settings.app_version,
@@ -41,6 +87,12 @@ def runtime_capabilities() -> RuntimeCapabilitiesResponse:
         ],
         capabilities={
             "planner_chat": {"available": True, "provider": provider_dependency_status().get("mode")},
+            "platform_models": {
+                "available": any(model.available for model in models.platform_models),
+                "provider": models.provider_mode,
+                "mode": models.default_model,
+                "reason": ",".join(models.warnings) if models.warnings else None,
+            },
             "multimodal_embedding": {
                 "available": bool((settings.dashscope_api_key or "").strip()),
                 "provider": settings.dashscope_multimodal_embedding_model,
@@ -60,6 +112,11 @@ def runtime_capabilities() -> RuntimeCapabilitiesResponse:
             },
         },
     )
+
+
+@router.get("/api/v1/runtime/models", response_model=RuntimeModelsResponse)
+def runtime_models() -> RuntimeModelsResponse:
+    return _runtime_models()
 
 
 @router.get("/")

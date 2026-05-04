@@ -17,3 +17,20 @@ class RuntimeCapabilitiesResponse(BaseModel):
     mode: str
     retained_surfaces: list[str]
     capabilities: dict[str, RuntimeCapabilityItem] | None = None
+
+
+class RuntimeModelItem(BaseModel):
+    id: str
+    label: str
+    available: bool
+    route: str
+    upstream_model: str | None = None
+    provider: str | None = None
+    reason: str | None = None
+
+
+class RuntimeModelsResponse(BaseModel):
+    default_model: str
+    provider_mode: str
+    platform_models: list[RuntimeModelItem]
+    warnings: list[str] = []

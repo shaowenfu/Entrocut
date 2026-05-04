@@ -129,3 +129,20 @@ def test_metrics_endpoint_can_be_disabled(monkeypatch) -> None:
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+
+def test_runtime_models_exposes_virtual_platform_model(monkeypatch) -> None:
+    _configure_local_runtime(monkeypatch)
+    monkeypatch.setattr(settings, "llm_proxy_mode", "mock")
+    monkeypatch.setattr(settings, "llm_default_model", "entro-reasoning-v1")
+    client = TestClient(app)
+
+    response = client.get("/api/v1/runtime/models")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["default_model"] == "entro-reasoning-v1"
+    assert body["provider_mode"] == "mock"
+    assert body["platform_models"][0]["id"] == "entro-reasoning-v1"
+    assert body["platform_models"][0]["available"] is True
+    assert body["platform_models"][0]["upstream_model"] == "mock-planner-json"

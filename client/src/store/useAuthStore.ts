@@ -5,6 +5,7 @@ import {
   createGithubLoginSession,
   createGoogleLoginSession,
   fetchCurrentUser,
+  fetchRuntimeModels,
   getRefreshToken,
   initializeRefreshTokenStorage,
   isDevLoginPollingEnabled,
@@ -13,6 +14,7 @@ import {
   refreshAccessToken,
   syncCoreAuthSessionState,
   type AuthUser,
+  type RuntimeModelItem,
   waitForLoginSession,
 } from "../services/authClient";
 import { openExternalUrl } from "../services/electronBridge";
@@ -21,6 +23,7 @@ import { getAuthToken, initializeAuthTokenStorage, persistAuthToken } from "../s
 type AuthStatus = "idle" | "authenticating" | "authenticated" | "anonymous" | "error";
 
 type RoutingMode = "Platform" | "BYOK";
+type ModelCatalogState = "idle" | "loading" | "ready" | "failed";
 
 interface ModelPreferences {
   selectedModel: string;
@@ -34,37 +37,42 @@ interface AuthStoreState {
   user: AuthUser | null;
   lastError: string | null;
   isRefreshingUser: boolean;
+  platformModels: RuntimeModelItem[];
+  modelCatalogState: ModelCatalogState;
+  modelCatalogWarning: string | null;
   modelPrefs: ModelPreferences;
   bootstrap: () => Promise<void>;
   startGoogleLogin: () => Promise<void>;
   startGithubLogin: () => Promise<void>;
   completeLoginFromDeepLink: (loginSessionId: string) => Promise<void>;
   refreshUser: () => Promise<void>;
+  refreshModelCatalog: () => Promise<void>;
   logout: () => Promise<void>;
   clearError: () => void;
   setModelPrefs: (patch: Partial<ModelPreferences>) => void;
 }
 
 const MODEL_PREFS_KEY = "ENTROCUT_MODEL_PREFS";
+const DEFAULT_PLATFORM_MODEL = "entro-reasoning-v1";
 
 function loadModelPrefs(): ModelPreferences {
   if (typeof window === "undefined") {
-    return { selectedModel: "gpt-4o-mini", routingMode: "Platform", byokKey: "", byokBaseUrl: "https://api.openai.com" };
+    return { selectedModel: DEFAULT_PLATFORM_MODEL, routingMode: "Platform", byokKey: "", byokBaseUrl: "https://api.openai.com" };
   }
   try {
     const raw = window.localStorage.getItem(MODEL_PREFS_KEY);
     if (!raw) {
-      return { selectedModel: "gpt-4o-mini", routingMode: "Platform", byokKey: "", byokBaseUrl: "https://api.openai.com" };
+      return { selectedModel: DEFAULT_PLATFORM_MODEL, routingMode: "Platform", byokKey: "", byokBaseUrl: "https://api.openai.com" };
     }
     const parsed = JSON.parse(raw) as Partial<ModelPreferences>;
     return {
-      selectedModel: parsed.selectedModel?.trim() || "gpt-4o-mini",
+      selectedModel: parsed.selectedModel?.trim() || DEFAULT_PLATFORM_MODEL,
       routingMode: parsed.routingMode === "BYOK" ? "BYOK" : "Platform",
       byokKey: parsed.byokKey?.trim() || "",
       byokBaseUrl: parsed.byokBaseUrl?.trim() || "https://api.openai.com",
     };
   } catch {
-    return { selectedModel: "gpt-4o-mini", routingMode: "Platform", byokKey: "", byokBaseUrl: "https://api.openai.com" };
+    return { selectedModel: DEFAULT_PLATFORM_MODEL, routingMode: "Platform", byokKey: "", byokBaseUrl: "https://api.openai.com" };
   }
 }
 
@@ -87,6 +95,9 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
   user: null,
   lastError: null,
   isRefreshingUser: false,
+  platformModels: [],
+  modelCatalogState: "idle",
+  modelCatalogWarning: null,
   modelPrefs: loadModelPrefs(),
 
   bootstrap: async () => {
@@ -203,6 +214,38 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
       set({
         isRefreshingUser: false,
         lastError: errorMessage(error, "user_refresh_failed"),
+      });
+    }
+  },
+
+  refreshModelCatalog: async () => {
+    set({ modelCatalogState: "loading", modelCatalogWarning: null });
+    try {
+      const catalog = await fetchRuntimeModels();
+      const platformModels = catalog.platform_models ?? [];
+      set((state) => {
+        const selectedModelAvailable = platformModels.some((model) => model.id === state.modelPrefs.selectedModel);
+        const shouldUseDefault = state.modelPrefs.routingMode === "Platform" && !selectedModelAvailable;
+        const nextPrefs = shouldUseDefault
+          ? {
+              ...state.modelPrefs,
+              selectedModel: catalog.default_model || platformModels[0]?.id || DEFAULT_PLATFORM_MODEL,
+            }
+          : state.modelPrefs;
+        if (nextPrefs !== state.modelPrefs) {
+          persistModelPrefs(nextPrefs);
+        }
+        return {
+          platformModels,
+          modelCatalogState: "ready",
+          modelCatalogWarning: catalog.warnings?.[0] ?? null,
+          modelPrefs: nextPrefs,
+        };
+      });
+    } catch (error) {
+      set({
+        modelCatalogState: "failed",
+        modelCatalogWarning: errorMessage(error, "model_catalog_load_failed"),
       });
     }
   },

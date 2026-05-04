@@ -42,10 +42,16 @@ def estimate_prompt_tokens(messages: list[dict[str, Any]]) -> int:
 
 def mock_chat_content(prompt: str, user: dict[str, Any]) -> str:
     prompt_excerpt = prompt[:120] if prompt else "Refine the current cut."
-    return (
-        f"Editing focus: {prompt_excerpt} "
-        f"Use the strongest motion clip as the opener, tighten redundant beats, and end on the clearest payoff. "
-        f"Credits balance is {int(user.get('credits_balance') or 0)}."
+    return json.dumps(
+        {
+            "status": "final",
+            "reasoning_summary": f"Mock planner accepted the edit goal: {prompt_excerpt}",
+            "assistant_reply": "I drafted a placeholder editing decision for the local workspace.",
+            "tool_name": None,
+            "tool_input_summary": None,
+            "draft_strategy": "placeholder_first_cut",
+        },
+        ensure_ascii=False,
     )
 
 

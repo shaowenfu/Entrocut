@@ -39,6 +39,23 @@ export interface AuthUser {
   quota_status: string;
 }
 
+export interface RuntimeModelItem {
+  id: string;
+  label: string;
+  available: boolean;
+  route: string;
+  upstream_model?: string | null;
+  provider?: string | null;
+  reason?: string | null;
+}
+
+export interface RuntimeModelsResponse {
+  default_model: string;
+  provider_mode: string;
+  platform_models: RuntimeModelItem[];
+  warnings: string[];
+}
+
 // 创建第三方登录 session 的响应。
 interface LoginSessionCreateResponse {
   login_session_id: string;
@@ -285,6 +302,13 @@ export async function waitForLoginSession(loginSessionId: string): Promise<AuthU
 export async function fetchCurrentUser(): Promise<AuthUser> {
   const response = await requestJson<MeResponse>(endpoint("/api/v1/me"));
   return response.user;
+}
+
+// 拉取 server 当前真实可用的平台模型注册表。
+export async function fetchRuntimeModels(): Promise<RuntimeModelsResponse> {
+  return requestJson<RuntimeModelsResponse>(endpoint("/api/v1/runtime/models"), {
+    authRequired: false,
+  });
 }
 
 // 使用 refresh token 刷新 access token，并同步给 core。
