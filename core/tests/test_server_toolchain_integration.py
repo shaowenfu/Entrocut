@@ -749,6 +749,55 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         task_event = next(event for event in observed_events if event["event"] == "task.updated")
         self.assertNotIn("workflow_state", task_event["data"])
 
+    def test_failed_asset_retry_requeues_media_task(self) -> None:
+        source_file = Path(CORE_TEST_APPDATA_DIR.name) / "retry-source.mp4"
+        source_file.write_bytes(b"retry media placeholder")
+
+        response = self.client.post("/api/v1/projects", json={})
+        self.assertEqual(response.status_code, 200)
+        project_id = response.json()["project"]["id"]
+        self._set_auth_session()
+
+        with patch("store.detect_scenes", side_effect=RuntimeError("segmenter unavailable")):
+            import_response = self.client.post(
+                f"/api/v1/projects/{project_id}/assets:import",
+                json={"media": {"files": [{"name": source_file.name, "path": str(source_file)}]}},
+            )
+            self.assertEqual(import_response.status_code, 200)
+            failed_workspace = self._poll_task_idle(project_id)
+
+        failed_asset = failed_workspace["edit_draft"]["assets"][0]
+        self.assertEqual(failed_asset["processing_stage"], "failed")
+        self.assertEqual(failed_asset["last_error"]["code"], "MEDIA_IMPORT_FAILED")
+        self.assertEqual(
+            len([clip for clip in failed_workspace["edit_draft"]["clips"] if clip["asset_id"] == failed_asset["id"]]),
+            0,
+        )
+
+        with (
+            patch("store.detect_scenes", return_value=[(0, 6000), (6000, 12000)]),
+            patch("store.extract_and_stitch_frames", return_value="dummy_b64"),
+        ):
+            retry_response = self.client.post(
+                f"/api/v1/projects/{project_id}/assets/{failed_asset['id']}:retry",
+            )
+            self.assertEqual(retry_response.status_code, 200)
+            retry_task = retry_response.json()["task"]
+            self.assertEqual(retry_task["slot"], "media")
+            self.assertEqual(retry_task["owner_type"], "asset")
+            self.assertEqual(retry_task["owner_id"], failed_asset["id"])
+            final_workspace = self._poll_task_idle(project_id)
+
+        retried_asset = final_workspace["edit_draft"]["assets"][0]
+        retried_clips = [
+            clip for clip in final_workspace["edit_draft"]["clips"] if clip["asset_id"] == retried_asset["id"]
+        ]
+        self.assertEqual(retried_asset["processing_stage"], "ready")
+        self.assertEqual(retried_asset["clip_count"], 2)
+        self.assertEqual(retried_asset["indexed_clip_count"], 2)
+        self.assertIsNone(retried_asset["last_error"])
+        self.assertEqual(len(retried_clips), 2)
+
     def test_partial_media_processing_keeps_editing_capability_when_existing_clips_exist(self) -> None:
         project_id, _ = self._create_project()
         self._set_auth_session()

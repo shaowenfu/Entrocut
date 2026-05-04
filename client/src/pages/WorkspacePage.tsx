@@ -13,6 +13,7 @@ import {
   MessageSquare,
   Pause,
   Play,
+  RefreshCw,
   Scissors,
   Send,
   Sparkles,
@@ -131,6 +132,16 @@ function extractDroppedFiles(event: DragEvent<HTMLDivElement>): File[] {
   return Array.from(event.dataTransfer.files ?? []).filter((file) => file.size > 0);
 }
 
+function formatAssetError(error?: Record<string, unknown> | null): string {
+  if (!error) {
+    return "";
+  }
+  const code = typeof error.code === "string" ? error.code : "";
+  const message = typeof error.message === "string" ? error.message : "";
+  const summary = [code, message].filter(Boolean).join(": ");
+  return summary || JSON.stringify(error);
+}
+
 function parseClipTimeSeconds(time: string): number {
   const parsed = Number.parseInt(time.replace(/[^\d]/g, ""), 10);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -178,6 +189,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const initializeWorkspace = useWorkspaceStore((state) => state.initializeWorkspace);
   const setSelectionContext = useWorkspaceStore((state) => state.setSelectionContext);
   const uploadAssets = useWorkspaceStore((state) => state.uploadAssets);
+  const retryAsset = useWorkspaceStore((state) => state.retryAsset);
   const sendChat = useWorkspaceStore((state) => state.sendChat);
   const exportProject = useWorkspaceStore((state) => state.exportProject);
   const clearLastError = useWorkspaceStore((state) => state.clearLastError);
@@ -817,6 +829,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                       const isFailed = asset.processingStage === "failed";
                       const isLoading = !isReady && !isFailed;
                       const progress = asset.processingProgress ?? 0;
+                      const assetErrorTitle = formatAssetError(asset.lastError);
                       
                       return (
                         <article
@@ -824,6 +837,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                           className={`asset-card ${
                             previewSelection?.kind === "asset" && previewSelection.assetId === asset.id ? "is-active" : ""
                           } ${!isReady ? "is-processing" : ""}`}
+                          title={assetErrorTitle || asset.name}
                           onClick={() => {
                             if (isReady) {
                               setPreviewSelection({ kind: "asset", assetId: asset.id });
@@ -854,6 +868,23 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                             )}
                             {isReady && <span>{asset.duration}</span>}
                           </div>
+                          {isFailed ? (
+                            <div className="asset-card-actions">
+                              <button
+                                type="button"
+                                className="asset-card-action"
+                                title={assetErrorTitle ? `Retry: ${assetErrorTitle}` : "Retry asset"}
+                                aria-label={`retry ${asset.name}`}
+                                disabled={!canUploadAssets}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void retryAsset(asset.id);
+                                }}
+                              >
+                                <RefreshCw size={13} />
+                              </button>
+                            </div>
+                          ) : null}
                           <p title={asset.name}>{asset.name}</p>
                         </article>
                       );

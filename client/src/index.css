@@ -453,6 +453,35 @@ textarea {
   background: rgba(53, 94, 201, 0.14);
 }
 
+.asset-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: -2px 0 5px;
+}
+
+.asset-card-action {
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(241, 91, 91, 0.28);
+  border-radius: 8px;
+  background: rgba(241, 91, 91, 0.1);
+  color: #f3b2b2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.asset-card-action:hover:not(:disabled) {
+  border-color: rgba(241, 91, 91, 0.48);
+  background: rgba(241, 91, 91, 0.18);
+}
+
+.asset-card-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* 媒体缩略图容器。 */
 .asset-thumb {
   aspect-ratio: 16 / 9;

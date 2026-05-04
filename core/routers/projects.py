@@ -58,6 +58,12 @@ async def import_assets(project_id: str, payload: ImportAssetsRequest) -> TaskRe
     return TaskResponse(task=task)
 
 
+@router.post("/api/v1/projects/{project_id}/assets/{asset_id}:retry", response_model=TaskResponse)
+async def retry_asset(project_id: str, asset_id: str) -> TaskResponse:
+    task = await store.queue_asset_retry(project_id, asset_id)
+    return TaskResponse(task=task)
+
+
 @router.post("/api/v1/projects/{project_id}/chat", response_model=TaskResponse)
 async def chat(project_id: str, payload: ChatRequest, request: Request) -> TaskResponse:
     routing_mode = (request.headers.get("X-Routing-Mode") or "Platform").strip()

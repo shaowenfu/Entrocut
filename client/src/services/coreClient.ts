@@ -492,6 +492,14 @@ export async function importAssets(projectId: string, payload: ImportAssetsReque
   });
 }
 
+// 重新触发单个素材的媒体处理。
+export async function retryAsset(projectId: string, assetId: string): Promise<TaskResponse> {
+  return requestJson<TaskResponse>(buildCoreUrl(`/api/v1/projects/${projectId}/assets/${assetId}:retry`), {
+    method: "POST",
+    authRequired: false,
+  });
+}
+
 // 发送用户 chat 给 core，并传入模型路由信息。
 export async function sendChat(
   projectId: string,

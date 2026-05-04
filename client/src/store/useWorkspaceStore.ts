@@ -12,6 +12,7 @@ import {
   exportProject as exportProjectRequest,
   getWorkspace,
   importAssets as importAssetsRequest,
+  retryAsset as retryAssetRequest,
   sendChat as sendChatRequest,
   toMediaReference,
   toRequestError,
@@ -225,6 +226,7 @@ interface WorkspaceState {
     selectedShotId?: string | null;
   }) => void;
   uploadAssets: (input?: UploadAssetsInput) => Promise<void>;
+  retryAsset: (assetId: string) => Promise<void>;
   sendChat: (prompt: string) => Promise<void>;
   exportProject: () => Promise<ExportResult | null>;
   clearLastError: () => void;
@@ -916,6 +918,7 @@ const initialState: Omit<
   | "bootstrapFromLaunch"
   | "setSelectionContext"
   | "uploadAssets"
+  | "retryAsset"
   | "sendChat"
   | "exportProject"
   | "clearLastError"
@@ -1275,6 +1278,32 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         dispatch({
           type: "ASSET_UPLOAD_FAILED",
           error: toWorkspaceError("upload_assets_failed", error),
+        });
+      }
+    },
+
+    retryAsset: async (assetId) => {
+      const workspaceId = get().workspaceId;
+      if (!workspaceId) {
+        applyDirectPatch({
+          lastError: {
+            code: "WORKSPACE_NOT_READY",
+            message: "workspace_not_ready",
+          },
+        });
+        return;
+      }
+
+      try {
+        const response = await retryAssetRequest(workspaceId, assetId);
+        dispatch({
+          type: "ASSET_UPLOAD_STARTED",
+          task: mapTask(response.task)!,
+        });
+      } catch (error) {
+        dispatch({
+          type: "ASSET_UPLOAD_FAILED",
+          error: toWorkspaceError("retry_asset_failed", error),
         });
       }
     },

@@ -690,6 +690,102 @@ class InMemoryProjectStore:
         self._register_background_task(project_id, background_task)
         return task
 
+    async def queue_asset_retry(self, project_id: str, asset_id: str) -> TaskModel:
+        auth_session = await auth_session_store.snapshot()
+        if not auth_session.get("access_token"):
+            raise CoreApiError(
+                status_code=401,
+                code="AUTH_SESSION_REQUIRED",
+                message="Sign in is required before media ingest can run.",
+            )
+
+        active_media_task = self.get_running_task(project_id, "media")
+        active_export_task = self.get_running_task(project_id, "export")
+        if active_media_task or active_export_task:
+            active_task = active_media_task or active_export_task
+            raise CoreApiError(
+                status_code=409,
+                code="TASK_ALREADY_RUNNING",
+                message="Another media or export task is already running for this project.",
+                details={"project_id": project_id, "active_task_id": active_task.get("id") if active_task else None},
+            )
+
+        record = self.get_project_or_raise(project_id)
+        self._ensure_record_defaults(record)
+        draft = EditDraftModel.model_validate(record["edit_draft"])
+        asset = next((item for item in draft.assets if item.id == asset_id), None)
+        if asset is None:
+            raise CoreApiError(
+                status_code=404,
+                code="ASSET_NOT_FOUND",
+                message="Asset not found.",
+                details={"project_id": project_id, "asset_id": asset_id},
+            )
+        source_path = (asset.source_path or "").strip()
+        if not source_path:
+            raise CoreApiError(
+                status_code=409,
+                code="ASSET_SOURCE_PATH_REQUIRED",
+                message="Asset retry requires a source_path.",
+                details={"project_id": project_id, "asset_id": asset_id},
+            )
+        path_obj = Path(source_path)
+        if not path_obj.exists() or not path_obj.is_file():
+            raise CoreApiError(
+                status_code=422,
+                code="MEDIA_FILE_NOT_FOUND",
+                message="Media file does not exist.",
+                details={"asset_id": asset_id, "path": source_path},
+            )
+
+        now = _now_iso()
+        previous_capabilities = self._derive_project_capabilities(record)
+        previous_summary_state = record.get("summary_state")
+        retry_asset_ids = {asset_id}
+        draft_without_old_clips = _bump_draft(
+            draft,
+            clips=[clip for clip in draft.clips if clip.asset_id != asset_id],
+            updated_at=now,
+        )
+        reset_draft = self._update_draft_assets(
+            draft_without_old_clips,
+            asset_ids=retry_asset_ids,
+            stage="pending",
+            progress=0,
+            clip_counts={asset_id: 0},
+            indexed_clip_counts={asset_id: 0},
+            updated_at=now,
+            bump_version=False,
+        )
+        record["edit_draft"] = reset_draft.model_dump()
+        task = TaskModel(
+            id=_entity_id("task_ingest"),
+            slot="media",
+            type="ingest",
+            status="queued",
+            owner_type="asset",
+            owner_id=asset_id,
+            progress=0,
+            message="Media retry queued",
+            created_at=now,
+            updated_at=now,
+        )
+        queued_task = self._upsert_active_task(record, task)
+        record["project"]["updated_at"] = now
+        media_summary = self._sync_runtime_retrieval_state(record, updated_at=now)
+        record["summary_state"] = self._derive_summary_state(record, media_summary=media_summary)
+        await self.emit(project_id, "edit_draft.updated", {"edit_draft": reset_draft.model_dump()})
+        await self.emit(project_id, "asset.updated", {"assets": self._select_draft_assets(reset_draft, retry_asset_ids)})
+        await self.emit(project_id, "task.updated", {"task": queued_task})
+        await self._emit_derived_state_events(
+            project_id,
+            previous_capabilities=previous_capabilities,
+            previous_summary_state=previous_summary_state,
+        )
+        background_task = asyncio.create_task(self._run_assets_import(project_id, task, retry_asset_ids))
+        self._register_background_task(project_id, background_task)
+        return task
+
     async def _run_assets_import(self, project_id: str, task: TaskModel, asset_ids: set[str]) -> None:
         record = self.get_project_or_raise(project_id)
         self._ensure_record_defaults(record)
@@ -769,7 +865,7 @@ class InMemoryProjectStore:
             )
             vectorizing_running_task = self._upsert_active_task(record, vectorizing_task)
             vectorizing_draft = self._update_draft_assets(
-                draft,
+                segmenting_draft,
                 asset_ids=asset_ids,
                 stage="vectorizing",
                 progress=50,
@@ -855,7 +951,7 @@ class InMemoryProjectStore:
             # Update stage to ready
             ready_at = _now_iso()
             ready_draft = self._update_draft_assets(
-                draft,
+                vectorizing_draft,
                 asset_ids=asset_ids,
                 stage="ready",
                 progress=100,
