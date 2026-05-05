@@ -1395,7 +1395,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         const { modelPrefs } = useAuthStore.getState();
         const selectedModel =
           modelPrefs.routingMode === "BYOK"
-            ? modelPrefs.byokModel.trim() || "gpt-4o-mini"
+            ? modelPrefs.byokModel.trim() || "gemini-2.5-flash"
             : modelPrefs.selectedModel.replace(/^byok:/, "");
         const response = await sendChatRequest(
           workspaceId,

@@ -58,7 +58,7 @@ interface AuthStoreState {
 const MODEL_PREFS_KEY = "ENTROCUT_MODEL_PREFS";
 const BYOK_KEY_CREDENTIAL_ID = "entrocut.byok.api_key";
 const DEFAULT_PLATFORM_MODEL = "entro-reasoning-v1";
-const DEFAULT_BYOK_MODEL = "gpt-4o-mini";
+const DEFAULT_BYOK_MODEL = "gemini-2.5-flash";
 const DEFAULT_BYOK_BASE_URL = "https://api.openai.com";
 const DEFAULT_BYOK_CHAT_PATH = "/v1/chat/completions";
 const DEFAULT_BYOK_HEADERS_JSON = "{}";

@@ -760,7 +760,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                         routingMode: "BYOK",
                       });
                     }}
-                    placeholder="gpt-4o-mini"
+                    placeholder="gemini-2.5-flash"
                   />
                 </label>
                 <label>
