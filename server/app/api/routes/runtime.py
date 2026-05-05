@@ -5,56 +5,28 @@ from typing import Any
 from fastapi import APIRouter
 
 from ...bootstrap.dependencies import inspect_service, provider_dependency_status, settings
-from ...schemas.runtime import RuntimeCapabilitiesResponse, RuntimeModelItem, RuntimeModelsResponse
-from ...services.gateway.provider_routing import effective_llm_proxy_mode
+from ...schemas.runtime import RuntimeCapabilitiesResponse, RuntimeModelsResponse
+from ...services.models.registry import _providers
 
 
 router = APIRouter(tags=["runtime"])
 
 
 def _runtime_models() -> RuntimeModelsResponse:
-    provider_status = provider_dependency_status()
-    provider_mode = effective_llm_proxy_mode(settings)
-    provider_name = str(provider_status.get("mode") or provider_mode)
-    upstream_model = None
+    providers = []
     warnings: list[str] = []
-    reason = None
-    available = bool(provider_status.get("ok"))
-
-    if provider_mode == "google_gemini":
-        upstream_model = settings.llm_gemini_default_model.strip() or "gemini-2.5-flash"
-    elif provider_mode == "upstream":
-        upstream_model = (
-            settings.llm_upstream_default_model.strip()
-            if settings.llm_upstream_default_model
-            else settings.llm_default_model
-        )
-    elif provider_mode == "mock":
-        upstream_model = "mock-planner-json"
-        warnings.append("planner_chat_is_using_mock_json_provider")
-    else:
-        available = False
-        reason = "provider_not_configured"
-
-    if not available and reason is None:
-        reason = str(provider_status.get("error") or "provider_unavailable")
-
-    return RuntimeModelsResponse(
-        default_model=settings.llm_default_model,
-        provider_mode=provider_mode,
-        platform_models=[
-            RuntimeModelItem(
-                id=settings.llm_default_model,
-                label="Entro Reasoning",
-                available=available,
-                route=provider_name,
-                upstream_model=upstream_model,
-                provider=provider_name,
-                reason=reason,
-            )
-        ],
-        warnings=warnings,
-    )
+    for p in _providers(settings):
+        api_key = (settings.deepseek_api_key if p.id == "deepseek" else settings.google_api_key) or ""
+        providers.append({
+            "id": p.id,
+            "label": p.label,
+            "available": bool(api_key.strip()),
+            "models": [
+                {"id": m.id, "label": m.label, "available": bool(api_key.strip()), "supports_custom_model": m.supports_custom_model}
+                for m in p.models
+            ],
+        })
+    return RuntimeModelsResponse(default_provider="deepseek", default_model="deepseek-chat", providers=providers, warnings=warnings)
 
 
 @router.get("/api/v1/runtime/capabilities", response_model=RuntimeCapabilitiesResponse)
@@ -89,7 +61,7 @@ def runtime_capabilities() -> RuntimeCapabilitiesResponse:
             "planner_chat": {"available": True, "provider": provider_dependency_status().get("mode")},
             "platform_models": {
                 "available": any(model.available for model in models.platform_models),
-                "provider": models.provider_mode,
+                "provider": models.default_provider,
                 "mode": models.default_model,
                 "reason": ",".join(models.warnings) if models.warnings else None,
             },
@@ -133,13 +105,9 @@ def root() -> dict[str, Any]:
                 settings.auth_google_client_id and settings.auth_google_client_secret
             ),
             "auth_jwt_algorithm": settings.auth_jwt_algorithm,
-            "llm_proxy_mode": settings.llm_proxy_mode,
             "quota_free_total_tokens": settings.quota_free_total_tokens,
             "rate_limit_requests_per_minute": settings.rate_limit_requests_per_minute,
             "rate_limit_tokens_per_minute": settings.rate_limit_tokens_per_minute,
-            "llm_upstream_configured": bool(
-                (settings.llm_upstream_base_url and settings.llm_upstream_api_key)
-                or (effective_llm_proxy_mode(settings) == "google_gemini" and settings.google_api_key)
-            ),
+            "llm_upstream_configured": bool(settings.deepseek_api_key or settings.google_api_key),
         },
     }

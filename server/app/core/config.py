@@ -59,8 +59,9 @@ class Settings(BaseSettings):
     auth_github_client_secret: str | None = None
     auth_google_scope: str = "openid email profile"
     llm_proxy_mode: str = "mock"
-    llm_default_model: str = "entro-reasoning-v1"
+    llm_default_model: str = "deepseek-chat"
     google_api_key: str | None = None
+    deepseek_api_key: str | None = None
     llm_gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     llm_gemini_chat_path: str = "/chat/completions"
     llm_gemini_default_model: str = "gemini-2.5-flash"

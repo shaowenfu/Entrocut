@@ -17,9 +17,8 @@ from ...bootstrap.dependencies import (
 from ...core.observability import log_audit_event, log_event
 from ...core.errors import ServerApiError
 from ...services.gateway.billing import build_entro_metadata, stored_user_id
-from ...services.gateway.chat_proxy import build_chat_completion_payload, estimate_prompt_tokens, upstream_chat_stream
-from ...services.gateway.provider_routing import effective_llm_proxy_mode
-from ...services.gateway.streaming import mock_streaming_chat_response
+from ...services.gateway.chat_proxy import estimate_prompt_tokens
+from ...services.models.gateway import chat as gateway_chat
 
 
 router = APIRouter(tags=["chat"])
@@ -65,7 +64,7 @@ async def chat_completions(
         prompt_tokens=estimate_prompt_tokens(messages),
     )
     current_request_id = getattr(request.state, "request_id", None) or request_id()
-    provider_name = provider_dependency_status().get("mode", effective_llm_proxy_mode(settings))
+    provider_name = str(payload.get("provider") or "deepseek")
     log_event(
         logger,
         "chat_request_started",
@@ -78,24 +77,7 @@ async def chat_completions(
         provider=provider_name,
         stream=bool(payload.get("stream") is True),
     )
-    if payload.get("stream") is True and effective_llm_proxy_mode(settings) != "mock":
-        metrics.inc(
-            "server_chat_requests_total",
-            stream="true",
-            model=str(payload.get("model") or settings.llm_default_model),
-            provider=provider_name,
-            status="accepted",
-        )
-        return await upstream_chat_stream(
-            payload,
-            current=current,
-            request_id=current_request_id,
-            background_tasks=background_tasks,
-            settings=settings,
-            metrics=metrics,
-            store=store,
-        )
-    body = await build_chat_completion_payload(payload, current, settings=settings, metrics=metrics)
+    body = (await gateway_chat(payload, settings)).body
     usage = body.get("usage") if isinstance(body, dict) else None
     prompt_tokens = int((usage or {}).get("prompt_tokens") or 0) if isinstance(usage, dict) else 0
     completion_tokens = int((usage or {}).get("completion_tokens") or 0) if isinstance(usage, dict) else 0
@@ -156,6 +138,4 @@ async def chat_completions(
         provider=provider_name,
         status="success",
     )
-    if payload.get("stream") is True:
-        return await mock_streaming_chat_response(body)
     return JSONResponse(content=body)
