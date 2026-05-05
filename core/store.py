@@ -1254,11 +1254,8 @@ class InMemoryProjectStore:
         prompt: str,
         target: ChatTarget | None,
         model: str | None,
-        routing_mode: str,
+        routing_config: dict[str, Any],
         byok_key: str | None,
-        byok_base_url: str | None,
-        byok_chat_path: str | None,
-        byok_headers_json: str | None,
         agent_loop_max_iterations: int,
     ) -> TaskModel:
         normalized_prompt = _trimmed(prompt)
@@ -1338,11 +1335,8 @@ class InMemoryProjectStore:
                 target,
                 task,
                 model,
-                routing_mode,
+                routing_config,
                 byok_key,
-                byok_base_url,
-                byok_chat_path,
-                byok_headers_json,
                 agent_loop_max_iterations,
             )
         )
@@ -1396,11 +1390,8 @@ class InMemoryProjectStore:
         target: ChatTarget | None,
         task: TaskModel,
         model: str | None,
-        routing_mode: str,
+        routing_config: dict[str, Any],
         byok_key: str | None,
-        byok_base_url: str | None,
-        byok_chat_path: str | None,
-        byok_headers_json: str | None,
         agent_loop_max_iterations: int,
     ) -> None:
         from agent import _run_chat_agent_loop
@@ -1431,7 +1422,7 @@ class InMemoryProjectStore:
             draft = EditDraftModel.model_validate(record["edit_draft"])
             auth_session = await auth_session_store.snapshot()
             access_token = auth_session.get("access_token") or ""
-            if routing_mode != "BYOK" and not access_token:
+            if (routing_config.get("mode") or "Platform") != "BYOK" and not access_token:
                 raise CoreApiError(
                     status_code=401,
                     code="AUTH_SESSION_REQUIRED",
@@ -1444,12 +1435,17 @@ class InMemoryProjectStore:
                 prompt=prompt,
                 draft=draft,
                 target=target,
-                model=model,
-                routing_mode=routing_mode,
+                routing_config={
+                    "mode": routing_config.get("mode") or "Platform",
+                    "provider": routing_config.get("provider") or "deepseek",
+                    "effective_model": (
+                        routing_config.get("custom_model")
+                        or routing_config.get("model")
+                        or model
+                        or "deepseek-chat"
+                    ),
+                },
                 byok_key=byok_key,
-                byok_base_url=byok_base_url,
-                byok_chat_path=byok_chat_path,
-                byok_headers_json=byok_headers_json,
                 agent_loop_max_iterations=agent_loop_max_iterations,
             )
             decision = loop_result.final_decision

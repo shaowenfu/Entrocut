@@ -78,8 +78,8 @@ async def restore_asset(project_id: str, asset_id: str) -> GetWorkspaceResponse:
 
 @router.post("/api/v1/projects/{project_id}/chat", response_model=TaskResponse)
 async def chat(project_id: str, payload: ChatRequest, request: Request) -> TaskResponse:
-    routing_mode = (request.headers.get("X-Routing-Mode") or "Platform").strip()
-    normalized_mode = "BYOK" if routing_mode.upper() == "BYOK" else "Platform"
+    routing = payload.routing.model_dump() if payload.routing else {}
+    normalized_mode = "BYOK" if (routing.get("mode") or "Platform").upper() == "BYOK" else "Platform"
     if normalized_mode != "BYOK":
         auth_session = await auth_session_store.snapshot()
         if not auth_session.get("access_token"):
@@ -93,11 +93,8 @@ async def chat(project_id: str, payload: ChatRequest, request: Request) -> TaskR
         payload.prompt,
         payload.target,
         payload.model,
-        normalized_mode,
+        routing,
         request.headers.get("X-BYOK-Key"),
-        request.headers.get("X-BYOK-BaseURL"),
-        request.headers.get("X-BYOK-Chat-Path"),
-        request.headers.get("X-BYOK-Headers"),
         _agent_loop_max_iterations_resolver(),
     )
     return TaskResponse(task=task)
