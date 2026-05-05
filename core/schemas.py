@@ -346,6 +346,14 @@ class ChatRequest(BaseModel):
     prompt: str
     target: ChatTarget | None = None
     model: str | None = None
+    routing: "ChatRoutingConfig | None" = None
+
+
+class ChatRoutingConfig(BaseModel):
+    mode: Literal["Platform", "BYOK"] = "Platform"
+    provider: str | None = None
+    model: str | None = None
+    custom_model: str | None = None
 
 
 class PlannerDecisionModel(BaseModel):

@@ -1,18 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import json
 from typing import Any
-from urllib.parse import urljoin, urlparse
 
 import httpx
 from pydantic import ValidationError
 
 from config import (
-    DEFAULT_BYOK_BASE_URL,
     SERVER_BASE_URL,
-    SERVER_CHAT_MODEL,
+    SERVER_DEFAULT_MODEL,
+    SERVER_DEFAULT_PROVIDER,
     SERVER_CHAT_TIMEOUT_SECONDS,
 )
 from helpers import (
@@ -59,88 +57,6 @@ except ModuleNotFoundError:
         build_planner_system_prompt,
         build_scope_state,
     )
-
-
-BLOCKED_BYOK_HOSTS = {"169.254.169.254"}
-LOCAL_BYOK_HOSTS = {"localhost", "127.0.0.1", "::1"}
-
-
-def _is_local_byok_host(hostname: str) -> bool:
-    if hostname in LOCAL_BYOK_HOSTS:
-        return True
-    try:
-        address = ipaddress.ip_address(hostname)
-    except ValueError:
-        return False
-    return address.is_loopback
-
-
-def _build_byok_endpoint(base_url: str | None, chat_path: str | None) -> str:
-    normalized_base = (base_url or DEFAULT_BYOK_BASE_URL).strip().rstrip("/")
-    normalized_path = (chat_path or "/v1/chat/completions").strip() or "/v1/chat/completions"
-    if normalized_path.startswith(("http://", "https://")):
-        endpoint_url = normalized_path
-    else:
-        normalized_path = normalized_path if normalized_path.startswith("/") else f"/{normalized_path}"
-        endpoint_url = urljoin(f"{normalized_base}/", normalized_path.lstrip("/"))
-    parsed = urlparse(endpoint_url)
-    hostname = (parsed.hostname or "").lower()
-    if parsed.scheme not in {"http", "https"} or not hostname:
-        raise CoreApiError(
-            status_code=422,
-            code="BYOK_ENDPOINT_INVALID",
-            message="BYOK endpoint must be an absolute http(s) URL.",
-        )
-    if hostname in BLOCKED_BYOK_HOSTS:
-        raise CoreApiError(
-            status_code=422,
-            code="BYOK_ENDPOINT_BLOCKED",
-            message="BYOK endpoint host is blocked.",
-            details={"host": hostname},
-        )
-    if parsed.scheme == "http" and not _is_local_byok_host(hostname):
-        raise CoreApiError(
-            status_code=422,
-            code="BYOK_ENDPOINT_HTTP_REQUIRES_LOCALHOST",
-            message="BYOK http endpoint is only allowed for localhost development.",
-            details={"host": hostname},
-        )
-    return endpoint_url
-
-
-def _parse_byok_headers(headers_json: str | None) -> dict[str, str]:
-    normalized = (headers_json or "").strip()
-    if not normalized:
-        return {}
-    try:
-        parsed = json.loads(normalized)
-    except json.JSONDecodeError as exc:
-        raise CoreApiError(
-            status_code=422,
-            code="BYOK_HEADERS_INVALID",
-            message="X-BYOK-Headers must be a JSON object.",
-        ) from exc
-    if not isinstance(parsed, dict):
-        raise CoreApiError(
-            status_code=422,
-            code="BYOK_HEADERS_INVALID",
-            message="X-BYOK-Headers must be a JSON object.",
-        )
-    blocked_headers = {"authorization", "content-length", "content-type", "host"}
-    headers: dict[str, str] = {}
-    for key, value in parsed.items():
-        header_name = str(key).strip()
-        if not header_name or header_name.lower() in blocked_headers:
-            continue
-        if not isinstance(value, (str, int, float, bool)):
-            raise CoreApiError(
-                status_code=422,
-                code="BYOK_HEADERS_INVALID",
-                message="X-BYOK-Headers values must be scalar.",
-                details={"header": header_name},
-            )
-        headers[header_name] = str(value)
-    return headers
 
 
 async def _emit_agent_progress(
@@ -327,17 +243,14 @@ async def _request_server_planner_decision(
     draft: EditDraftModel,
     runtime_state: dict[str, Any],
     target: ChatTarget | None,
-    model: str | None,
-    routing_mode: str,
+    routing_config: dict[str, Any],
     byok_key: str | None,
-    byok_base_url: str | None,
-    byok_chat_path: str | None,
-    byok_headers_json: str | None,
     iteration: int,
     observations: list[dict[str, Any]] | None = None,
 ) -> PlannerDecisionModel:
     payload = {
-        "model": model.strip() if isinstance(model, str) and model.strip() else SERVER_CHAT_MODEL,
+        "provider": routing_config.get("provider") or SERVER_DEFAULT_PROVIDER,
+        "model": routing_config.get("effective_model") or SERVER_DEFAULT_MODEL,
         "stream": False,
         "temperature": 0.1,
         "max_tokens": 600,
@@ -357,17 +270,17 @@ async def _request_server_planner_decision(
         "Content-Type": "application/json",
         "X-Request-ID": _request_id(),
     }
-    if routing_mode == "BYOK":
+    mode = routing_config.get("mode") or "Platform"
+    if mode == "BYOK":
         normalized_key = (byok_key or "").strip()
         if not normalized_key:
             raise CoreApiError(
                 status_code=422,
                 code="BYOK_KEY_REQUIRED",
-                message="X-BYOK-Key is required when X-Routing-Mode is BYOK.",
+                message="BYOK API key is required when routing mode is BYOK.",
             )
-        endpoint_url = _build_byok_endpoint(byok_base_url, byok_chat_path)
+        endpoint_url = "https://api.deepseek.com/chat/completions"
         request_headers["Authorization"] = f"Bearer {normalized_key}"
-        request_headers.update(_parse_byok_headers(byok_headers_json))
     else:
         endpoint_url = f"{SERVER_BASE_URL}/v1/chat/completions"
         request_headers["Authorization"] = f"Bearer {access_token}"
@@ -737,12 +650,8 @@ async def _run_chat_agent_loop(
     prompt: str,
     draft: EditDraftModel,
     target: ChatTarget | None,
-    model: str | None,
-    routing_mode: str,
+    routing_config: dict[str, Any],
     byok_key: str | None,
-    byok_base_url: str | None,
-    byok_chat_path: str | None,
-    byok_headers_json: str | None,
     agent_loop_max_iterations: int,
 ) -> AgentLoopResultModel:
     await _emit_agent_progress(
@@ -786,12 +695,8 @@ async def _run_chat_agent_loop(
             draft=current_draft,
             runtime_state=current_runtime_state,
             target=target,
-            model=model,
-            routing_mode=routing_mode,
+            routing_config=routing_config,
             byok_key=byok_key,
-            byok_base_url=byok_base_url,
-            byok_chat_path=byok_chat_path,
-            byok_headers_json=byok_headers_json,
             iteration=iteration,
             observations=[item.model_dump() for item in observations],
         )
