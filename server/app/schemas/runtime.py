@@ -31,6 +31,6 @@ class RuntimeModelItem(BaseModel):
 
 class RuntimeModelsResponse(BaseModel):
     default_model: str
-    provider_mode: str
-    platform_models: list[RuntimeModelItem]
+    default_provider: str
+    providers: list[dict]
     warnings: list[str] = []
