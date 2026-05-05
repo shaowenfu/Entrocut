@@ -144,7 +144,7 @@ projects/{project_id}/
 
 1. 写入 user turn。
 2. 从当前 workspace 派生 `planner context packet（规划上下文包）`。
-3. 调用 `Server /v1/chat/completions`，或在 `X-Routing-Mode: BYOK` 时调用用户自带的 OpenAI-compatible endpoint（兼容 OpenAI 接口）。
+3. 调用 `Server /v1/chat/completions`，或在 `X-Routing-Mode: BYOK` 时按本地 provider registry（供应商注册表）调用固定的 DeepSeek OpenAI-compatible endpoint（兼容 OpenAI 接口）。
 4. 要求 planner 返回严格 JSON 决策。
 5. 根据 `capabilities` 校验 tool 是否允许执行。
 6. 执行最小 tool loop：`read / retrieve / inspect / patch / preview`。
@@ -275,7 +275,8 @@ uvicorn server:app --host 127.0.0.1 --port 8000 --reload
 ```bash
 export ENTROCUT_APP_DATA_ROOT=/tmp/entrocut-core-data
 export SERVER_BASE_URL=http://127.0.0.1:8001
-export SERVER_CHAT_MODEL=entro-reasoning-v1
+export SERVER_DEFAULT_PROVIDER=deepseek
+export SERVER_DEFAULT_MODEL=deepseek-chat
 export SERVER_CHAT_TIMEOUT_SECONDS=30
 export AGENT_LOOP_MAX_ITERATIONS=3
 ```

@@ -250,7 +250,8 @@ async def _request_server_planner_decision(
 ) -> PlannerDecisionModel:
     payload = {
         "provider": routing_config.get("provider") or SERVER_DEFAULT_PROVIDER,
-        "model": routing_config.get("effective_model") or SERVER_DEFAULT_MODEL,
+        "model": routing_config.get("model") or routing_config.get("effective_model") or SERVER_DEFAULT_MODEL,
+        "custom_model": routing_config.get("custom_model") or None,
         "stream": False,
         "temperature": 0.1,
         "max_tokens": 600,

@@ -22,6 +22,8 @@ def _configure_local_runtime(monkeypatch) -> None:
     monkeypatch.setattr(settings, "allow_inmemory_redis_fallback", True)
     monkeypatch.setattr(settings, "observability_enable_metrics", True)
     monkeypatch.setattr(settings, "auth_dev_fallback_enabled", True)
+    monkeypatch.setattr(settings, "deepseek_api_key", "test-deepseek-key")
+    monkeypatch.setattr(settings, "google_api_key", "test-google-key")
     rate_limit_service._memory_counters.clear()
     rate_limit_service._redis = None
     rate_limit_service._redis_ready = None
@@ -131,18 +133,19 @@ def test_metrics_endpoint_can_be_disabled(monkeypatch) -> None:
     assert response.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
 
 
-def test_runtime_models_exposes_virtual_platform_model(monkeypatch) -> None:
+def test_runtime_models_exposes_registry_providers_and_real_models(monkeypatch) -> None:
     _configure_local_runtime(monkeypatch)
-    monkeypatch.setattr(settings, "llm_proxy_mode", "mock")
-    monkeypatch.setattr(settings, "llm_default_model", "entro-reasoning-v1")
     client = TestClient(app)
 
     response = client.get("/api/v1/runtime/models")
 
     assert response.status_code == 200
     body = response.json()
-    assert body["default_model"] == "entro-reasoning-v1"
-    assert body["provider_mode"] == "mock"
-    assert body["platform_models"][0]["id"] == "entro-reasoning-v1"
-    assert body["platform_models"][0]["available"] is True
-    assert body["platform_models"][0]["upstream_model"] == "mock-planner-json"
+    assert body["default_provider"] == "deepseek"
+    assert body["default_model"] == "deepseek-chat"
+    provider_ids = {provider["id"] for provider in body["providers"]}
+    assert {"deepseek", "google_gemini"} <= provider_ids
+    deepseek = next(provider for provider in body["providers"] if provider["id"] == "deepseek")
+    assert deepseek["available"] is True
+    assert deepseek["models"][0]["id"] == "deepseek-chat"
+    assert deepseek["models"][0]["supports_custom_model"] is True

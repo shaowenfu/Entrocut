@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from ...core.errors import ServerApiError
 from ...shared.time import now_utc
-from ...bootstrap.dependencies import effective_llm_proxy_mode, settings, update_dependency_health
+from ...bootstrap.dependencies import provider_dependency_status, settings, update_dependency_health
 
 
 router = APIRouter(tags=["health"])
@@ -22,7 +22,7 @@ def health() -> dict[str, Any]:
         "service": "server",
         "version": settings.app_version,
         "phase": settings.rewrite_phase,
-        "mode": effective_llm_proxy_mode(settings),
+        "mode": "provider_registry",
         "env": settings.app_env,
         "timestamp": now_utc().isoformat(),
         "dependencies": dependencies,
@@ -31,9 +31,9 @@ def health() -> dict[str, Any]:
             "Google OAuth is configured and ready for local testing."
             if google_configured
             else "Google OAuth is not configured yet. Set AUTH_GOOGLE_CLIENT_ID and AUTH_GOOGLE_CLIENT_SECRET.",
-            "Chat proxy runs in mock mode."
-            if effective_llm_proxy_mode(settings) == "mock"
-            else "Chat proxy forwards requests to the configured upstream provider.",
+            "Chat proxy routes requests through the provider registry."
+            if provider_dependency_status().get("ok")
+            else "No platform chat provider API key is configured.",
         ],
     }
 

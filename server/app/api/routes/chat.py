@@ -1,33 +1,39 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Request
+import json
+
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from ...bootstrap.dependencies import (
     get_current_user,
     logger,
     metrics,
-    provider_dependency_status,
     quota_service,
     rate_limit_service,
     request_id,
     settings,
-    store,
 )
 from ...core.observability import log_audit_event, log_event
 from ...core.errors import ServerApiError
-from ...services.gateway.billing import build_entro_metadata, stored_user_id
-from ...services.gateway.chat_proxy import estimate_prompt_tokens
+from ...services.gateway.billing import build_entro_metadata, build_usage, normalize_usage, stored_user_id
 from ...services.models.gateway import chat as gateway_chat
 
 
 router = APIRouter(tags=["chat"])
 
 
+def estimate_prompt_tokens(messages: list[dict]) -> int:
+    return max(1, sum(len(json.dumps(message, ensure_ascii=True)) for message in messages) // 4)
+
+
+def effective_request_model(payload: dict) -> str:
+    return str(payload.get("custom_model") or payload.get("model") or settings.llm_default_model)
+
+
 @router.post("/v1/chat/completions")
 async def chat_completions(
     request: Request,
-    background_tasks: BackgroundTasks,
     current: dict = Depends(get_current_user),
 ):
     payload = await request.json()
@@ -73,19 +79,27 @@ async def chat_completions(
         request_id=current_request_id,
         user_id=current["user"]["_id"],
         session_id=current["token_payload"]["sid"],
-        model=str(payload.get("model") or settings.llm_default_model),
+        model=effective_request_model(payload),
         provider=provider_name,
         stream=bool(payload.get("stream") is True),
     )
-    body = (await gateway_chat(payload, settings)).body
-    usage = body.get("usage") if isinstance(body, dict) else None
+    gateway_response = await gateway_chat(payload, settings)
+    body = gateway_response.body
+    if gateway_response.provider_model:
+        body["_provider_model"] = gateway_response.provider_model
+    usage = normalize_usage(body.get("usage")) if isinstance(body, dict) else None
+    if usage is None:
+        usage = build_usage(messages, json.dumps(body.get("choices", []), ensure_ascii=True))
+        body["usage"] = usage
+    else:
+        body["usage"] = usage
     prompt_tokens = int((usage or {}).get("prompt_tokens") or 0) if isinstance(usage, dict) else 0
     completion_tokens = int((usage or {}).get("completion_tokens") or 0) if isinstance(usage, dict) else 0
     quota_service.record_chat_usage(
         user=current["user"],
         session_id=str(current["token_payload"]["sid"]),
         request_id=current_request_id,
-        exposed_model=str(payload.get("model") or settings.llm_default_model),
+        exposed_model=effective_request_model(payload),
         provider_model=str(body.get("_provider_model")) if isinstance(body, dict) and body.get("_provider_model") else None,
         usage=usage if isinstance(usage, dict) else None,
     )
@@ -106,7 +120,7 @@ async def chat_completions(
         request_id=current_request_id,
         user_id=current["user"]["_id"],
         session_id=current["token_payload"]["sid"],
-        model=str(payload.get("model") or settings.llm_default_model),
+        model=effective_request_model(payload),
         provider=provider_name,
         stream=bool(payload.get("stream") is True),
         prompt_tokens=prompt_tokens,
@@ -125,7 +139,8 @@ async def chat_completions(
         target_type="credit_ledger",
         target_id=current_request_id,
         details={
-            "model": str(payload.get("model") or settings.llm_default_model),
+            "model": effective_request_model(payload),
+            "selected_model": str(payload.get("model") or settings.llm_default_model),
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "credits_balance": credits_balance,
@@ -134,7 +149,7 @@ async def chat_completions(
     metrics.inc(
         "server_chat_requests_total",
         stream="true" if payload.get("stream") is True else "false",
-        model=str(payload.get("model") or settings.llm_default_model),
+        model=effective_request_model(payload),
         provider=provider_name,
         status="success",
     )

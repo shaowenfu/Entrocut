@@ -176,10 +176,13 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const chatTurns = useWorkspaceStore((state) => state.chatTurns);
   const modelPrefs = useAuthStore((state) => state.modelPrefs);
   const setModelPrefs = useAuthStore((state) => state.setModelPrefs);
-  const platformModels = useAuthStore((state) => state.platformModels);
+  const platformProviders = useAuthStore((state) => state.platformProviders);
   const modelCatalogState = useAuthStore((state) => state.modelCatalogState);
   const modelCatalogWarning = useAuthStore((state) => state.modelCatalogWarning);
   const refreshModelCatalog = useAuthStore((state) => state.refreshModelCatalog);
+  const loadByokProviderKey = useAuthStore((state) => state.loadByokProviderKey);
+  const saveByokProviderKey = useAuthStore((state) => state.saveByokProviderKey);
+  const deleteByokProviderKey = useAuthStore((state) => state.deleteByokProviderKey);
   const loadState = useWorkspaceStore((state) => state.loadState);
   const chatState = useWorkspaceStore((state) => state.chatState);
   const summaryState = useWorkspaceStore((state) => state.summaryState);
@@ -205,11 +208,20 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const latestAssistantIdRef = useRef<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const scrubberTrackRef = useRef<HTMLDivElement | null>(null);
+  const [platformCustomModelSelected, setPlatformCustomModelSelected] = useState(false);
+  const [byokCustomModelSelected, setByokCustomModelSelected] = useState(false);
 
   const totalDurationSec = storyboard.reduce(
     (total, scene) => total + parseSceneDurationSeconds(scene.duration),
     0
   );
+  const activePlatformProvider =
+    platformProviders.find((provider) => provider.id === modelPrefs.platformProvider) ?? platformProviders[0] ?? null;
+  const activePlatformModels = activePlatformProvider?.models ?? [];
+  const byokProviderLabel = modelPrefs.byokProvider === "deepseek" ? "DeepSeek" : modelPrefs.byokProvider;
+  const byokKeySaved = Boolean(modelPrefs.byokKeySavedByProvider[modelPrefs.byokProvider]);
+  const platformCustomModelActive = platformCustomModelSelected || Boolean(modelPrefs.platformCustomModel.trim());
+  const byokCustomModelActive = byokCustomModelSelected || Boolean(modelPrefs.byokCustomModel.trim());
   const safeTotalDurationSec = Math.max(1, totalDurationSec);
   const sessionLabel = `Session #${sessionId.slice(-8).toUpperCase()}`;
   const isElectron = useMemo(() => isElectronEnvironment(), []);
@@ -702,110 +714,156 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
             {isEditLocked && !isExporting ? <span className="lock-pill">EDIT LOCKED</span> : null}
           </div>
           <AccountMenu />
-          <label className="health-pill" style={{ gap: 6 }} title={modelCatalogWarning ?? undefined}>
-            <span>Model</span>
-            <select
-              value={modelPrefs.routingMode === "BYOK" ? "byok:custom" : modelPrefs.selectedModel}
-              onChange={(event) => {
-                const model = event.target.value;
-                if (model === "byok:custom") {
-                  const byokModel = modelPrefs.byokModel.trim() || "custom";
-                  setModelPrefs({
-                    routingMode: "BYOK",
-                    selectedModel: `byok:${byokModel}`,
-                    byokModel,
-                  });
-                  return;
-                }
-                setModelPrefs({
-                  selectedModel: model,
-                  routingMode: "Platform",
-                });
-              }}
-            >
-              <optgroup label="Platform">
-                {platformModels.length === 0 ? (
-                  <option value={modelPrefs.routingMode === "Platform" ? modelPrefs.selectedModel : "entro-reasoning-v1"}>
-                    {modelCatalogState === "loading" ? "Loading models..." : "entro-reasoning-v1"}
-                  </option>
-                ) : null}
-                {platformModels.map((model) => (
-                  <option key={model.id} value={model.id} disabled={!model.available}>
-                    {model.label} ({model.id})
-                  </option>
-                ))}
-              </optgroup>
-              <optgroup label="BYOK">
-                <option value="byok:custom">BYOK Custom</option>
-              </optgroup>
-            </select>
-          </label>
-          {modelPrefs.routingMode === "BYOK" ? (
-            <details className="byok-config">
-              <summary>
-                <Settings2 size={13} />
-                <span>BYOK</span>
-              </summary>
-              <div className="byok-config-panel">
-                <label>
-                  <span>Model</span>
-                  <input
-                    type="text"
-                    value={modelPrefs.byokModel}
+          <details className="byok-config" title={modelCatalogWarning ?? undefined}>
+            <summary>
+              <Settings2 size={13} />
+              <span>{modelPrefs.routingMode === "BYOK" ? "BYOK" : "Platform"}</span>
+            </summary>
+            <div className="byok-config-panel">
+              <label>
+                <span>Mode</span>
+                <select
+                  value={modelPrefs.routingMode}
+                  onChange={(event) => {
+                    const routingMode = event.target.value === "BYOK" ? "BYOK" : "Platform";
+                    setModelPrefs({ routingMode });
+                    if (routingMode === "BYOK") {
+                      void loadByokProviderKey(modelPrefs.byokProvider);
+                    }
+                  }}
+                >
+                  <option value="Platform">Platform</option>
+                  <option value="BYOK">BYOK</option>
+                </select>
+              </label>
+              <label>
+                <span>Provider</span>
+                {modelPrefs.routingMode === "BYOK" ? (
+                  <select value={modelPrefs.byokProvider} onChange={(event) => {
+                    const provider = event.target.value;
+                    setByokCustomModelSelected(false);
+                    setModelPrefs({ byokProvider: provider, byokModel: "deepseek-chat", byokCustomModel: "" });
+                    void loadByokProviderKey(provider);
+                  }}>
+                    <option value="deepseek">DeepSeek</option>
+                  </select>
+                ) : (
+                  <select
+                    value={modelPrefs.platformProvider}
                     onChange={(event) => {
-                      const byokModel = event.target.value;
-                      setModelPrefs({
-                        byokModel,
-                        selectedModel: `byok:${byokModel.trim() || "custom"}`,
-                        routingMode: "BYOK",
-                      });
+                      const provider = event.target.value;
+                      const firstModel =
+                        platformProviders.find((item) => item.id === provider)?.models[0]?.id ?? "deepseek-chat";
+                      setPlatformCustomModelSelected(false);
+                      setModelPrefs({ platformProvider: provider, platformModel: firstModel, platformCustomModel: "" });
                     }}
-                    placeholder="gemini-2.5-flash"
-                  />
-                </label>
+                  >
+                    {platformProviders.length === 0 ? (
+                      <option value="deepseek">{modelCatalogState === "loading" ? "Loading providers..." : "DeepSeek"}</option>
+                    ) : null}
+                    {platformProviders.map((provider) => (
+                      <option key={provider.id} value={provider.id} disabled={!provider.available}>
+                        {provider.label}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </label>
+              <label>
+                <span>Model</span>
+                {modelPrefs.routingMode === "BYOK" ? (
+                  <select
+                    value={byokCustomModelActive ? "__custom" : modelPrefs.byokModel}
+                    onChange={(event) => {
+                      const model = event.target.value;
+                      if (model === "__custom") {
+                        setByokCustomModelSelected(true);
+                        setModelPrefs({ byokCustomModel: modelPrefs.byokCustomModel || modelPrefs.byokModel });
+                        return;
+                      }
+                      setByokCustomModelSelected(false);
+                      setModelPrefs({ byokModel: model, byokCustomModel: "" });
+                    }}
+                  >
+                    <option value="deepseek-chat">DeepSeek Chat</option>
+                    <option value="deepseek-reasoner">DeepSeek Reasoner</option>
+                    <option value="__custom">Custom model id</option>
+                  </select>
+                ) : (
+                  <select
+                    value={platformCustomModelActive ? "__custom" : modelPrefs.platformModel}
+                    onChange={(event) => {
+                      const model = event.target.value;
+                      if (model === "__custom") {
+                        setPlatformCustomModelSelected(true);
+                        setModelPrefs({ platformCustomModel: modelPrefs.platformCustomModel || modelPrefs.platformModel });
+                        return;
+                      }
+                      setPlatformCustomModelSelected(false);
+                      setModelPrefs({ platformModel: model, platformCustomModel: "" });
+                    }}
+                  >
+                    {activePlatformModels.length === 0 ? <option value="deepseek-chat">DeepSeek Chat</option> : null}
+                    {activePlatformModels.map((model) => (
+                      <option key={model.id} value={model.id} disabled={!model.available}>
+                        {model.label} ({model.id})
+                      </option>
+                    ))}
+                    <option value="__custom">Custom model id</option>
+                  </select>
+                )}
+              </label>
+              {modelPrefs.routingMode === "Platform" && platformCustomModelActive ? (
                 <label>
-                  <span>Base URL</span>
-                  <input
-                    type="url"
-                    value={modelPrefs.byokBaseUrl}
-                    onChange={(event) => setModelPrefs({ byokBaseUrl: event.target.value })}
-                    placeholder="https://api.openai.com"
-                  />
-                </label>
-                <label>
-                  <span>Chat Path</span>
+                  <span>Custom model id</span>
                   <input
                     type="text"
-                    value={modelPrefs.byokChatPath}
-                    onChange={(event) => setModelPrefs({ byokChatPath: event.target.value })}
-                    placeholder="/v1/chat/completions"
+                    value={modelPrefs.platformCustomModel}
+                    onChange={(event) => setModelPrefs({ platformCustomModel: event.target.value })}
+                    placeholder={modelPrefs.platformModel}
                   />
                 </label>
+              ) : null}
+              {modelPrefs.routingMode === "BYOK" && byokCustomModelActive ? (
                 <label>
-                  <span>API Key</span>
+                  <span>Custom model id</span>
+                  <input
+                    type="text"
+                    value={modelPrefs.byokCustomModel}
+                    onChange={(event) => setModelPrefs({ byokCustomModel: event.target.value })}
+                    placeholder={modelPrefs.byokModel}
+                  />
+                </label>
+              ) : null}
+              {modelPrefs.routingMode === "BYOK" ? (
+                <label>
+                  <span>{byokProviderLabel} API Key</span>
                   <div className="byok-key-row">
                     <KeyRound size={13} />
                     <input
                       type="password"
                       value={modelPrefs.byokKey}
                       onChange={(event) => setModelPrefs({ byokKey: event.target.value })}
-                      placeholder="sk-..."
+                      placeholder={byokKeySaved ? "Saved key" : "sk-..."}
                     />
+                    <button
+                      type="button"
+                      onClick={() => void saveByokProviderKey(modelPrefs.byokProvider, modelPrefs.byokKey)}
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void deleteByokProviderKey(modelPrefs.byokProvider)}
+                      disabled={!byokKeySaved && !modelPrefs.byokKey}
+                    >
+                      Delete
+                    </button>
                   </div>
                 </label>
-                <label>
-                  <span>Headers JSON</span>
-                  <textarea
-                    value={modelPrefs.byokHeadersJson}
-                    onChange={(event) => setModelPrefs({ byokHeadersJson: event.target.value })}
-                    spellCheck={false}
-                    rows={3}
-                    placeholder='{"HTTP-Referer":"https://entrocut.local"}'
-                  />
-                </label>
-              </div>
-            </details>
-          ) : null}
+              ) : null}
+            </div>
+          </details>
           <button
             className="export-btn"
             type="button"

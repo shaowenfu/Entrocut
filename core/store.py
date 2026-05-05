@@ -1438,6 +1438,8 @@ class InMemoryProjectStore:
                 routing_config={
                     "mode": routing_config.get("mode") or "Platform",
                     "provider": routing_config.get("provider") or "deepseek",
+                    "model": routing_config.get("model") or model or "deepseek-chat",
+                    "custom_model": routing_config.get("custom_model") or None,
                     "effective_model": (
                         routing_config.get("custom_model")
                         or routing_config.get("model")

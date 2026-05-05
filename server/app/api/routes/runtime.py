@@ -6,27 +6,41 @@ from fastapi import APIRouter
 
 from ...bootstrap.dependencies import inspect_service, provider_dependency_status, settings
 from ...schemas.runtime import RuntimeCapabilitiesResponse, RuntimeModelsResponse
-from ...services.models.registry import _providers
+from ...services.models.registry import provider_available, providers as model_providers
 
 
 router = APIRouter(tags=["runtime"])
 
 
 def _runtime_models() -> RuntimeModelsResponse:
-    providers = []
+    response_providers = []
     warnings: list[str] = []
-    for p in _providers(settings):
-        api_key = (settings.deepseek_api_key if p.id == "deepseek" else settings.google_api_key) or ""
-        providers.append({
-            "id": p.id,
-            "label": p.label,
-            "available": bool(api_key.strip()),
-            "models": [
-                {"id": m.id, "label": m.label, "available": bool(api_key.strip()), "supports_custom_model": m.supports_custom_model}
-                for m in p.models
-            ],
-        })
-    return RuntimeModelsResponse(default_provider="deepseek", default_model="deepseek-chat", providers=providers, warnings=warnings)
+    for provider in model_providers(settings):
+        available = provider_available(settings, provider)
+        if not available:
+            warnings.append(f"{provider.id}_api_key_missing")
+        response_providers.append(
+            {
+                "id": provider.id,
+                "label": provider.label,
+                "available": available,
+                "models": [
+                    {
+                        "id": model.id,
+                        "label": model.label,
+                        "available": available,
+                        "supports_custom_model": model.supports_custom_model,
+                    }
+                    for model in provider.models
+                ],
+            }
+        )
+    return RuntimeModelsResponse(
+        default_provider="deepseek",
+        default_model="deepseek-chat",
+        providers=response_providers,
+        warnings=warnings,
+    )
 
 
 @router.get("/api/v1/runtime/capabilities", response_model=RuntimeCapabilitiesResponse)
@@ -60,7 +74,7 @@ def runtime_capabilities() -> RuntimeCapabilitiesResponse:
         capabilities={
             "planner_chat": {"available": True, "provider": provider_dependency_status().get("mode")},
             "platform_models": {
-                "available": any(model.available for model in models.platform_models),
+                "available": any(provider.available for provider in models.providers),
                 "provider": models.default_provider,
                 "mode": models.default_model,
                 "reason": ",".join(models.warnings) if models.warnings else None,
@@ -108,6 +122,6 @@ def root() -> dict[str, Any]:
             "quota_free_total_tokens": settings.quota_free_total_tokens,
             "rate_limit_requests_per_minute": settings.rate_limit_requests_per_minute,
             "rate_limit_tokens_per_minute": settings.rate_limit_tokens_per_minute,
-            "llm_upstream_configured": bool(settings.deepseek_api_key or settings.google_api_key),
+            "model_provider_configured": any(provider.available for provider in _runtime_models().providers),
         },
     }

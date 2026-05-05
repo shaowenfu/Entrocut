@@ -36,10 +36,10 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self.client = TestClient(core_server.app)
         self.client.__enter__()
         
-        self.detect_scenes_patcher = patch("ingestion.detect_scenes", return_value=[(0, 6000), (6000, 12000)])
+        self.detect_scenes_patcher = patch("store.detect_scenes", return_value=[(0, 6000), (6000, 12000)])
         self.detect_scenes_mock = self.detect_scenes_patcher.start()
         
-        self.extract_frames_patcher = patch("ingestion.extract_and_stitch_frames", return_value="dummy_b64")
+        self.extract_frames_patcher = patch("store.extract_and_stitch_frames", return_value="dummy_b64")
         self.extract_frames_mock = self.extract_frames_patcher.start()
         
         class _MockResponse:
@@ -63,24 +63,39 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self.extract_frames_patcher.stop()
         self.httpx_patcher.stop()
 
+    def _media_path(self, name: str) -> str:
+        media_dir = Path(CORE_TEST_APPDATA_DIR.name) / "external_media"
+        media_dir.mkdir(parents=True, exist_ok=True)
+        path = media_dir / name
+        path.write_text(f"placeholder media for {name}\n", encoding="utf-8")
+        return str(path)
+
     def _create_project(self) -> tuple[str, list[str]]:
         response = self.client.post(
             "/api/v1/projects",
             json={
                 "title": "Planner Skeleton Test",
                 "prompt": "做一个旅行视频的开头",
-                "media": {
-                    "files": [
-                        {"name": "travel-day-1.mp4", "path": "/tmp/travel-day-1.mp4"},
-                        {"name": "travel-day-2.mp4", "path": "/tmp/travel-day-2.mp4"},
-                    ]
-                },
             },
         )
         self.assertEqual(response.status_code, 200)
         body = response.json()
         project_id = body["project"]["id"]
-        clip_ids = [clip["id"] for clip in body["workspace"]["edit_draft"]["clips"]]
+        self._set_auth_session()
+        import_response = self.client.post(
+            f"/api/v1/projects/{project_id}/assets:import",
+            json={
+                "media": {
+                    "files": [
+                        {"name": "travel-day-1.mp4", "path": self._media_path("travel-day-1.mp4")},
+                        {"name": "travel-day-2.mp4", "path": self._media_path("travel-day-2.mp4")},
+                    ]
+                }
+            },
+        )
+        self.assertEqual(import_response.status_code, 200)
+        workspace = self._poll_task_idle(project_id)
+        clip_ids = [clip["id"] for clip in workspace["edit_draft"]["clips"]]
         return project_id, clip_ids
 
     def _set_auth_session(self) -> None:
@@ -115,6 +130,22 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
                 return last_body["workspace"]
             time.sleep(0.1)
         self.fail(f"timed out waiting for task idle, last workspace={last_body}")
+
+    async def _fake_retrieve_candidates(self, **kwargs: Any) -> list[dict[str, Any]]:
+        draft = kwargs["draft"]
+        matches: list[dict[str, Any]] = []
+        for index, clip in enumerate(draft.clips[:2]):
+            matches.append(
+                {
+                    "clip_id": clip.id,
+                    "asset_id": clip.asset_id,
+                    "score": 0.9 - index * 0.1,
+                    "source_start_ms": clip.source_start_ms,
+                    "source_end_ms": clip.source_end_ms,
+                    "frame_count": 4,
+                }
+            )
+        return matches
 
     def test_chat_runs_planner_first_and_applies_placeholder_edit(self) -> None:
         project_id, clip_ids = self._create_project()
@@ -173,10 +204,11 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         )
 
         async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
-            self.assertEqual(url, "https://llm.example.com/custom/chat")
-            self.assertEqual(json["model"], "custom-planner-model")
+            self.assertEqual(url, "https://api.deepseek.com/chat/completions")
+            self.assertEqual(json["provider"], "deepseek")
+            self.assertEqual(json["model"], "deepseek-chat")
+            self.assertEqual(json["custom_model"], "custom-planner-model")
             self.assertEqual(headers["Authorization"], "Bearer test-byok-key")
-            self.assertEqual(headers["X-Custom-Provider"], "demo")
 
             class _DummyResponse:
                 status_code = 200
@@ -198,11 +230,16 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
                 headers={
                     "X-Routing-Mode": "BYOK",
                     "X-BYOK-Key": "test-byok-key",
-                    "X-BYOK-BaseURL": "https://llm.example.com",
-                    "X-BYOK-Chat-Path": "/custom/chat",
-                    "X-BYOK-Headers": '{"X-Custom-Provider":"demo"}',
                 },
-                json={"prompt": "使用我的自定义模型", "model": "custom-planner-model"},
+                json={
+                    "prompt": "使用我的自定义模型",
+                    "routing": {
+                        "mode": "BYOK",
+                        "provider": "deepseek",
+                        "model": "deepseek-chat",
+                        "custom_model": "custom-planner-model",
+                    },
+                },
             )
             self.assertEqual(chat_response.status_code, 200)
             workspace = self._poll_workspace(project_id)
@@ -242,7 +279,10 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
 
             return _DummyResponse()
 
-        with patch("httpx.AsyncClient.post", fake_post):
+        with (
+            patch("httpx.AsyncClient.post", fake_post),
+            patch("agent.retrieve_candidates", self._fake_retrieve_candidates),
+        ):
             chat_response = self.client.post(
                 f"/api/v1/projects/{project_id}/chat",
                 json={"prompt": "做一个旅行视频的开头，强调出发感"},
@@ -291,13 +331,14 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self.assertEqual(core_server.store.pending_background_task_count(project_id), 0)
 
     def test_chat_tool_patch_writeback_updates_draft(self) -> None:
-        project_id, _ = self._create_project()
+        project_id, clip_ids = self._create_project()
         self._set_auth_session()
+        patch_tool_input = core_server.json.dumps({"clip_id": clip_ids[0]}, ensure_ascii=False)
         planner_sequence = [
             (
                 '{"status":"requires_tool","reasoning_summary":"patch once",'
                 '"assistant_reply":"先执行一次 patch。","tool_name":"patch",'
-                '"tool_input_summary":"{}", "draft_strategy":"no_change"}'
+                f'"tool_input_summary":{core_server.json.dumps(patch_tool_input)}, "draft_strategy":"no_change"}}'
             ),
             (
                 '{"status":"final","reasoning_summary":"patched done",'
@@ -486,7 +527,10 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
 
             return _DummyResponse()
 
-        with patch("httpx.AsyncClient.post", fake_post):
+        with (
+            patch("httpx.AsyncClient.post", fake_post),
+            patch("agent.retrieve_candidates", self._fake_retrieve_candidates),
+        ):
             self.client.post(
                 f"/api/v1/projects/{project_id}/chat",
                 json={"prompt": "帮我找出发镜头"},
@@ -503,11 +547,6 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             "/api/v1/projects",
             json={
                 "title": "Local Persistence Bootstrap",
-                "media": {
-                    "files": [
-                        {"name": "bootstrap.mp4", "path": "/tmp/bootstrap.mp4"},
-                    ]
-                },
             },
         )
         self.assertEqual(response.status_code, 200)
@@ -516,8 +555,8 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         workspace = body["workspace"]
 
         self.assertEqual(body["project"]["lifecycle_state"], "active")
-        self.assertEqual(body["project"]["summary_state"], "editing")
-        self.assertEqual(workspace["summary_state"], "editing")
+        self.assertEqual(body["project"]["summary_state"], "blank")
+        self.assertEqual(workspace["summary_state"], "blank")
         self.assertIn("runtime_state", workspace)
         self.assertIn("capabilities", workspace)
         self.assertIn("media_summary", workspace)
@@ -698,19 +737,19 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
 
         response = self.client.post(
             "/api/v1/projects",
-            json={
-                "title": "Reference Only Media",
-                "media": {
-                    "files": [
-                        {"name": source_file.name, "path": str(source_file)},
-                    ]
-                },
-            },
+            json={"title": "Reference Only Media"},
         )
         self.assertEqual(response.status_code, 200)
         body = response.json()
         project_id = body["project"]["id"]
-        assets = body["workspace"]["edit_draft"]["assets"]
+        self._set_auth_session()
+        import_response = self.client.post(
+            f"/api/v1/projects/{project_id}/assets:import",
+            json={"media": {"files": [{"name": source_file.name, "path": str(source_file)}]}},
+        )
+        self.assertEqual(import_response.status_code, 200)
+        workspace = self._poll_task_idle(project_id)
+        assets = workspace["edit_draft"]["assets"]
         self.assertEqual(assets[0]["source_path"], str(source_file))
 
         workspace_dir = core_server.store.app_data_root / "projects" / project_id
@@ -724,7 +763,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
 
         import_response = self.client.post(
             f"/api/v1/projects/{project_id}/assets:import",
-            json={"media": {"files": [{"name": "extra.mp4", "path": "/tmp/extra.mp4"}]}},
+            json={"media": {"files": [{"name": "extra.mp4", "path": self._media_path("extra.mp4")}]}},
         )
         self.assertEqual(import_response.status_code, 200)
         self.assertEqual(import_response.json()["task"]["slot"], "media")
@@ -773,7 +812,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
 
             import_response = self.client.post(
                 f"/api/v1/projects/{project_id}/assets:import",
-                json={"media": {"files": [{"name": "pending.mp4", "path": "/tmp/pending.mp4"}]}},
+                json={"media": {"files": [{"name": "pending.mp4", "path": self._media_path("pending.mp4")}]}},
             )
             self.assertEqual(import_response.status_code, 200)
 
@@ -918,7 +957,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         with patch("store.asyncio.to_thread", slow_to_thread):
             import_response = self.client.post(
                 f"/api/v1/projects/{project_id}/assets:import",
-                json={"media": {"files": [{"name": "extra.mp4", "path": "/tmp/extra.mp4"}]}},
+                json={"media": {"files": [{"name": "extra.mp4", "path": self._media_path("extra-late.mp4")}]}},
             )
             self.assertEqual(import_response.status_code, 200)
 
@@ -945,18 +984,24 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
     def test_reloaded_store_preserves_asset_processing_state(self) -> None:
         response = self.client.post(
             "/api/v1/projects",
-            json={
-                "title": "Asset State Reload",
-                "media": {
-                    "files": [
-                        {"name": "reload-a.mp4", "path": "/tmp/reload-a.mp4"},
-                        {"name": "reload-b.mp4", "path": "/tmp/reload-b.mp4"},
-                    ]
-                },
-            },
+            json={"title": "Asset State Reload"},
         )
         self.assertEqual(response.status_code, 200)
         project_id = response.json()["project"]["id"]
+        self._set_auth_session()
+        import_response = self.client.post(
+            f"/api/v1/projects/{project_id}/assets:import",
+            json={
+                "media": {
+                    "files": [
+                        {"name": "reload-a.mp4", "path": self._media_path("reload-a.mp4")},
+                        {"name": "reload-b.mp4", "path": self._media_path("reload-b.mp4")},
+                    ]
+                }
+            },
+        )
+        self.assertEqual(import_response.status_code, 200)
+        self._poll_task_idle(project_id)
 
         reloaded_store = core_server.InMemoryProjectStore(app_data_root=core_server.store.app_data_root)
         persisted = reloaded_store.get_project_or_raise(project_id)
@@ -1000,12 +1045,22 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             self.assertEqual(chat_response.status_code, 200)
             self._poll_workspace(project_id)
 
-        export_response = self.client.post(
-            f"/api/v1/projects/{project_id}/export",
-            json={"format": "mp4", "quality": "preview"},
-        )
-        self.assertEqual(export_response.status_code, 200)
-        workspace = self._poll_task_idle(project_id)
+        def fake_render_export(_plan: dict[str, Any], output_path: Path, *, quality: str | None = None) -> dict[str, Any]:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(b"fake mp4 export")
+            return {
+                "output_url": f"file://{output_path}",
+                "duration_ms": 12000,
+                "file_size_bytes": output_path.stat().st_size,
+            }
+
+        with patch("store.render_export", fake_render_export):
+            export_response = self.client.post(
+                f"/api/v1/projects/{project_id}/export",
+                json={"format": "mp4", "quality": "preview"},
+            )
+            self.assertEqual(export_response.status_code, 200)
+            workspace = self._poll_task_idle(project_id)
 
         reloaded_store = core_server.InMemoryProjectStore(app_data_root=core_server.store.app_data_root)
         persisted = reloaded_store.get_project_or_raise(project_id)

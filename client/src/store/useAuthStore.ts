@@ -18,7 +18,7 @@ import {
   type RuntimeProviderItem,
   waitForLoginSession,
 } from "../services/authClient";
-import { openExternalUrl } from "../services/electronBridge";
+import { deleteSecureCredential, getSecureCredential, openExternalUrl, setSecureCredential } from "../services/electronBridge";
 import { getAuthToken, initializeAuthTokenStorage, persistAuthToken } from "../services/httpClient";
 
 type AuthStatus = "idle" | "authenticating" | "authenticated" | "anonymous" | "error";
@@ -27,11 +27,7 @@ type RoutingMode = "Platform" | "BYOK";
 type ModelCatalogState = "idle" | "loading" | "ready" | "failed";
 
 interface ModelPreferences {
-  selectedModel: string;
   byokKey: string;
-  byokBaseUrl: string;
-  byokChatPath: string;
-  byokHeadersJson: string;
   routingMode: RoutingMode;
   platformProvider: string;
   platformModel: string;
@@ -58,6 +54,9 @@ interface AuthStoreState {
   completeLoginFromDeepLink: (loginSessionId: string) => Promise<void>;
   refreshUser: () => Promise<void>;
   refreshModelCatalog: () => Promise<void>;
+  loadByokProviderKey: (provider: string) => Promise<void>;
+  saveByokProviderKey: (provider: string, key: string) => Promise<void>;
+  deleteByokProviderKey: (provider: string) => Promise<void>;
   logout: () => Promise<void>;
   clearError: () => void;
   setModelPrefs: (patch: Partial<ModelPreferences>) => void;
@@ -69,13 +68,13 @@ const DEFAULT_PLATFORM_MODEL = "deepseek-chat";
 const DEFAULT_BYOK_PROVIDER = "deepseek";
 const DEFAULT_BYOK_MODEL = "deepseek-chat";
 
+function byokCredentialId(provider: string): string {
+  return `entrocut.byok.${provider}.api_key`;
+}
+
 function defaultModelPrefs(): ModelPreferences {
   return {
-    selectedModel: DEFAULT_PLATFORM_MODEL,
     byokKey: "",
-    byokBaseUrl: "",
-    byokChatPath: "",
-    byokHeadersJson: "",
     routingMode: "Platform",
     platformProvider: DEFAULT_PLATFORM_PROVIDER,
     platformModel: DEFAULT_PLATFORM_MODEL,
@@ -99,11 +98,7 @@ function loadModelPrefs(): ModelPreferences {
     const parsed = JSON.parse(raw) as Partial<ModelPreferences>;
     const defaults = defaultModelPrefs();
     return {
-      selectedModel: parsed.selectedModel?.trim() || defaults.selectedModel,
       byokKey: "",
-      byokBaseUrl: parsed.byokBaseUrl?.trim() || "",
-      byokChatPath: parsed.byokChatPath?.trim() || "",
-      byokHeadersJson: parsed.byokHeadersJson?.trim() || "",
       routingMode: parsed.routingMode === "BYOK" ? "BYOK" : "Platform",
       platformProvider: parsed.platformProvider?.trim() || defaults.platformProvider,
       platformModel: parsed.platformModel?.trim() || defaults.platformModel,
@@ -122,7 +117,8 @@ function persistModelPrefs(prefs: ModelPreferences): void {
   if (typeof window === "undefined") {
     return;
   }
-  window.localStorage.setItem(MODEL_PREFS_KEY, JSON.stringify(prefs));
+  const { byokKey: _byokKey, ...safePrefs } = prefs;
+  window.localStorage.setItem(MODEL_PREFS_KEY, JSON.stringify(safePrefs));
 }
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -144,6 +140,24 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
   modelPrefs: loadModelPrefs(),
 
   bootstrap: async () => {
+    const currentPrefs = loadModelPrefs();
+    if (currentPrefs.routingMode === "BYOK") {
+      try {
+        const key = (await getSecureCredential(byokCredentialId(currentPrefs.byokProvider)))?.trim() || "";
+        set((state) => ({
+          modelPrefs: {
+            ...state.modelPrefs,
+            byokKey: key,
+            byokKeySavedByProvider: {
+              ...state.modelPrefs.byokKeySavedByProvider,
+              [currentPrefs.byokProvider]: Boolean(key),
+            },
+          },
+        }));
+      } catch {
+        // BYOK key loading failure should not block auth bootstrap.
+      }
+    }
     await initializeAuthTokenStorage();
     await initializeRefreshTokenStorage();
     const accessToken = getAuthToken();
@@ -295,6 +309,78 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
         modelCatalogState: "failed",
         modelCatalogWarning: errorMessage(error, "model_catalog_load_failed"),
       });
+    }
+  },
+
+  loadByokProviderKey: async (provider) => {
+    const normalizedProvider = provider.trim() || DEFAULT_BYOK_PROVIDER;
+    try {
+      const key = (await getSecureCredential(byokCredentialId(normalizedProvider)))?.trim() || "";
+      set((state) => ({
+        modelPrefs: {
+          ...state.modelPrefs,
+          byokProvider: normalizedProvider,
+          byokKey: key,
+          byokKeySavedByProvider: {
+            ...state.modelPrefs.byokKeySavedByProvider,
+            [normalizedProvider]: Boolean(key),
+          },
+        },
+      }));
+    } catch (error) {
+      set({ lastError: errorMessage(error, "byok_key_load_failed") });
+    }
+  },
+
+  saveByokProviderKey: async (provider, key) => {
+    const normalizedProvider = provider.trim() || DEFAULT_BYOK_PROVIDER;
+    const normalizedKey = key.trim();
+    if (!normalizedKey) {
+      set({ lastError: "BYOK API key is required." });
+      return;
+    }
+    try {
+      await setSecureCredential(byokCredentialId(normalizedProvider), normalizedKey);
+      const persistedKey = (await getSecureCredential(byokCredentialId(normalizedProvider)))?.trim() || "";
+      if (persistedKey !== normalizedKey) {
+        throw new Error("Secure credential store is unavailable.");
+      }
+      set((state) => {
+        const next = {
+          ...state.modelPrefs,
+          byokProvider: normalizedProvider,
+          byokKey: normalizedKey,
+          byokKeySavedByProvider: {
+            ...state.modelPrefs.byokKeySavedByProvider,
+            [normalizedProvider]: true,
+          },
+        };
+        persistModelPrefs(next);
+        return { modelPrefs: next, lastError: null };
+      });
+    } catch (error) {
+      set({ lastError: errorMessage(error, "byok_key_save_failed") });
+    }
+  },
+
+  deleteByokProviderKey: async (provider) => {
+    const normalizedProvider = provider.trim() || DEFAULT_BYOK_PROVIDER;
+    try {
+      await deleteSecureCredential(byokCredentialId(normalizedProvider));
+      set((state) => {
+        const next = {
+          ...state.modelPrefs,
+          byokKey: state.modelPrefs.byokProvider === normalizedProvider ? "" : state.modelPrefs.byokKey,
+          byokKeySavedByProvider: {
+            ...state.modelPrefs.byokKeySavedByProvider,
+            [normalizedProvider]: false,
+          },
+        };
+        persistModelPrefs(next);
+        return { modelPrefs: next, lastError: null };
+      });
+    } catch (error) {
+      set({ lastError: errorMessage(error, "byok_key_delete_failed") });
     }
   },
 

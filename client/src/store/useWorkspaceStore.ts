@@ -1418,7 +1418,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           },
           {
             mode: modelPrefs.routingMode,
-            provider: modelPrefs.byokProvider,
+            provider: modelPrefs.routingMode === "BYOK" ? modelPrefs.byokProvider : modelPrefs.platformProvider,
+            byokKey: modelPrefs.routingMode === "BYOK" ? modelPrefs.byokKey : undefined,
           }
         );
         dispatch({

@@ -59,7 +59,7 @@ def test_user_profile_and_usage_return_expected_fields(monkeypatch) -> None:
         user=user,
         session_id=bundle["session_id"],
         request_id="req_user_usage_001",
-        exposed_model="entro-reasoning-v1",
+        exposed_model="gemini-2.5-flash",
         provider_model="gemini-2.5-flash",
         usage={
             "prompt_tokens": 20,
@@ -71,7 +71,7 @@ def test_user_profile_and_usage_return_expected_fields(monkeypatch) -> None:
         user=user,
         session_id=bundle["session_id"],
         request_id="req_user_usage_002",
-        exposed_model="entro-reasoning-v1",
+        exposed_model="gemini-2.5-flash",
         provider_model="gemini-2.5-flash",
         usage={
             "prompt_tokens": 30,

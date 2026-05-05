@@ -7,15 +7,15 @@ from .adapters import gemini, openai_compatible
 from .schemas import ChatRequestContext, NormalizedChatResponse
 
 
-def _read_api_key(settings: Settings, env_name: str) -> str:
-    value = ""
-    if env_name == "DEEPSEEK_API_KEY":
-        value = (settings.deepseek_api_key or "")
-    elif env_name == "GOOGLE_API_KEY":
-        value = (settings.google_api_key or "")
-    value = value.strip()
+def _read_api_key(settings: Settings, provider: registry.ProviderDefinition) -> str:
+    value = registry.provider_api_key(settings, provider)
     if not value:
-        raise ServerApiError(status_code=503, code="MODEL_PROVIDER_UNAVAILABLE", message=f"{env_name} is required.", error_type="server_error")
+        raise ServerApiError(
+            status_code=503,
+            code="MODEL_PROVIDER_UNAVAILABLE",
+            message=f"{provider.api_key_env} is required for provider '{provider.id}'.",
+            error_type="server_error",
+        )
     return value
 
 
@@ -30,7 +30,7 @@ async def chat(payload: dict, settings: Settings) -> NormalizedChatResponse:
         model=model,
         effective_model=custom_model or model,
         payload=payload,
-        api_key=_read_api_key(settings, provider.api_key_env),
+        api_key=_read_api_key(settings, provider),
         base_url=provider.base_url or "",
         chat_path=provider.chat_path or "/chat/completions",
     )
@@ -38,4 +38,9 @@ async def chat(payload: dict, settings: Settings) -> NormalizedChatResponse:
         return await gemini.send_chat(ctx)
     if provider.adapter == "openai_compatible":
         return await openai_compatible.send_chat(ctx)
-    raise ServerApiError(status_code=500, code="MODEL_PROVIDER_INVALID", message="Unsupported provider adapter.", error_type="server_error")
+    raise ServerApiError(
+        status_code=500,
+        code="MODEL_PROVIDER_INVALID",
+        message="Unsupported provider adapter.",
+        error_type="server_error",
+    )

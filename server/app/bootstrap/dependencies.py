@@ -11,8 +11,8 @@ from ..core.errors import ServerApiError
 from ..core.observability import MetricsRegistry, configure_logging
 from ..repositories.auth_store import AuthStore
 from ..services.auth import OAuthService, TokenService, UserService
-from ..services.gateway.provider_routing import effective_llm_proxy_mode, resolve_chat_provider
 from ..services.inspect import InspectService
+from ..services.models.registry import provider_available, providers as model_providers
 from ..services.quota import QuotaService, RateLimitService
 from ..services.vector import VectorService
 
@@ -100,14 +100,25 @@ def dependency_status(
 
 
 def provider_dependency_status() -> dict[str, Any]:
-    proxy_mode = effective_llm_proxy_mode(settings)
-    if proxy_mode == "mock":
-        return dependency_status(ok=True, configured=True, mode="mock", required=False)
-    try:
-        provider = resolve_chat_provider(settings)
-        return dependency_status(ok=True, configured=True, mode=provider["provider"], required=True)
-    except ServerApiError as exc:
-        return dependency_status(ok=False, configured=False, mode=proxy_mode, required=True, error=exc.code)
+    configured_providers = [
+        provider.id
+        for provider in model_providers(settings)
+        if provider_available(settings, provider)
+    ]
+    if configured_providers:
+        return dependency_status(
+            ok=True,
+            configured=True,
+            mode=",".join(configured_providers),
+            required=True,
+        )
+    return dependency_status(
+        ok=False,
+        configured=False,
+        mode="provider_registry",
+        required=settings.requires_strict_runtime,
+        error="MODEL_PROVIDER_UNAVAILABLE",
+    )
 
 
 def vector_dependency_status() -> dict[str, Any]:
