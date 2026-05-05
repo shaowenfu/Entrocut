@@ -15,9 +15,10 @@ import {
   syncCoreAuthSessionState,
   type AuthUser,
   type RuntimeModelItem,
+  type RuntimeProviderItem,
   waitForLoginSession,
 } from "../services/authClient";
-import { deleteSecureCredential, getSecureCredential, openExternalUrl, setSecureCredential } from "../services/electronBridge";
+import { openExternalUrl } from "../services/electronBridge";
 import { getAuthToken, initializeAuthTokenStorage, persistAuthToken } from "../services/httpClient";
 
 type AuthStatus = "idle" | "authenticating" | "authenticated" | "anonymous" | "error";
@@ -27,12 +28,18 @@ type ModelCatalogState = "idle" | "loading" | "ready" | "failed";
 
 interface ModelPreferences {
   selectedModel: string;
-  routingMode: RoutingMode;
   byokKey: string;
-  byokModel: string;
   byokBaseUrl: string;
   byokChatPath: string;
   byokHeadersJson: string;
+  routingMode: RoutingMode;
+  platformProvider: string;
+  platformModel: string;
+  platformCustomModel: string;
+  byokProvider: string;
+  byokModel: string;
+  byokCustomModel: string;
+  byokKeySavedByProvider: Record<string, boolean>;
 }
 
 interface AuthStoreState {
@@ -41,6 +48,7 @@ interface AuthStoreState {
   lastError: string | null;
   isRefreshingUser: boolean;
   platformModels: RuntimeModelItem[];
+  platformProviders: RuntimeProviderItem[];
   modelCatalogState: ModelCatalogState;
   modelCatalogWarning: string | null;
   modelPrefs: ModelPreferences;
@@ -56,22 +64,26 @@ interface AuthStoreState {
 }
 
 const MODEL_PREFS_KEY = "ENTROCUT_MODEL_PREFS";
-const BYOK_KEY_CREDENTIAL_ID = "entrocut.byok.api_key";
-const DEFAULT_PLATFORM_MODEL = "entro-reasoning-v1";
-const DEFAULT_BYOK_MODEL = "gemini-2.5-flash";
-const DEFAULT_BYOK_BASE_URL = "https://api.openai.com";
-const DEFAULT_BYOK_CHAT_PATH = "/v1/chat/completions";
-const DEFAULT_BYOK_HEADERS_JSON = "{}";
+const DEFAULT_PLATFORM_PROVIDER = "deepseek";
+const DEFAULT_PLATFORM_MODEL = "deepseek-chat";
+const DEFAULT_BYOK_PROVIDER = "deepseek";
+const DEFAULT_BYOK_MODEL = "deepseek-chat";
 
 function defaultModelPrefs(): ModelPreferences {
   return {
     selectedModel: DEFAULT_PLATFORM_MODEL,
-    routingMode: "Platform",
     byokKey: "",
+    byokBaseUrl: "",
+    byokChatPath: "",
+    byokHeadersJson: "",
+    routingMode: "Platform",
+    platformProvider: DEFAULT_PLATFORM_PROVIDER,
+    platformModel: DEFAULT_PLATFORM_MODEL,
+    platformCustomModel: "",
+    byokProvider: DEFAULT_BYOK_PROVIDER,
     byokModel: DEFAULT_BYOK_MODEL,
-    byokBaseUrl: DEFAULT_BYOK_BASE_URL,
-    byokChatPath: DEFAULT_BYOK_CHAT_PATH,
-    byokHeadersJson: DEFAULT_BYOK_HEADERS_JSON,
+    byokCustomModel: "",
+    byokKeySavedByProvider: {},
   };
 }
 
@@ -88,12 +100,18 @@ function loadModelPrefs(): ModelPreferences {
     const defaults = defaultModelPrefs();
     return {
       selectedModel: parsed.selectedModel?.trim() || defaults.selectedModel,
-      routingMode: parsed.routingMode === "BYOK" ? "BYOK" : "Platform",
       byokKey: "",
+      byokBaseUrl: parsed.byokBaseUrl?.trim() || "",
+      byokChatPath: parsed.byokChatPath?.trim() || "",
+      byokHeadersJson: parsed.byokHeadersJson?.trim() || "",
+      routingMode: parsed.routingMode === "BYOK" ? "BYOK" : "Platform",
+      platformProvider: parsed.platformProvider?.trim() || defaults.platformProvider,
+      platformModel: parsed.platformModel?.trim() || defaults.platformModel,
+      platformCustomModel: parsed.platformCustomModel?.trim() || "",
+      byokProvider: parsed.byokProvider?.trim() || defaults.byokProvider,
       byokModel: parsed.byokModel?.trim() || defaults.byokModel,
-      byokBaseUrl: parsed.byokBaseUrl?.trim() || defaults.byokBaseUrl,
-      byokChatPath: parsed.byokChatPath?.trim() || defaults.byokChatPath,
-      byokHeadersJson: parsed.byokHeadersJson?.trim() || defaults.byokHeadersJson,
+      byokCustomModel: parsed.byokCustomModel?.trim() || "",
+      byokKeySavedByProvider: parsed.byokKeySavedByProvider ?? {},
     };
   } catch {
     return defaultModelPrefs();
@@ -104,17 +122,7 @@ function persistModelPrefs(prefs: ModelPreferences): void {
   if (typeof window === "undefined") {
     return;
   }
-  const { byokKey: _byokKey, ...safePrefs } = prefs;
-  window.localStorage.setItem(MODEL_PREFS_KEY, JSON.stringify(safePrefs));
-}
-
-async function persistByokKey(value: string): Promise<void> {
-  const trimmed = value.trim();
-  if (trimmed) {
-    await setSecureCredential(BYOK_KEY_CREDENTIAL_ID, trimmed);
-    return;
-  }
-  await deleteSecureCredential(BYOK_KEY_CREDENTIAL_ID);
+  window.localStorage.setItem(MODEL_PREFS_KEY, JSON.stringify(prefs));
 }
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -130,15 +138,12 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
   lastError: null,
   isRefreshingUser: false,
   platformModels: [],
+  platformProviders: [],
   modelCatalogState: "idle",
   modelCatalogWarning: null,
   modelPrefs: loadModelPrefs(),
 
   bootstrap: async () => {
-    const storedByokKey = await getSecureCredential(BYOK_KEY_CREDENTIAL_ID);
-    if (storedByokKey) {
-      set((state) => ({ modelPrefs: { ...state.modelPrefs, byokKey: storedByokKey } }));
-    }
     await initializeAuthTokenStorage();
     await initializeRefreshTokenStorage();
     const accessToken = getAuthToken();
@@ -260,14 +265,18 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
     set({ modelCatalogState: "loading", modelCatalogWarning: null });
     try {
       const catalog = await fetchRuntimeModels();
-      const platformModels = catalog.platform_models ?? [];
+      const platformProviders = catalog.providers ?? [];
+      const platformModels = platformProviders.flatMap((provider) => provider.models ?? []);
       set((state) => {
-        const selectedModelAvailable = platformModels.some((model) => model.id === state.modelPrefs.selectedModel);
+        const selectedModelAvailable = platformProviders
+          .find((provider) => provider.id === state.modelPrefs.platformProvider)
+          ?.models.some((model) => model.id === state.modelPrefs.platformModel);
         const shouldUseDefault = state.modelPrefs.routingMode === "Platform" && !selectedModelAvailable;
         const nextPrefs = shouldUseDefault
           ? {
               ...state.modelPrefs,
-              selectedModel: catalog.default_model || platformModels[0]?.id || DEFAULT_PLATFORM_MODEL,
+              platformProvider: catalog.default_provider || DEFAULT_PLATFORM_PROVIDER,
+              platformModel: catalog.default_model || DEFAULT_PLATFORM_MODEL,
             }
           : state.modelPrefs;
         if (nextPrefs !== state.modelPrefs) {
@@ -275,6 +284,7 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
         }
         return {
           platformModels,
+          platformProviders,
           modelCatalogState: "ready",
           modelCatalogWarning: catalog.warnings?.[0] ?? null,
           modelPrefs: nextPrefs,
@@ -309,9 +319,6 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
   },
 
   setModelPrefs: (patch) => {
-    if (typeof patch.byokKey === "string") {
-      void persistByokKey(patch.byokKey);
-    }
     set((state) => {
       const next = { ...state.modelPrefs, ...patch };
       persistModelPrefs(next);
