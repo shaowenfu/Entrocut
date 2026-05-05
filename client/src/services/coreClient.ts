@@ -358,6 +358,12 @@ export interface ImportAssetsRequest {
 export interface ChatRequest {
   prompt: string;
   model?: string;
+  routing?: {
+    mode: "Platform" | "BYOK";
+    provider: string;
+    model: string;
+    custom_model?: string | null;
+  };
   target?: {
     scene_id?: string | null;
     shot_id?: string | null;
@@ -367,10 +373,8 @@ export interface ChatRequest {
 // 聊天路由参数：平台模型或 BYOK。
 export interface ChatRoutingOptions {
   mode: "Platform" | "BYOK";
+  provider?: string;
   byokKey?: string;
-  byokBaseUrl?: string;
-  byokChatPath?: string;
-  byokHeadersJson?: string;
 }
 
 // 导出请求参数。
@@ -537,15 +541,6 @@ export async function sendChat(
   };
   if (routing.mode === "BYOK" && routing.byokKey) {
     headers["X-BYOK-Key"] = routing.byokKey;
-  }
-  if (routing.mode === "BYOK" && routing.byokBaseUrl) {
-    headers["X-BYOK-BaseURL"] = routing.byokBaseUrl;
-  }
-  if (routing.mode === "BYOK" && routing.byokChatPath) {
-    headers["X-BYOK-Chat-Path"] = routing.byokChatPath;
-  }
-  if (routing.mode === "BYOK" && routing.byokHeadersJson) {
-    headers["X-BYOK-Headers"] = routing.byokHeadersJson;
   }
   return requestJson<TaskResponse>(buildCoreUrl(`/api/v1/projects/${projectId}/chat`), {
     method: "POST",

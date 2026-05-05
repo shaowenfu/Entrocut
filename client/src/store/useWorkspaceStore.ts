@@ -1395,12 +1395,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         const { modelPrefs } = useAuthStore.getState();
         const selectedModel =
           modelPrefs.routingMode === "BYOK"
-            ? modelPrefs.byokModel.trim() || "gemini-2.5-flash"
-            : modelPrefs.selectedModel.replace(/^byok:/, "");
+            ? (modelPrefs.byokCustomModel.trim() || modelPrefs.byokModel.trim() || "deepseek-chat")
+            : (modelPrefs.platformCustomModel.trim() || modelPrefs.platformModel.trim() || "deepseek-chat");
         const response = await sendChatRequest(
           workspaceId,
           {
             prompt: trimmedPrompt,
+            routing: {
+              mode: modelPrefs.routingMode,
+              provider: modelPrefs.routingMode === "BYOK" ? modelPrefs.byokProvider : modelPrefs.platformProvider,
+              model: modelPrefs.routingMode === "BYOK" ? modelPrefs.byokModel : modelPrefs.platformModel,
+              custom_model: modelPrefs.routingMode === "BYOK" ? (modelPrefs.byokCustomModel.trim() || null) : (modelPrefs.platformCustomModel.trim() || null),
+            },
             model: selectedModel,
             target:
               selection.scope === "global"
@@ -1412,10 +1418,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           },
           {
             mode: modelPrefs.routingMode,
-            byokKey: modelPrefs.byokKey,
-            byokBaseUrl: modelPrefs.byokBaseUrl,
-            byokChatPath: modelPrefs.byokChatPath,
-            byokHeadersJson: modelPrefs.byokHeadersJson,
+            provider: modelPrefs.byokProvider,
           }
         );
         dispatch({

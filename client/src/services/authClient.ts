@@ -43,16 +43,20 @@ export interface RuntimeModelItem {
   id: string;
   label: string;
   available: boolean;
-  route: string;
-  upstream_model?: string | null;
-  provider?: string | null;
-  reason?: string | null;
+  supports_custom_model?: boolean;
+}
+
+export interface RuntimeProviderItem {
+  id: string;
+  label: string;
+  available: boolean;
+  models: RuntimeModelItem[];
 }
 
 export interface RuntimeModelsResponse {
+  default_provider: string;
   default_model: string;
-  provider_mode: string;
-  platform_models: RuntimeModelItem[];
+  providers: RuntimeProviderItem[];
   warnings: string[];
 }
 
