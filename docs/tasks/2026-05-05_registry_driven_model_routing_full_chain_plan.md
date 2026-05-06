@@ -41,7 +41,7 @@
 ```text
 routing_mode: Platform | BYOK
 provider_id: deepseek | google_gemini
-model_id: deepseek-chat | deepseek-reasoner | gemini-2.5-flash | ...
+model_id: deepseek-v4-flash | deepseek-v4-pro | gemini-2.5-flash | ...
 custom_model_id: string | null
 ```
 
@@ -103,7 +103,7 @@ client model panel
   "routing": {
     "mode": "Platform",
     "provider": "deepseek",
-    "model": "deepseek-chat",
+    "model": "deepseek-v4-flash",
     "custom_model": null
   }
 }
@@ -122,7 +122,7 @@ client model panel
 ```json
 {
   "provider": "deepseek",
-  "model": "deepseek-chat",
+  "model": "deepseek-v4-flash",
   "stream": false,
   "temperature": 0.1,
   "max_tokens": 600,
@@ -139,7 +139,7 @@ server 不再根据全局 `llm_proxy_mode` 推断 provider，而是根据 `provi
 ```json
 {
   "default_provider": "deepseek",
-  "default_model": "deepseek-chat",
+  "default_model": "deepseek-v4-flash",
   "providers": [
     {
       "id": "deepseek",
@@ -147,13 +147,13 @@ server 不再根据全局 `llm_proxy_mode` 推断 provider，而是根据 `provi
       "available": true,
       "models": [
         {
-          "id": "deepseek-chat",
+          "id": "deepseek-v4-flash",
           "label": "DeepSeek Chat",
           "available": true,
           "supports_custom_model": true
         },
         {
-          "id": "deepseek-reasoner",
+          "id": "deepseek-v4-pro",
           "label": "DeepSeek Reasoner",
           "available": true,
           "supports_custom_model": true
@@ -230,8 +230,8 @@ deepseek
   chat_path: /chat/completions
   api_key_env: DEEPSEEK_API_KEY
   models:
-    - deepseek-chat
-    - deepseek-reasoner
+    - deepseek-v4-flash
+    - deepseek-v4-pro
 
 google_gemini
   adapter: gemini
@@ -290,8 +290,8 @@ deepseek
   base_url: https://api.deepseek.com
   chat_path: /chat/completions
   models:
-    - deepseek-chat
-    - deepseek-reasoner
+    - deepseek-v4-flash
+    - deepseek-v4-pro
 ```
 
 core 不接受用户传入 endpoint。client 只传 provider/model/key。
@@ -317,7 +317,7 @@ Provider
   [ DeepSeek ]                       // BYOK 初期
 
 Model
-  [ deepseek-chat | deepseek-reasoner | Custom... ]
+  [ deepseek-v4-flash | deepseek-v4-pro | Custom... ]
 
 Custom model id
   [ input ]                          // 选择 Custom 后展示
