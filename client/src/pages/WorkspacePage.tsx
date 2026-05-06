@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent
 import {
   AlertCircle,
   ArrowLeft,
+  Check,
   ChevronRight,
   Download,
   Film,
@@ -13,6 +14,7 @@ import {
   Loader2,
   MessageSquare,
   Pause,
+  Pencil,
   Play,
   RefreshCw,
   Scissors,
@@ -24,6 +26,7 @@ import {
   Undo2,
   Upload,
   Wand2,
+  X,
 } from "lucide-react";
 import AccountMenu from "../components/account/AccountMenu";
 import { BrandIcon } from "../components/icons/BrandIcon";
@@ -32,7 +35,11 @@ import {
   toDesktopMediaFileReferences,
   type MediaPickMode,
 } from "../services/electronBridge";
-import { createThumbnailFromMediaUrl, getProjectMediaSource } from "../services/localMediaRegistry";
+import {
+  createThumbnailFromMediaUrl,
+  getProjectMediaSource,
+  registerProjectPersistedMediaSources,
+} from "../services/localMediaRegistry";
 import { getOrCreateSessionId } from "../utils/session";
 import {
   useWorkspaceStore,
@@ -166,6 +173,8 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const [currentTimeSec, setCurrentTimeSec] = useState(12);
   const [previewSelection, setPreviewSelection] = useState<PreviewSelection>(null);
   const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string>>({});
+  const [mediaRegistryVersion, setMediaRegistryVersion] = useState(0);
+  const [missingMediaAssetIds, setMissingMediaAssetIds] = useState<Set<string>>(() => new Set());
   const [isAssetDropHovering, setIsAssetDropHovering] = useState(false);
   const [isAssetPickerOpen, setIsAssetPickerOpen] = useState(false);
   const [showDeletedAssets, setShowDeletedAssets] = useState(false);
@@ -189,6 +198,9 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const coreCapabilities = useWorkspaceStore((state) => state.coreCapabilities);
   const coreMediaSummary = useWorkspaceStore((state) => state.coreMediaSummary);
   const coreRuntimeState = useWorkspaceStore((state) => state.coreRuntimeState);
+  const currentProject = useWorkspaceStore((state) => state.currentProject);
+  const eventStreamState = useWorkspaceStore((state) => state.eventStreamState);
+  const reconnectState = useWorkspaceStore((state) => state.reconnectState);
   const activeTasks = useWorkspaceStore((state) => state.activeTasks);
   const exportResult = useWorkspaceStore((state) => state.exportResult);
   const previewResult = useWorkspaceStore((state) => state.previewResult);
@@ -200,6 +212,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const retryAsset = useWorkspaceStore((state) => state.retryAsset);
   const deleteAsset = useWorkspaceStore((state) => state.deleteAsset);
   const restoreAsset = useWorkspaceStore((state) => state.restoreAsset);
+  const renameProject = useWorkspaceStore((state) => state.renameProject);
   const sendChat = useWorkspaceStore((state) => state.sendChat);
   const exportProject = useWorkspaceStore((state) => state.exportProject);
   const clearLastError = useWorkspaceStore((state) => state.clearLastError);
@@ -210,6 +223,8 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const scrubberTrackRef = useRef<HTMLDivElement | null>(null);
   const [platformCustomModelSelected, setPlatformCustomModelSelected] = useState(false);
   const [byokCustomModelSelected, setByokCustomModelSelected] = useState(false);
+  const [isRenamingProject, setIsRenamingProject] = useState(false);
+  const [projectTitleDraft, setProjectTitleDraft] = useState(workspaceName);
 
   const totalDurationSec = storyboard.reduce(
     (total, scene) => total + parseSceneDurationSeconds(scene.duration),
@@ -218,12 +233,21 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const activePlatformProvider =
     platformProviders.find((provider) => provider.id === modelPrefs.platformProvider) ?? platformProviders[0] ?? null;
   const activePlatformModels = activePlatformProvider?.models ?? [];
+  const selectedPlatformModel =
+    activePlatformModels.find((model) => model.id === modelPrefs.platformModel) ?? activePlatformModels[0] ?? null;
   const byokProviderLabel = modelPrefs.byokProvider === "deepseek" ? "DeepSeek" : modelPrefs.byokProvider;
   const byokKeySaved = Boolean(modelPrefs.byokKeySavedByProvider[modelPrefs.byokProvider]);
   const platformCustomModelActive = platformCustomModelSelected || Boolean(modelPrefs.platformCustomModel.trim());
   const byokCustomModelActive = byokCustomModelSelected || Boolean(modelPrefs.byokCustomModel.trim());
+  const platformRoutingReady =
+    modelPrefs.routingMode !== "Platform" ||
+    Boolean(
+      activePlatformProvider?.available &&
+        (platformCustomModelActive ? modelPrefs.platformCustomModel.trim() : selectedPlatformModel?.available)
+    );
   const safeTotalDurationSec = Math.max(1, totalDurationSec);
   const sessionLabel = `Session #${sessionId.slice(-8).toUpperCase()}`;
+  const projectTitle = typeof currentProject?.title === "string" ? currentProject.title : workspaceName;
   const isElectron = useMemo(() => isElectronEnvironment(), []);
   const mediaTask = activeTasks.find((task) => task.slot === "media") ?? null;
   const exportTask = activeTasks.find((task) => task.slot === "export") ?? null;
@@ -248,6 +272,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     !isEditLocked &&
     !isLoadingWorkspace &&
     (coreCapabilities?.can_send_chat ?? true) &&
+    platformRoutingReady &&
     !isExporting &&
     !(agentTask && (agentTask.status === "queued" || agentTask.status === "running"));
   const canUploadAssets =
@@ -291,7 +316,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
       return assets.find((asset) => asset.id === previewSelection.assetId) ?? null;
     }
     if (selectedClip) {
-      return assets.find((asset) => asset.name === selectedClip.parent) ?? null;
+      return assets.find((asset) => asset.id === selectedClip.assetId) ?? null;
     }
     return assets[0] ?? null;
   }, [assets, previewSelection, selectedClip]);
@@ -304,9 +329,12 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     if (!selectedAsset) {
       return null;
     }
-    const source = getProjectMediaSource(workspaceId, selectedAsset.name);
+    const source = getProjectMediaSource(workspaceId, selectedAsset.id);
     return source ? { ...source, kind: "source" as const } : null;
-  }, [previewResult, selectedAsset, workspaceId]);
+  }, [mediaRegistryVersion, previewResult, selectedAsset, workspaceId]);
+  const selectedAssetSourceMissing = Boolean(
+    selectedAsset?.sourcePath && missingMediaAssetIds.has(selectedAsset.id)
+  );
 
   const previewDurationSec = useMemo(() => {
     if (selectedClip) {
@@ -344,12 +372,33 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     if (!selectedAsset) {
       return null;
     }
-    return thumbnailUrls[selectedAsset.name] ?? null;
+    return thumbnailUrls[selectedAsset.id] ?? null;
   }, [selectedAsset, thumbnailUrls]);
 
   useEffect(() => {
     void initializeWorkspace(workspaceId, workspaceName);
   }, [initializeWorkspace, workspaceId, workspaceName]);
+
+  useEffect(() => {
+    if (!isRenamingProject) {
+      setProjectTitleDraft(projectTitle);
+    }
+  }, [isRenamingProject, projectTitle]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function restorePersistedMediaSources() {
+      const result = await registerProjectPersistedMediaSources(workspaceId, assets);
+      if (!cancelled) {
+        setMissingMediaAssetIds(new Set(result.missingAssetIds));
+        setMediaRegistryVersion((current) => current + 1);
+      }
+    }
+    void restorePersistedMediaSources();
+    return () => {
+      cancelled = true;
+    };
+  }, [assets, workspaceId]);
 
   useEffect(() => {
     if (modelCatalogState === "idle") {
@@ -404,10 +453,10 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     async function generateThumbnails() {
       const updates: Record<string, string> = {};
       for (const asset of assets) {
-        if (thumbnailUrls[asset.name]) {
+        if (thumbnailUrls[asset.id]) {
           continue;
         }
-        const source = getProjectMediaSource(workspaceId, asset.name);
+        const source = getProjectMediaSource(workspaceId, asset.id);
         if (!source) {
           continue;
         }
@@ -415,7 +464,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
         if (cancelled || !thumbnailUrl) {
           continue;
         }
-        updates[asset.name] = thumbnailUrl;
+        updates[asset.id] = thumbnailUrl;
       }
       if (!cancelled && Object.keys(updates).length > 0) {
         setThumbnailUrls((current) => ({
@@ -429,7 +478,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     return () => {
       cancelled = true;
     };
-  }, [assets, thumbnailUrls, workspaceId]);
+  }, [assets, mediaRegistryVersion, thumbnailUrls, workspaceId]);
 
   useEffect(() => {
     const latest = [...chatTurns].reverse().find((turn) => turn.role === "assistant");
@@ -680,6 +729,17 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     });
   }
 
+  async function handleProjectRenameCommit() {
+    const trimmed = projectTitleDraft.trim();
+    if (!trimmed || trimmed === projectTitle) {
+      setProjectTitleDraft(projectTitle);
+      setIsRenamingProject(false);
+      return;
+    }
+    await renameProject(trimmed);
+    setIsRenamingProject(false);
+  }
+
   return (
     <div className="workspace-root">
       <header className="topbar">
@@ -703,7 +763,51 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
           <div className="workspace-path">
             <span>Workspace</span>
             <ChevronRight size={12} />
-            <span className="workspace-path-current">{workspaceName}</span>
+            {isRenamingProject ? (
+              <form
+                className="workspace-title-editor"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void handleProjectRenameCommit();
+                }}
+              >
+                <input
+                  value={projectTitleDraft}
+                  onChange={(event) => setProjectTitleDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      setProjectTitleDraft(projectTitle);
+                      setIsRenamingProject(false);
+                    }
+                  }}
+                  autoFocus
+                />
+                <button type="submit" className="icon-btn" aria-label="save project title">
+                  <Check size={12} />
+                </button>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label="cancel project title edit"
+                  onClick={() => {
+                    setProjectTitleDraft(projectTitle);
+                    setIsRenamingProject(false);
+                  }}
+                >
+                  <X size={12} />
+                </button>
+              </form>
+            ) : (
+              <button
+                type="button"
+                className="workspace-title-button"
+                onClick={() => setIsRenamingProject(true)}
+                title="Rename project"
+              >
+                <span className="workspace-path-current">{projectTitle}</span>
+                <Pencil size={11} />
+              </button>
+            )}
           </div>
         </div>
 
@@ -712,6 +816,11 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
             {isMediaProcessing ? <span className="lock-pill">{mediaStatusText ?? "MEDIA PROCESSING"}</span> : null}
             {isExporting ? <span className="lock-pill">EXPORTING</span> : null}
             {isEditLocked && !isExporting ? <span className="lock-pill">EDIT LOCKED</span> : null}
+            {eventStreamState !== "connected" ? (
+              <span className="lock-pill">
+                {reconnectState === "max_attempts_reached" ? "EVENTS POLLING" : "EVENTS RECONNECTING"}
+              </span>
+            ) : null}
           </div>
           <AccountMenu />
           <details className="byok-config" title={modelCatalogWarning ?? undefined}>
@@ -726,7 +835,15 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                   value={modelPrefs.routingMode}
                   onChange={(event) => {
                     const routingMode = event.target.value === "BYOK" ? "BYOK" : "Platform";
-                    setModelPrefs({ routingMode });
+                    if (routingMode === "Platform") {
+                      setModelPrefs({
+                        routingMode,
+                        platformProvider: modelPrefs.platformProvider || activePlatformProvider?.id || "",
+                        platformModel: modelPrefs.platformModel || selectedPlatformModel?.id || "",
+                      });
+                    } else {
+                      setModelPrefs({ routingMode });
+                    }
                     if (routingMode === "BYOK") {
                       void loadByokProviderKey(modelPrefs.byokProvider);
                     }
@@ -742,24 +859,24 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                   <select value={modelPrefs.byokProvider} onChange={(event) => {
                     const provider = event.target.value;
                     setByokCustomModelSelected(false);
-                    setModelPrefs({ byokProvider: provider, byokModel: "deepseek-chat", byokCustomModel: "" });
+                    setModelPrefs({ byokProvider: provider, byokModel: "deepseek-v4-flash", byokCustomModel: "" });
                     void loadByokProviderKey(provider);
                   }}>
                     <option value="deepseek">DeepSeek</option>
                   </select>
                 ) : (
                   <select
-                    value={modelPrefs.platformProvider}
+                    value={modelPrefs.platformProvider || activePlatformProvider?.id || ""}
                     onChange={(event) => {
                       const provider = event.target.value;
                       const firstModel =
-                        platformProviders.find((item) => item.id === provider)?.models[0]?.id ?? "deepseek-chat";
+                        platformProviders.find((item) => item.id === provider)?.models[0]?.id ?? "";
                       setPlatformCustomModelSelected(false);
                       setModelPrefs({ platformProvider: provider, platformModel: firstModel, platformCustomModel: "" });
                     }}
                   >
                     {platformProviders.length === 0 ? (
-                      <option value="deepseek">{modelCatalogState === "loading" ? "Loading providers..." : "DeepSeek"}</option>
+                      <option value="" disabled>{modelCatalogState === "loading" ? "Loading providers..." : "No platform providers"}</option>
                     ) : null}
                     {platformProviders.map((provider) => (
                       <option key={provider.id} value={provider.id} disabled={!provider.available}>
@@ -785,13 +902,13 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                       setModelPrefs({ byokModel: model, byokCustomModel: "" });
                     }}
                   >
-                    <option value="deepseek-chat">DeepSeek Chat</option>
-                    <option value="deepseek-reasoner">DeepSeek Reasoner</option>
+                    <option value="deepseek-v4-flash">DeepSeek V4 Flash</option>
+                    <option value="deepseek-v4-pro">DeepSeek V4 Pro</option>
                     <option value="__custom">Custom model id</option>
                   </select>
                 ) : (
                   <select
-                    value={platformCustomModelActive ? "__custom" : modelPrefs.platformModel}
+                    value={platformCustomModelActive ? "__custom" : modelPrefs.platformModel || selectedPlatformModel?.id || ""}
                     onChange={(event) => {
                       const model = event.target.value;
                       if (model === "__custom") {
@@ -803,7 +920,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                       setModelPrefs({ platformModel: model, platformCustomModel: "" });
                     }}
                   >
-                    {activePlatformModels.length === 0 ? <option value="deepseek-chat">DeepSeek Chat</option> : null}
+                    {activePlatformModels.length === 0 ? <option value="" disabled>No platform models</option> : null}
                     {activePlatformModels.map((model) => (
                       <option key={model.id} value={model.id} disabled={!model.available}>
                         {model.label} ({model.id})
@@ -969,8 +1086,9 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                       const isFailed = asset.processingStage === "failed";
                       const isDeleted = asset.lifecycleState === "deleted";
                       const isLoading = !isReady && !isFailed;
+                      const sourceMissing = !isDeleted && missingMediaAssetIds.has(asset.id);
                       const progress = asset.processingProgress ?? 0;
-                      const assetErrorTitle = formatAssetError(asset.lastError);
+                      const assetErrorTitle = sourceMissing ? "SOURCE_MISSING: local source file is unavailable" : formatAssetError(asset.lastError);
                       
                       return (
                         <article
@@ -983,14 +1101,19 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                             if (isReady && !isDeleted) {
                               setPreviewSelection({ kind: "asset", assetId: asset.id });
                               setCurrentTimeSec(0);
-                              setIsPlaying(true);
+                              setIsPlaying(!sourceMissing);
                             }
                           }}
                         >
                           <div className="asset-thumb">
                             {isReady ? (
-                              thumbnailUrls[asset.name] ? (
-                                <img src={thumbnailUrls[asset.name]} alt={asset.name} className="asset-thumb-image" />
+                              sourceMissing ? (
+                                <div className="asset-thumb-status warning">
+                                  <AlertCircle size={20} />
+                                  <span className="status-text">源文件缺失</span>
+                                </div>
+                              ) : thumbnailUrls[asset.id] ? (
+                                <img src={thumbnailUrls[asset.id]} alt={asset.name} className="asset-thumb-image" />
                               ) : (
                                 <Film size={14} />
                               )
@@ -1011,6 +1134,21 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                           </div>
                           {isFailed || isReady || isDeleted ? (
                             <div className="asset-card-actions">
+                              {sourceMissing ? (
+                                <button
+                                  type="button"
+                                  className="asset-card-action"
+                                  title="Re-upload source file"
+                                  aria-label={`re-upload ${asset.name}`}
+                                  disabled={!canUploadAssets}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void handleAssetBrowse(isElectron ? "electron-files" : "browser-files");
+                                  }}
+                                >
+                                  <Upload size={13} />
+                                </button>
+                              ) : null}
                               {isFailed && !isDeleted ? (
                                 <button
                                   type="button"
@@ -1092,8 +1230,8 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                     </div>
                     <div className="clip-body">
                       <div className={`clip-thumb ${clip.thumbClass}`}>
-                        {thumbnailUrls[clip.parent] ? (
-                          <img src={thumbnailUrls[clip.parent]} alt={clip.parent} className="clip-thumb-image" />
+                        {thumbnailUrls[clip.assetId] ? (
+                          <img src={thumbnailUrls[clip.assetId]} alt={clip.parent} className="clip-thumb-image" />
                         ) : null}
                         <span>{clip.start}</span>
                       </div>
@@ -1292,7 +1430,17 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
               ) : (
                 <div className="preview-center">
                   <Film size={40} />
-                  <span>PREVIEW SOURCE UNAVAILABLE</span>
+                  <span>{selectedAssetSourceMissing ? "SOURCE MISSING" : "PREVIEW SOURCE UNAVAILABLE"}</span>
+                  {selectedAssetSourceMissing ? (
+                    <button
+                      type="button"
+                      className="preview-source-action"
+                      disabled={!canUploadAssets}
+                      onClick={() => void handleAssetBrowse(isElectron ? "electron-files" : "browser-files")}
+                    >
+                      Re-upload Source
+                    </button>
+                  ) : null}
                 </div>
               )}
               <div className="timecode">{formatTimecode(currentTimeSec)}</div>
@@ -1355,12 +1503,12 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                 >
                   <div className={`story-thumb ${scene.colorClass}`}>
                     {thumbnailUrls[
-                      (clips.find((clip) => clip.id === scene.primaryClipId) ?? selectedClip)?.parent ?? ""
+                      (clips.find((clip) => clip.id === scene.primaryClipId) ?? selectedClip)?.assetId ?? ""
                     ] ? (
                       <img
                         src={
                           thumbnailUrls[
-                            (clips.find((clip) => clip.id === scene.primaryClipId) ?? selectedClip)?.parent ?? ""
+                            (clips.find((clip) => clip.id === scene.primaryClipId) ?? selectedClip)?.assetId ?? ""
                           ]
                         }
                         alt={scene.title}

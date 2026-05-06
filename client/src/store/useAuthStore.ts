@@ -63,10 +63,44 @@ interface AuthStoreState {
 }
 
 const MODEL_PREFS_KEY = "ENTROCUT_MODEL_PREFS";
-const DEFAULT_PLATFORM_PROVIDER = "deepseek";
-const DEFAULT_PLATFORM_MODEL = "deepseek-chat";
+const DEFAULT_PLATFORM_PROVIDER = "";
+const DEFAULT_PLATFORM_MODEL = "";
 const DEFAULT_BYOK_PROVIDER = "deepseek";
-const DEFAULT_BYOK_MODEL = "deepseek-chat";
+const DEFAULT_BYOK_MODEL = "deepseek-v4-flash";
+
+function normalizeDeepSeekModel(model: string | undefined | null): string {
+  const normalized = model?.trim() ?? "";
+  if (normalized === "deepseek-chat") {
+    return "deepseek-v4-flash";
+  }
+  if (normalized === "deepseek-reasoner") {
+    return "deepseek-v4-pro";
+  }
+  return normalized;
+}
+
+function findCatalogSelection(catalog: {
+  default_provider?: string;
+  default_model?: string;
+  providers?: RuntimeProviderItem[];
+}): Pick<ModelPreferences, "platformProvider" | "platformModel"> {
+  const providers = catalog.providers ?? [];
+  const defaultProvider = providers.find((provider) => provider.id === catalog.default_provider);
+  const defaultModel = defaultProvider?.models.find((model) => model.id === catalog.default_model);
+  if (defaultProvider && defaultModel && defaultProvider.available && defaultModel.available) {
+    return { platformProvider: defaultProvider.id, platformModel: defaultModel.id };
+  }
+  const firstAvailableProvider = providers.find((provider) => provider.available && provider.models.some((model) => model.available));
+  const firstAvailableModel = firstAvailableProvider?.models.find((model) => model.available);
+  if (firstAvailableProvider && firstAvailableModel) {
+    return { platformProvider: firstAvailableProvider.id, platformModel: firstAvailableModel.id };
+  }
+  const firstProvider = providers.find((provider) => provider.models.length > 0);
+  return {
+    platformProvider: firstProvider?.id ?? DEFAULT_PLATFORM_PROVIDER,
+    platformModel: firstProvider?.models[0]?.id ?? DEFAULT_PLATFORM_MODEL,
+  };
+}
 
 function byokCredentialId(provider: string): string {
   return `entrocut.byok.${provider}.api_key`;
@@ -101,10 +135,10 @@ function loadModelPrefs(): ModelPreferences {
       byokKey: "",
       routingMode: parsed.routingMode === "BYOK" ? "BYOK" : "Platform",
       platformProvider: parsed.platformProvider?.trim() || defaults.platformProvider,
-      platformModel: parsed.platformModel?.trim() || defaults.platformModel,
+      platformModel: normalizeDeepSeekModel(parsed.platformModel) || defaults.platformModel,
       platformCustomModel: parsed.platformCustomModel?.trim() || "",
       byokProvider: parsed.byokProvider?.trim() || defaults.byokProvider,
-      byokModel: parsed.byokModel?.trim() || defaults.byokModel,
+      byokModel: normalizeDeepSeekModel(parsed.byokModel) || defaults.byokModel,
       byokCustomModel: parsed.byokCustomModel?.trim() || "",
       byokKeySavedByProvider: parsed.byokKeySavedByProvider ?? {},
     };
@@ -282,16 +316,19 @@ export const useAuthStore = create<AuthStoreState>((set) => ({
       const platformProviders = catalog.providers ?? [];
       const platformModels = platformProviders.flatMap((provider) => provider.models ?? []);
       set((state) => {
-        const selectedModelAvailable = platformProviders
-          .find((provider) => provider.id === state.modelPrefs.platformProvider)
-          ?.models.some((model) => model.id === state.modelPrefs.platformModel);
-        const shouldUseDefault = state.modelPrefs.routingMode === "Platform" && !selectedModelAvailable;
+        const selectedProvider = platformProviders.find((provider) => provider.id === state.modelPrefs.platformProvider);
+        const selectedModelAvailable = selectedProvider?.models.some(
+          (model) => model.id === state.modelPrefs.platformModel && model.available
+        );
+        const shouldUseDefault =
+          state.modelPrefs.routingMode === "Platform" &&
+          (!selectedProvider?.available || (!state.modelPrefs.platformCustomModel.trim() && !selectedModelAvailable));
+        const catalogSelection = findCatalogSelection(catalog);
         const nextPrefs = shouldUseDefault
           ? {
               ...state.modelPrefs,
-              platformProvider: catalog.default_provider || DEFAULT_PLATFORM_PROVIDER,
-              platformModel: catalog.default_model || DEFAULT_PLATFORM_MODEL,
-            }
+              ...catalogSelection,
+              }
           : state.modelPrefs;
         if (nextPrefs !== state.modelPrefs) {
           persistModelPrefs(nextPrefs);

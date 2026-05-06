@@ -153,6 +153,37 @@ textarea {
   font-weight: 500;
 }
 
+.workspace-title-button,
+.workspace-title-editor {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.workspace-title-button {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+
+.workspace-title-button:hover .workspace-path-current {
+  color: var(--text-strong);
+}
+
+.workspace-title-editor input {
+  width: min(260px, 32vw);
+  height: 28px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: rgba(9, 12, 20, 0.74);
+  color: var(--text-strong);
+  padding: 0 8px;
+  font: inherit;
+}
+
 /* 顶栏右侧：健康状态、账号、导出等操作。 */
 .topbar-right {
   display: flex;
@@ -631,6 +662,37 @@ textarea {
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+.asset-thumb-status {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  background: rgba(0, 0, 0, 0.42);
+}
+
+.asset-thumb-status.loading {
+  color: #7fb8ff;
+}
+
+.asset-thumb-status.error {
+  color: #ff8e8e;
+}
+
+.asset-thumb-status.warning {
+  color: #f6c56f;
+}
+
+.asset-thumb-status .status-text {
+  position: static;
+  padding: 0;
+  background: transparent;
+  color: currentColor;
+  font-size: 10px;
 }
 
 .asset-thumb span {
@@ -1151,6 +1213,27 @@ textarea {
 
 .preview-center .lucide-loader-2 {
   animation: spin 1s linear infinite;
+}
+
+.preview-source-action {
+  border: 1px solid rgba(246, 197, 111, 0.38);
+  border-radius: 7px;
+  background: rgba(246, 197, 111, 0.1);
+  color: #f6d99b;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+
+.preview-source-action:hover:not(:disabled) {
+  border-color: rgba(246, 197, 111, 0.62);
+  background: rgba(246, 197, 111, 0.18);
+}
+
+.preview-source-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* 预览左上角时间码。 */

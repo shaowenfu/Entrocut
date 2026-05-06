@@ -18,6 +18,7 @@ import {
   sendChat as sendChatRequest,
   toMediaReference,
   toRequestError,
+  updateProject as updateProjectRequest,
   type CoreChatAssistantTurn,
   type CoreChatTurn,
   type CoreAgentStepItem,
@@ -60,6 +61,7 @@ export interface WorkspaceAssetItem {
 
 export interface WorkspaceClipItem {
   id: string;
+  assetId: string;
   parent: string;
   start: string;
   end: string;
@@ -228,6 +230,7 @@ interface WorkspaceState {
   disconnectProjectEvents: () => void;
   initializeWorkspace: (workspaceId: string, workspaceName?: string) => Promise<void>;
   bootstrapFromLaunch: (input: BootstrapInput) => Promise<void>;
+  renameProject: (title: string) => Promise<void>;
   setSelectionContext: (input: {
     scope: RuntimeScope;
     selectedSceneId?: string | null;
@@ -248,6 +251,7 @@ const RECONNECT_DELAY_MS = 1200;
 let projectEventsSocket: WebSocket | null = null;
 let socketProjectId: string | null = null;
 let reconnectTimerId: number | null = null;
+let pollingTimerId: number | null = null;
 let reconnectAttempts = 0;
 let shouldReconnect = false;
 let activeWorkspaceLoadToken = 0;
@@ -258,17 +262,48 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+function detailValue(details: Record<string, unknown> | undefined, key: string): unknown {
+  return details && Object.prototype.hasOwnProperty.call(details, key) ? details[key] : undefined;
+}
+
+function describeErrorDetails(details: Record<string, unknown> | undefined): string | undefined {
+  const directCause = detailValue(details, "cause");
+  if (typeof directCause === "string" && directCause.trim()) {
+    return directCause;
+  }
+  const parts: string[] = [];
+  const serverCode = detailValue(details, "server_error_code");
+  const serverMessage = detailValue(details, "server_error_message");
+  const serverStatus = detailValue(details, "server_status");
+  const upstreamStatus = detailValue(details, "upstream_status");
+  const upstreamBody = detailValue(details, "upstream_body_excerpt");
+  if (typeof serverCode === "string" && serverCode.trim()) {
+    parts.push(serverCode);
+  }
+  if (typeof serverMessage === "string" && serverMessage.trim()) {
+    parts.push(serverMessage);
+  }
+  if (typeof serverStatus === "number") {
+    parts.push(`server_status=${serverStatus}`);
+  }
+  if (typeof upstreamStatus === "number") {
+    parts.push(`upstream_status=${upstreamStatus}`);
+  }
+  if (typeof upstreamBody === "string" && upstreamBody.trim()) {
+    parts.push(upstreamBody.trim());
+  }
+  if (parts.length > 0) {
+    return parts.join(" | ");
+  }
+  return undefined;
+}
+
 function toWorkspaceError(message: string, error: unknown): WorkspaceError {
   const maybe = toRequestError(error);
   return {
     code: maybe.code,
     message: maybe.message || message,
-    cause:
-      typeof maybe.details?.cause === "string"
-        ? maybe.details.cause
-        : error instanceof Error
-        ? error.message
-        : undefined,
+    cause: describeErrorDetails(maybe.details) ?? (error instanceof Error ? error.message : undefined),
     requestId: maybe.requestId,
   };
 }
@@ -338,6 +373,7 @@ function mapClips(editDraft: CoreEditDraft): WorkspaceClipItem[] {
   const assetsById = new Map(activeAssets.map((asset) => [asset.id, asset]));
   return editDraft.clips.map((clip, index) => ({
     id: clip.id,
+    assetId: clip.asset_id,
     parent: assetsById.get(clip.asset_id)?.name ?? "Unknown Asset",
     start: formatTimeLabel(clip.source_start_ms),
     end: formatTimeLabel(clip.source_end_ms),
@@ -765,6 +801,7 @@ function reduceWorkspaceState(
       });
       return {
         currentProject,
+        workspaceName: event.project.title,
         summaryState: event.project.summary_state ?? state.summaryState,
         lastEventSequence: Math.max(state.lastEventSequence, event.sequence),
       };
@@ -913,6 +950,13 @@ function clearReconnectTimer(): void {
   }
 }
 
+function clearPollingTimer(): void {
+  if (pollingTimerId !== null) {
+    window.clearTimeout(pollingTimerId);
+    pollingTimerId = null;
+  }
+}
+
 function closeProjectSocket(): void {
   if (projectEventsSocket) {
     projectEventsSocket.onopen = null;
@@ -931,6 +975,7 @@ const initialState: Omit<
   | "disconnectProjectEvents"
   | "initializeWorkspace"
   | "bootstrapFromLaunch"
+  | "renameProject"
   | "setSelectionContext"
   | "uploadAssets"
   | "retryAsset"
@@ -1089,7 +1134,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         const data = payload.data as {
           code: string;
           message: string;
-          details?: { cause?: string };
+          details?: Record<string, unknown>;
           request_id?: string;
         };
         dispatch({
@@ -1097,7 +1142,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           error: {
             code: data.code,
             message: data.message,
-            cause: data.details?.cause,
+            cause: describeErrorDetails(data.details),
             requestId: data.request_id,
           },
           sequence: payload.sequence,
@@ -1110,6 +1155,31 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   };
 
   const openProjectEvents = (workspaceId: string) => {
+    const scheduleWorkspacePolling = () => {
+      clearPollingTimer();
+      pollingTimerId = window.setTimeout(async () => {
+        if (get().workspaceId !== workspaceId || get().eventStreamState === "connected") {
+          return;
+        }
+        try {
+          const response = await getWorkspace(workspaceId);
+          if (get().workspaceId === workspaceId) {
+            dispatch({
+              type: "WORKSPACE_LOAD_SUCCEEDED",
+              workspace: response.workspace,
+              workspaceName: response.workspace.project.title,
+            });
+          }
+        } catch {
+          // Keep polling while the WebSocket remains unavailable.
+        } finally {
+          if (get().workspaceId === workspaceId && get().eventStreamState !== "connected") {
+            scheduleWorkspacePolling();
+          }
+        }
+      }, 2000);
+    };
+
     if (
       socketProjectId === workspaceId &&
       projectEventsSocket &&
@@ -1129,6 +1199,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
     socket.onopen = () => {
       reconnectAttempts = 0;
+      clearPollingTimer();
       dispatch({ type: "EVENT_STREAM_CONNECTED" });
     };
 
@@ -1158,6 +1229,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }
       if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
         dispatch({ type: "EVENT_STREAM_MAX_ATTEMPTS_REACHED" });
+        scheduleWorkspacePolling();
         return;
       }
       reconnectAttempts += 1;
@@ -1179,6 +1251,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       shouldReconnect = false;
       reconnectAttempts = 0;
       clearReconnectTimer();
+      clearPollingTimer();
       closeProjectSocket();
       dispatch({ type: "EVENT_STREAM_DISCONNECTED" });
     },
@@ -1237,6 +1310,34 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           await sleep(50);
         }
         await get().sendChat(trimmedPrompt);
+      }
+    },
+
+    renameProject: async (title) => {
+      const workspaceId = get().workspaceId;
+      const normalizedTitle = title.trim();
+      if (!workspaceId || !normalizedTitle) {
+        applyDirectPatch({
+          lastError: {
+            code: "PROJECT_TITLE_REQUIRED",
+            message: "project_title_required",
+          },
+        });
+        return;
+      }
+      try {
+        const response = await updateProjectRequest(workspaceId, { title: normalizedTitle });
+        dispatch({
+          type: "WORKSPACE_LOAD_SUCCEEDED",
+          workspace: response.workspace,
+          workspaceName: response.workspace.project.title,
+        });
+      } catch (error) {
+        dispatch({
+          type: "ERROR_OCCURRED",
+          error: toWorkspaceError("rename_project_failed", error),
+          sequence: get().lastEventSequence,
+        });
       }
     },
 
@@ -1393,17 +1494,29 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       try {
         const selection = get().selectionContext;
         const { modelPrefs } = useAuthStore.getState();
+        const selectedProvider =
+          modelPrefs.routingMode === "BYOK" ? modelPrefs.byokProvider.trim() : modelPrefs.platformProvider.trim();
         const selectedModel =
           modelPrefs.routingMode === "BYOK"
-            ? (modelPrefs.byokCustomModel.trim() || modelPrefs.byokModel.trim() || "deepseek-chat")
-            : (modelPrefs.platformCustomModel.trim() || modelPrefs.platformModel.trim() || "deepseek-chat");
+            ? (modelPrefs.byokCustomModel.trim() || modelPrefs.byokModel.trim() || "deepseek-v4-flash")
+            : (modelPrefs.platformCustomModel.trim() || modelPrefs.platformModel.trim());
+        if (!selectedProvider || !selectedModel) {
+          dispatch({
+            type: "CHAT_FAILED",
+            error: {
+              code: "MODEL_SELECTION_REQUIRED",
+              message: "Select an available provider and model before sending chat.",
+            },
+          });
+          return;
+        }
         const response = await sendChatRequest(
           workspaceId,
           {
             prompt: trimmedPrompt,
             routing: {
               mode: modelPrefs.routingMode,
-              provider: modelPrefs.routingMode === "BYOK" ? modelPrefs.byokProvider : modelPrefs.platformProvider,
+              provider: selectedProvider,
               model: modelPrefs.routingMode === "BYOK" ? modelPrefs.byokModel : modelPrefs.platformModel,
               custom_model: modelPrefs.routingMode === "BYOK" ? (modelPrefs.byokCustomModel.trim() || null) : (modelPrefs.platformCustomModel.trim() || null),
             },
@@ -1418,7 +1531,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           },
           {
             mode: modelPrefs.routingMode,
-            provider: modelPrefs.routingMode === "BYOK" ? modelPrefs.byokProvider : modelPrefs.platformProvider,
+            provider: selectedProvider,
             byokKey: modelPrefs.routingMode === "BYOK" ? modelPrefs.byokKey : undefined,
           }
         );

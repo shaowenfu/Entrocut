@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type DragEvent } from "react";
 import {
+  Check,
   CheckCircle2,
   ChevronRight,
   Clock3,
@@ -7,10 +8,11 @@ import {
   FileVideo,
   FolderUp,
   HardDrive,
-  MoreVertical,
+  Pencil,
   Plus,
   Search,
   Sparkles,
+  X,
 } from "lucide-react";
 import AccountMenu from "../components/account/AccountMenu";
 import { BrandIcon } from "../components/icons/BrandIcon";
@@ -31,6 +33,8 @@ const PROMPT_HINTS = [
 function LaunchpadPage() {
   const [prompt, setPrompt] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const [isDropHovering, setIsDropHovering] = useState(false);
   const [isMediaPickerOpen, setIsMediaPickerOpen] = useState(false);
   const [hintIndex, setHintIndex] = useState(0);
@@ -45,6 +49,7 @@ function LaunchpadPage() {
   const pickMediaAndStartWorkspace = useLaunchpadStore((state) => state.pickMediaAndStartWorkspace);
   const createEmptyProject = useLaunchpadStore((state) => state.createEmptyProject);
   const openWorkspace = useLaunchpadStore((state) => state.openWorkspace);
+  const renameProject = useLaunchpadStore((state) => state.renameProject);
   const clearLastError = useLaunchpadStore((state) => state.clearLastError);
 
   const isLoadingProjects = projectsLoadState === "loading";
@@ -138,6 +143,18 @@ function LaunchpadPage() {
       return;
     }
     void handleBrowseMedia("browser-files");
+  }
+
+  async function handleRenameCommit(projectId: string, currentTitle: string) {
+    const trimmed = renameDraft.trim();
+    if (!trimmed || trimmed === currentTitle) {
+      setRenamingProjectId(null);
+      setRenameDraft("");
+      return;
+    }
+    await renameProject(projectId, trimmed);
+    setRenamingProjectId(null);
+    setRenameDraft("");
   }
 
   return (
@@ -279,18 +296,71 @@ function LaunchpadPage() {
 
           <div className="recent-grid">
             {displayProjects.map((project) => (
-              <article key={project.id} className="recent-card" onClick={() => openWorkspace(project)}>
+              <article
+                key={project.id}
+                className="recent-card"
+                onClick={() => {
+                  if (renamingProjectId !== project.id) {
+                    openWorkspace(project);
+                  }
+                }}
+              >
                 <div className={`recent-thumb ${project.thumbnailClassName}`}>
                   <div className="recent-thumb-top">
                     <span className="storage-pill">
                       {project.storageType === "cloud" ? <Cloud size={10} /> : <HardDrive size={10} />}
                       {project.storageType === "cloud" ? "Cloud Synced" : "Local Draft"}
                     </span>
-                    <button type="button" onClick={(event) => event.stopPropagation()} aria-label="more">
-                      <MoreVertical size={13} />
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setRenamingProjectId(project.id);
+                        setRenameDraft(project.title);
+                      }}
+                      aria-label="rename project"
+                      title="Rename project"
+                    >
+                      <Pencil size={13} />
                     </button>
                   </div>
-                  <h3>{project.title}</h3>
+                  {renamingProjectId === project.id ? (
+                    <form
+                      className="recent-title-editor"
+                      onClick={(event) => event.stopPropagation()}
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void handleRenameCommit(project.id, project.title);
+                      }}
+                    >
+                      <input
+                        value={renameDraft}
+                        onChange={(event) => setRenameDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") {
+                            setRenamingProjectId(null);
+                            setRenameDraft("");
+                          }
+                        }}
+                        autoFocus
+                      />
+                      <button type="submit" aria-label="save project title">
+                        <Check size={12} />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="cancel project title edit"
+                        onClick={() => {
+                          setRenamingProjectId(null);
+                          setRenameDraft("");
+                        }}
+                      >
+                        <X size={12} />
+                      </button>
+                    </form>
+                  ) : (
+                    <h3>{project.title}</h3>
+                  )}
                 </div>
 
                 <div className="recent-meta">

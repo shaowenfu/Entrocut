@@ -328,6 +328,11 @@ export interface CreateProjectRequest {
   media?: MediaReference;
 }
 
+// 更新项目元信息。
+export interface UpdateProjectRequest {
+  title: string;
+}
+
 // 创建项目响应。
 export interface CreateProjectResponse {
   project: CoreProject;
@@ -493,6 +498,15 @@ export async function createProject(payload: CreateProjectRequest): Promise<Crea
 export async function getWorkspace(projectId: string): Promise<GetWorkspaceResponse> {
   return requestJson<GetWorkspaceResponse>(buildCoreUrl(`/api/v1/projects/${projectId}`), {
     method: "GET",
+    authRequired: false,
+  });
+}
+
+// 更新项目标题。
+export async function updateProject(projectId: string, payload: UpdateProjectRequest): Promise<GetWorkspaceResponse> {
+  return requestJson<GetWorkspaceResponse>(buildCoreUrl(`/api/v1/projects/${projectId}`), {
+    method: "PATCH",
+    body: payload,
     authRequired: false,
   });
 }

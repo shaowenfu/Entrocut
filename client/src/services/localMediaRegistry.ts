@@ -5,10 +5,16 @@ import {
 
 // Renderer 可播放的本地媒体源。
 interface LocalMediaSource {
+  assetId?: string;
   assetName: string;
   url: string;
   mimeType: string | null;
   kind: "object_url" | "local_media_url";
+}
+
+interface PersistedMediaRegistrationResult {
+  registeredAssetIds: string[];
+  missingAssetIds: string[];
 }
 
 // 按 projectId 隔离的媒体源注册表。
@@ -17,6 +23,10 @@ const projectMediaRegistry = new Map<string, Map<string, LocalMediaSource>>();
 // 归一化资产名，用于宽松匹配 core asset 和本地文件。
 function normalizeAssetName(assetName: string): string {
   return assetName.trim().toLowerCase();
+}
+
+function assetIdKey(assetId: string): string {
+  return `id:${assetId.trim()}`;
 }
 
 // 获取或创建项目级媒体注册表。
@@ -88,13 +98,78 @@ export async function registerProjectMediaSources(
   }
 }
 
-// 根据 projectId 和 assetName 查找可播放媒体源。
-export function getProjectMediaSource(projectId: string, assetName: string): LocalMediaSource | null {
+// 根据持久化 source_path 重新注册项目素材，供重新打开 Workspace 后继续播放。
+export async function registerProjectPersistedMediaSources(
+  projectId: string,
+  assets: Array<{
+    id: string;
+    name: string;
+    sourcePath?: string | null;
+    source_path?: string | null;
+    type?: string | null;
+  }>
+): Promise<PersistedMediaRegistrationResult> {
+  const desktopFiles: DesktopMediaFileReference[] = [];
+  const expectedAssets = new Map<string, string>();
+  for (const asset of assets) {
+    const sourcePath = asset.sourcePath ?? asset.source_path ?? null;
+    if (!sourcePath || asset.type === "audio") {
+      continue;
+    }
+    expectedAssets.set(asset.id, sourcePath);
+    desktopFiles.push({
+      name: asset.name,
+      path: sourcePath,
+    });
+  }
+  if (desktopFiles.length === 0) {
+    return { registeredAssetIds: [], missingAssetIds: [] };
+  }
+
+  const projectRegistry = ensureProjectRegistry(projectId);
+  const localMediaByPath = new Map(
+    (await registerLocalMediaFiles(desktopFiles)).map((item) => [normalizeMediaPathKey(item.path), item])
+  );
+  const registeredAssetIds: string[] = [];
+  const missingAssetIds: string[] = [];
+  for (const asset of assets) {
+    const sourcePath = asset.sourcePath ?? asset.source_path ?? null;
+    if (!sourcePath || asset.type === "audio") {
+      continue;
+    }
+    const registered = localMediaByPath.get(normalizeMediaPathKey(sourcePath));
+    if (!registered) {
+      projectRegistry.delete(assetIdKey(asset.id));
+      projectRegistry.delete(normalizeAssetName(asset.name));
+      missingAssetIds.push(asset.id);
+      continue;
+    }
+    const source: LocalMediaSource = {
+      assetId: asset.id,
+      assetName: asset.name,
+      url: registered.url,
+      mimeType: registered.mime_type ?? null,
+      kind: "local_media_url",
+    };
+    projectRegistry.set(assetIdKey(asset.id), source);
+    projectRegistry.set(normalizeAssetName(asset.name), source);
+    registeredAssetIds.push(asset.id);
+  }
+  for (const assetId of expectedAssets.keys()) {
+    if (!registeredAssetIds.includes(assetId) && !missingAssetIds.includes(assetId)) {
+      missingAssetIds.push(assetId);
+    }
+  }
+  return { registeredAssetIds, missingAssetIds };
+}
+
+// 根据 projectId 和 asset id/name 查找可播放媒体源。
+export function getProjectMediaSource(projectId: string, assetIdOrName: string): LocalMediaSource | null {
   const projectRegistry = projectMediaRegistry.get(projectId);
   if (!projectRegistry) {
     return null;
   }
-  return projectRegistry.get(normalizeAssetName(assetName)) ?? null;
+  return projectRegistry.get(assetIdKey(assetIdOrName)) ?? projectRegistry.get(normalizeAssetName(assetIdOrName)) ?? null;
 }
 
 // 从视频 URL 抽取一帧生成 JPEG data URL 缩略图。

@@ -587,6 +587,30 @@
   text-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
 }
 
+.recent-title-editor {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px 28px;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+.recent-title-editor input {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.42);
+  color: #ffffff;
+  padding: 0 var(--space-2);
+  font: inherit;
+}
+
+.recent-title-editor button {
+  opacity: 1;
+}
+
 /* ============================================
  * RECENT META
  * 改进：简化信息架构

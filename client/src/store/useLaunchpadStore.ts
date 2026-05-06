@@ -10,6 +10,7 @@ import {
   createProject,
   listProjects,
   toMediaReference,
+  updateProject,
   type CoreProject,
 } from "../services/coreClient";
 import { registerProjectMediaSources } from "../services/localMediaRegistry";
@@ -57,6 +58,8 @@ type LaunchpadEvent =
   | { type: "PROJECTS_LOAD_STARTED" }
   | { type: "PROJECTS_LOAD_SUCCEEDED"; projects: ProjectMeta[] }
   | { type: "PROJECTS_LOAD_FAILED"; error: LaunchpadError }
+  | { type: "PROJECT_RENAMED"; project: CoreProject }
+  | { type: "PROJECT_RENAME_FAILED"; error: LaunchpadError }
   | { type: "SYSTEM_CHECK_STARTED" }
   | { type: "SYSTEM_CHECK_SUCCEEDED" }
   | { type: "SYSTEM_CHECK_FAILED" }
@@ -89,6 +92,7 @@ interface LaunchpadState {
   importLocalFolder: (input?: ImportMediaInput) => Promise<string | null>;
   createEmptyProject: () => Promise<string>;
   createProjectFromPrompt: (prompt: string, folderPath?: string) => Promise<string>;
+  renameProject: (projectId: string, title: string) => Promise<void>;
   openWorkspace: (project: ProjectMeta) => void;
   clearActiveWorkspace: () => void;
   clearLastError: () => void;
@@ -203,6 +207,21 @@ function reduceLaunchpadState(
       return {
         recentProjects: [],
         projectsLoadState: "failed",
+        lastError: event.error,
+      };
+    case "PROJECT_RENAMED": {
+      const renamedProject = mapProjectMeta(event.project);
+      return {
+        recentProjects: state.recentProjects.map((project) =>
+          project.id === renamedProject.id ? renamedProject : project
+        ),
+        activeWorkspaceName:
+          state.activeWorkspaceId === renamedProject.id ? renamedProject.title : state.activeWorkspaceName,
+        lastError: null,
+      };
+    }
+    case "PROJECT_RENAME_FAILED":
+      return {
         lastError: event.error,
       };
     case "SYSTEM_CHECK_STARTED":
@@ -384,7 +403,6 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => {
 
         const created = await createProject({
           prompt: trimmedPrompt || undefined,
-          title: !hasMedia ? trimmedPrompt.slice(0, 32) || "Untitled Project" : undefined,
         });
 
         dispatch({
@@ -470,6 +488,26 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => {
         throw appError;
       }
       return createdId;
+    },
+
+    renameProject: async (projectId, title) => {
+      const normalizedTitle = title.trim();
+      if (!normalizedTitle) {
+        dispatch({
+          type: "PROJECT_RENAME_FAILED",
+          error: toLaunchpadError("PROJECT_TITLE_REQUIRED", "project_title_required"),
+        });
+        return;
+      }
+      try {
+        const response = await updateProject(projectId, { title: normalizedTitle });
+        dispatch({ type: "PROJECT_RENAMED", project: response.workspace.project });
+      } catch (error) {
+        dispatch({
+          type: "PROJECT_RENAME_FAILED",
+          error: toLaunchpadErrorFromUnknown(error, "CORE_REQUEST_FAILED", "rename_project_failed"),
+        });
+      }
     },
 
     openWorkspace: (project) => {
