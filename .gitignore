@@ -57,3 +57,5 @@ server/*.db
 entrocut_jobs/
 docs/archived
 docs/毕设相关
+client/src/ui_design/.env
+client/src/ui_design

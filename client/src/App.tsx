@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import LaunchpadPage from "./pages/LaunchpadPage";
 import WorkspacePage from "./pages/WorkspacePage";
+import { AgentChatPanels } from "./components/chat/AgentChatPanels";
 import {
   getCoreBaseUrlFromElectron,
   getCoreRuntimeState,
@@ -155,9 +156,14 @@ function App() {
     );
   }
 
-  // 桌面端必须等本地 core ready 后再进入业务页面。
+  // Desktop bootstrap logic...
   if (isElectronEnvironment() && coreRuntimeState?.status !== "ready") {
     return <DesktopBootstrapGate state={coreRuntimeState} />;
+  }
+
+  // Sandbox UI for testing components
+  if (typeof window !== "undefined" && window.location.search.includes("ui-canvas")) {
+    return <AgentChatPanels />;
   }
 
   // 未选择 workspace 时显示启动页。
