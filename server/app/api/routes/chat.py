@@ -16,6 +16,7 @@ from ...bootstrap.dependencies import (
 )
 from ...core.observability import log_audit_event, log_event
 from ...core.errors import ServerApiError
+from ...schemas.chat import ChatCompletionsRequest
 from ...services.gateway.billing import build_entro_metadata, build_usage, normalize_usage, stored_user_id
 from ...services.models.gateway import chat as gateway_chat
 
@@ -34,16 +35,10 @@ def effective_request_model(payload: dict) -> str:
 @router.post("/v1/chat/completions")
 async def chat_completions(
     request: Request,
+    payload_body: ChatCompletionsRequest,
     current: dict = Depends(get_current_user),
 ):
-    payload = await request.json()
-    if not isinstance(payload, dict):
-        raise ServerApiError(
-            status_code=422,
-            code="INVALID_CHAT_REQUEST",
-            message="Request body must be a JSON object.",
-            error_type="invalid_request_error",
-        )
+    payload = payload_body.model_dump(exclude_none=True)
     if current["user"].get("status") != "active":
         raise ServerApiError(
             status_code=403,
@@ -59,11 +54,14 @@ async def chat_completions(
             message="messages must be a non-empty array.",
             error_type="invalid_request_error",
         )
-    stream_options = payload.get("stream_options")
-    if isinstance(stream_options, dict):
-        payload["stream_options"] = {**stream_options, "include_usage": True}
+    if payload.get("stream") is True:
+        stream_options = payload.get("stream_options")
+        if isinstance(stream_options, dict):
+            payload["stream_options"] = {**stream_options, "include_usage": True}
+        else:
+            payload["stream_options"] = {"include_usage": True}
     else:
-        payload["stream_options"] = {"include_usage": True}
+        payload.pop("stream_options", None)
     quota_service.assert_can_chat(current["user"])
     rate_limit_service.consume_prompt_budget(
         user_id=stored_user_id(current["user"]),

@@ -21,13 +21,12 @@ from .auth import (
     LogoutResponse,
     RefreshTokenRequest,
     RefreshTokenResponse,
-    StagingBootstrapLoginSessionRequest,
-    StagingBootstrapLoginSessionResponse,
     TokenBundle,
 )
+from .chat import ChatCompletionsRequest, ChatMessage
 from .common import AssetReference, AssetVector
 from .inspect import CandidateJudgment, InspectCandidate, InspectCriterion, InspectFrame, InspectRequest, InspectResponse
-from .runtime import RuntimeCapabilitiesResponse, RuntimeCapabilityItem, RuntimeModelItem, RuntimeModelsResponse
+from .runtime import RuntimeModelItem, RuntimeModelsResponse
 from .user import MeResponse, UserProfile, UserProfileResponse, UserUsageResponse, UserUsageSnapshot
 
 __all__ = [
@@ -38,6 +37,8 @@ __all__ = [
     "AssetVectorIndexStateResponse",
     "AssetVector",
     "CandidateJudgment",
+    "ChatCompletionsRequest",
+    "ChatMessage",
     "InspectCandidate",
     "InspectCriterion",
     "InspectFrame",
@@ -53,12 +54,8 @@ __all__ = [
     "RefreshTokenResponse",
     "RetrievalMatch",
     "RetrievalQuery",
-    "RuntimeCapabilitiesResponse",
-    "RuntimeCapabilityItem",
     "RuntimeModelItem",
     "RuntimeModelsResponse",
-    "StagingBootstrapLoginSessionRequest",
-    "StagingBootstrapLoginSessionResponse",
     "TokenBundle",
     "UserProfile",
     "UserProfileResponse",

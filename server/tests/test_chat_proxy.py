@@ -88,6 +88,7 @@ def test_deepseek_chat_uses_openai_compatible_adapter(monkeypatch) -> None:
         assert json["model"] == "deepseek-v4-flash"
         assert "provider" not in json
         assert "custom_model" not in json
+        assert "stream_options" not in json
         assert headers["Authorization"] == "Bearer test-deepseek-key"
         return _DummyResponse(
             status_code=200,

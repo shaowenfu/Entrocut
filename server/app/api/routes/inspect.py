@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import json
-
 from fastapi import APIRouter, Depends, Request
 
 from ...bootstrap.dependencies import get_current_user, inspect_service, logger, metrics, settings
 from ...core.errors import ServerApiError
 from ...core.observability import log_audit_event, log_event, now_ms
-from ...schemas.inspect import InspectResponse
+from ...schemas.inspect import InspectRequest, InspectResponse
 
 
 router = APIRouter(tags=["inspect"])
@@ -16,19 +14,10 @@ router = APIRouter(tags=["inspect"])
 @router.post("/v1/tools/inspect", response_model=InspectResponse)
 async def tools_inspect(
     request: Request,
+    payload_body: InspectRequest,
     current: dict = Depends(get_current_user),
 ) -> InspectResponse:
-    try:
-        raw_payload = await request.json()
-    except json.JSONDecodeError as exc:
-        raise ServerApiError(
-            status_code=422,
-            code="INVALID_INSPECT_REQUEST",
-            message="Request body must be valid JSON.",
-            error_type="invalid_request_error",
-        ) from exc
-
-    payload = inspect_service.validate_request(raw_payload)
+    payload = inspect_service.validate_request(payload_body.model_dump())
     request_id = getattr(request.state, "request_id", None)
     provider_name = inspect_service.peek_provider_name()
     started_ms = now_ms()

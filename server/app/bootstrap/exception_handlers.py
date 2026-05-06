@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pymongo.errors import PyMongoError
 from redis.exceptions import RedisError
@@ -49,6 +50,49 @@ async def logged_server_api_error_handler(request: Request, exc: ServerApiError)
     return JSONResponse(status_code=exc.status_code, content=error_payload(exc, request_id))
 
 
+def _validation_error_for_path(path: str) -> ServerApiError:
+    if path == "/v1/assets/vectorize" or path == "/v1/assets/vector-index-state":
+        return ServerApiError(
+            status_code=422,
+            code="INVALID_VECTORIZE_REQUEST",
+            message="Request validation failed.",
+            error_type="invalid_request_error",
+        )
+    if path == "/v1/assets/retrieval":
+        return ServerApiError(
+            status_code=422,
+            code="INVALID_RETRIEVAL_REQUEST",
+            message="Request validation failed.",
+            error_type="invalid_request_error",
+        )
+    if path == "/v1/tools/inspect":
+        return ServerApiError(
+            status_code=422,
+            code="INVALID_INSPECT_REQUEST",
+            message="Request validation failed.",
+            error_type="invalid_request_error",
+        )
+    if path == "/v1/chat/completions":
+        return ServerApiError(
+            status_code=422,
+            code="INVALID_CHAT_REQUEST",
+            message="Request validation failed.",
+            error_type="invalid_request_error",
+        )
+    return ServerApiError(
+        status_code=422,
+        code="INVALID_REQUEST",
+        message="Request validation failed.",
+        error_type="invalid_request_error",
+    )
+
+
+async def request_validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    api_error = _validation_error_for_path(request.url.path)
+    api_error.details["validation_errors"] = exc.errors()
+    return await logged_server_api_error_handler(request, api_error)
+
+
 async def dependency_error_handler(request: Request, exc: Exception) -> JSONResponse:
     dependency = "unknown"
     if isinstance(exc, PyMongoError):
@@ -82,5 +126,6 @@ async def dependency_error_handler(request: Request, exc: Exception) -> JSONResp
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(Exception, logged_unhandled_error_handler)
     app.add_exception_handler(ServerApiError, logged_server_api_error_handler)
+    app.add_exception_handler(RequestValidationError, request_validation_error_handler)
     app.add_exception_handler(PyMongoError, dependency_error_handler)
     app.add_exception_handler(RedisError, dependency_error_handler)

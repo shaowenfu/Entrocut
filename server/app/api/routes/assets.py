@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import json
-
 from fastapi import APIRouter, Depends, Request
-from pydantic import ValidationError
 
 from ...bootstrap.dependencies import get_current_user, logger, metrics, settings, vector_service
-from ...core.errors import ServerApiError, invalid_retrieval_request, invalid_vectorize_request
+from ...core.errors import ServerApiError
 from ...core.observability import log_audit_event, log_event
 from ...schemas.assets import (
     AssetRetrievalRequest,
@@ -24,19 +21,9 @@ router = APIRouter(tags=["assets"])
 @router.post("/v1/assets/vectorize", response_model=VectorizeResponse)
 async def vectorize_asset(
     request: Request,
+    payload: VectorizeRequest,
     current: dict = Depends(get_current_user),
 ) -> VectorizeResponse:
-    try:
-        raw_payload = await request.json()
-    except json.JSONDecodeError as exc:
-        raise invalid_vectorize_request("Request body must be valid JSON.") from exc
-    try:
-        payload = VectorizeRequest.model_validate(raw_payload)
-    except ValidationError as exc:
-        raise invalid_vectorize_request(
-            "Vectorize request validation failed.",
-            details={"validation_errors": exc.errors()},
-        ) from exc
     try:
         log_event(
             logger,
@@ -88,19 +75,9 @@ async def vectorize_asset(
 @router.post("/v1/assets/retrieval", response_model=AssetRetrievalResponse)
 async def assets_retrieval(
     request: Request,
+    payload: AssetRetrievalRequest,
     current: dict = Depends(get_current_user),
 ) -> AssetRetrievalResponse:
-    try:
-        raw_payload = await request.json()
-    except json.JSONDecodeError as exc:
-        raise invalid_retrieval_request("Request body must be valid JSON.") from exc
-    try:
-        payload = AssetRetrievalRequest.model_validate(raw_payload)
-    except ValidationError as exc:
-        raise invalid_retrieval_request(
-            "Retrieval request validation failed.",
-            details={"validation_errors": exc.errors()},
-        ) from exc
     log_event(
         logger,
         "retrieval_started",
@@ -140,19 +117,9 @@ async def assets_retrieval(
 @router.post("/v1/assets/vector-index-state", response_model=AssetVectorIndexStateResponse)
 async def asset_vector_index_state(
     request: Request,
+    payload: AssetVectorIndexStateRequest,
     current: dict = Depends(get_current_user),
 ) -> AssetVectorIndexStateResponse:
-    try:
-        raw_payload = await request.json()
-    except json.JSONDecodeError as exc:
-        raise invalid_vectorize_request("Request body must be valid JSON.") from exc
-    try:
-        payload = AssetVectorIndexStateRequest.model_validate(raw_payload)
-    except ValidationError as exc:
-        raise invalid_vectorize_request(
-            "Vector index state request validation failed.",
-            details={"validation_errors": exc.errors()},
-        ) from exc
     log_event(
         logger,
         "vector_index_state_update_started",
