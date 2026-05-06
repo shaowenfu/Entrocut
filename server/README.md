@@ -133,19 +133,20 @@ server/
 当前主链：
 
 1. 必须带 `Authorization: Bearer <access_token>`。
-2. 校验用户状态与 `credits_balance`。
+2. 校验用户状态与 `remaining_quota/credits_balance`。
 3. 按用户做 request / token 级 rate limit。
-4. 根据 `LLM_PROXY_MODE` 选择 provider：
-   - `mock`：本地 mock 响应。
-   - `google_gemini`：转发到 Gemini OpenAI-compatible endpoint。
-   - `upstream`：转发到自定义 OpenAI-compatible upstream。
+4. 根据请求体 `provider/model/custom_model` 走 registry-driven routing（注册表驱动路由）：
+   - `deepseek`：走 `OpenAI-compatible（兼容 OpenAI 接口）` adapter，默认 `deepseek-v4-flash`。
+   - `google_gemini`：走 Gemini 原生 `generateContent` adapter，默认 `gemini-2.5-flash`。
 5. 非流式响应会结算 credits 并写入 `entro_metadata`。
-6. 流式响应会透传上游 `SSE（服务器发送事件）`，并在后台结算 usage。
+6. 当前 chat proxy 使用非流式 planner 调用；流式输出不是本阶段目标。
 
 相关文件：
 
-- `app/services/gateway/provider_routing.py`
-- `app/services/gateway/chat_proxy.py`
+- `app/services/models/registry.py`
+- `app/services/models/gateway.py`
+- `app/services/models/adapters/openai_compatible.py`
+- `app/services/models/adapters/gemini.py`
 - `app/services/gateway/streaming.py`
 - `app/services/gateway/billing.py`
 
@@ -252,7 +253,8 @@ AUTH_JWT_SECRET=entrocut-dev-secret-change-me
 AUTH_DEV_FALLBACK_ENABLED=true
 ALLOW_INMEMORY_MONGO_FALLBACK=true
 ALLOW_INMEMORY_REDIS_FALLBACK=true
-LLM_PROXY_MODE=mock
+DEEPSEEK_API_KEY=
+GOOGLE_API_KEY=
 ```
 
 连接真实 provider 时需要按能力补齐：
@@ -265,7 +267,7 @@ AUTH_GITHUB_CLIENT_ID=
 AUTH_GITHUB_CLIENT_SECRET=
 
 # Chat / Inspect
-LLM_PROXY_MODE=google_gemini
+DEEPSEEK_API_KEY=
 GOOGLE_API_KEY=
 
 # Vectorize / Retrieval
@@ -357,13 +359,12 @@ pytest
 5. 不承诺完整产品化 `credits settlement（额度结算）`；当前是可回归的 MVP 账本链路。
 6. 不承诺完整 `BYOK provider compatibility（用户自带密钥供应商兼容矩阵）`。
 7. 不在生产环境允许内存 fallback、默认 JWT secret 或 dev fallback 登录页。
-8. 不把 `mock` chat proxy 视为真实模型质量能力。
+8. 不保留 `mock` chat proxy 或自定义 upstream provider 模式；平台模型由开发者维护的 registry 暴露。
 
 ## 后续方向
 
-1. 收紧 `LLM_PROXY_MODE` 的可枚举配置，避免非法值只在运行时暴露。
-2. 把 `credits_balance`、`quota_*`、`RateLimitService` 的职责进一步统一，减少两套额度概念并存。
-3. 为 `VectorService` 增加更多 provider-level contract test（供应商契约测试）。
-4. 为 streaming billing 增加失败路径和中断路径回归。
-5. 明确 `Inspect` 的模型输出 schema 版本，便于 `core` 做稳定调用。
+1. 把 `credits_balance`、`quota_*`、`RateLimitService` 的职责进一步统一，减少两套额度概念并存。
+2. 为 `VectorService` 增加更多 provider-level contract test（供应商契约测试）。
+3. 明确 `Inspect` 的模型输出 schema 版本，便于 `core` 做稳定调用。
+4. 为后续 provider 扩展补充 registry contract test。
 6. 将 `docs/server/` 中仍停留在设计态的内容标注为 proposed / implemented，避免文档混淆。

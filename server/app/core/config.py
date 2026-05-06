@@ -7,8 +7,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 RATE_CARDS: dict[str, dict[str, int]] = {
-    "deepseek-chat": {"prompt_per_1m": 18_000, "completion_per_1m": 72_000},
-    "deepseek-reasoner": {"prompt_per_1m": 18_000, "completion_per_1m": 72_000},
+    "deepseek-v4-flash": {"prompt_per_1m": 18_000, "completion_per_1m": 72_000},
+    "deepseek-v4-pro": {"prompt_per_1m": 18_000, "completion_per_1m": 72_000},
     "gemini-2.5-flash": {"prompt_per_1m": 18_000, "completion_per_1m": 72_000},
     "gemini-2.5-pro": {"prompt_per_1m": 18_000, "completion_per_1m": 72_000},
 }
@@ -60,7 +60,8 @@ class Settings(BaseSettings):
     auth_github_client_id: str | None = None
     auth_github_client_secret: str | None = None
     auth_google_scope: str = "openid email profile"
-    llm_default_model: str = "deepseek-chat"
+    llm_default_provider: str = "deepseek"
+    llm_default_model: str = "deepseek-v4-flash"
     google_api_key: str | None = None
     deepseek_api_key: str | None = None
     llm_gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"

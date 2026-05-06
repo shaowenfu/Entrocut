@@ -70,7 +70,7 @@ async def chat_completions(
         prompt_tokens=estimate_prompt_tokens(messages),
     )
     current_request_id = getattr(request.state, "request_id", None) or request_id()
-    provider_name = str(payload.get("provider") or "deepseek")
+    provider_name = str(payload.get("provider") or settings.llm_default_provider)
     log_event(
         logger,
         "chat_request_started",

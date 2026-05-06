@@ -142,10 +142,24 @@ def test_runtime_models_exposes_registry_providers_and_real_models(monkeypatch) 
     assert response.status_code == 200
     body = response.json()
     assert body["default_provider"] == "deepseek"
-    assert body["default_model"] == "deepseek-chat"
+    assert body["default_model"] == "deepseek-v4-flash"
     provider_ids = {provider["id"] for provider in body["providers"]}
     assert {"deepseek", "google_gemini"} <= provider_ids
     deepseek = next(provider for provider in body["providers"] if provider["id"] == "deepseek")
     assert deepseek["available"] is True
-    assert deepseek["models"][0]["id"] == "deepseek-chat"
+    assert deepseek["models"][0]["id"] == "deepseek-v4-flash"
     assert deepseek["models"][0]["supports_custom_model"] is True
+
+
+def test_runtime_models_defaults_to_first_available_provider(monkeypatch) -> None:
+    _configure_local_runtime(monkeypatch)
+    monkeypatch.setattr(settings, "deepseek_api_key", None)
+    monkeypatch.setattr(settings, "google_api_key", "test-google-key")
+    client = TestClient(app)
+
+    response = client.get("/api/v1/runtime/models")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["default_provider"] == "google_gemini"
+    assert body["default_model"] == "gemini-2.5-flash"

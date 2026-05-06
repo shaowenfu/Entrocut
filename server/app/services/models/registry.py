@@ -18,8 +18,8 @@ def providers(settings: Settings) -> tuple[ProviderDefinition, ...]:
             base_url="https://api.deepseek.com",
             chat_path="/chat/completions",
             models=(
-                ModelDefinition(id="deepseek-chat", label="DeepSeek Chat"),
-                ModelDefinition(id="deepseek-reasoner", label="DeepSeek Reasoner"),
+                ModelDefinition(id="deepseek-v4-flash", label="DeepSeek V4 Flash"),
+                ModelDefinition(id="deepseek-v4-pro", label="DeepSeek V4 Pro"),
             ),
         ),
         ProviderDefinition(

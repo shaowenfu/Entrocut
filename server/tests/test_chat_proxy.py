@@ -73,7 +73,7 @@ def test_chat_completions_requires_bearer_token() -> None:
         "/v1/chat/completions",
         json={
             "provider": "deepseek",
-            "model": "deepseek-chat",
+            "model": "deepseek-v4-flash",
             "stream": False,
             "messages": [{"role": "user", "content": "hello"}],
         },
@@ -85,7 +85,7 @@ def test_chat_completions_requires_bearer_token() -> None:
 def test_deepseek_chat_uses_openai_compatible_adapter(monkeypatch) -> None:
     async def fake_post(self, url: str, json: dict[str, Any], headers: dict[str, str]) -> _DummyResponse:
         assert url == "https://api.deepseek.com/chat/completions"
-        assert json["model"] == "deepseek-chat"
+        assert json["model"] == "deepseek-v4-flash"
         assert "provider" not in json
         assert "custom_model" not in json
         assert headers["Authorization"] == "Bearer test-deepseek-key"
@@ -95,7 +95,7 @@ def test_deepseek_chat_uses_openai_compatible_adapter(monkeypatch) -> None:
                 "id": "deepseek_resp_001",
                 "object": "chat.completion",
                 "created": 1773036475,
-                "model": "deepseek-chat",
+                "model": "deepseek-v4-flash",
                 "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
                 "usage": {"prompt_tokens": 19, "completion_tokens": 5, "total_tokens": 24},
             },
@@ -110,14 +110,14 @@ def test_deepseek_chat_uses_openai_compatible_adapter(monkeypatch) -> None:
         headers=_auth_headers(user),
         json={
             "provider": "deepseek",
-            "model": "deepseek-chat",
+            "model": "deepseek-v4-flash",
             "stream": False,
             "messages": [{"role": "user", "content": "Make a fast travel opener."}],
         },
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["model"] == "deepseek-chat"
+    assert body["model"] == "deepseek-v4-flash"
     assert body["choices"][0]["message"]["content"] == "ok"
     assert body["usage"] == {"prompt_tokens": 19, "completion_tokens": 5, "total_tokens": 24}
     assert body["entro_metadata"]["remaining_quota"] == 4297
@@ -125,7 +125,7 @@ def test_deepseek_chat_uses_openai_compatible_adapter(monkeypatch) -> None:
 
 def test_deepseek_custom_model_is_forwarded_to_upstream(monkeypatch) -> None:
     async def fake_post(self, url: str, json: dict[str, Any], headers: dict[str, str]) -> _DummyResponse:
-        assert json["model"] == "deepseek-chat-2026"
+        assert json["model"] == "deepseek-v4-flash-2026"
         return _DummyResponse(
             status_code=200,
             body={
@@ -143,13 +143,13 @@ def test_deepseek_custom_model_is_forwarded_to_upstream(monkeypatch) -> None:
         headers=_auth_headers(user),
         json={
             "provider": "deepseek",
-            "model": "deepseek-chat",
-            "custom_model": "deepseek-chat-2026",
+            "model": "deepseek-v4-flash",
+            "custom_model": "deepseek-v4-flash-2026",
             "messages": [{"role": "user", "content": "hello"}],
         },
     )
     assert response.status_code == 200
-    assert response.json()["model"] == "deepseek-chat-2026"
+    assert response.json()["model"] == "deepseek-v4-flash-2026"
 
 
 def test_gemini_adapter_normalizes_native_response(monkeypatch) -> None:
@@ -208,7 +208,7 @@ def test_chat_completions_rejects_insufficient_credits(monkeypatch) -> None:
     response = client.post(
         "/v1/chat/completions",
         headers={"Authorization": f"Bearer {bundle['access_token']}", "Content-Type": "application/json"},
-        json={"provider": "deepseek", "model": "deepseek-chat", "messages": [{"role": "user", "content": "hello"}]},
+        json={"provider": "deepseek", "model": "deepseek-v4-flash", "messages": [{"role": "user", "content": "hello"}]},
     )
     assert response.status_code == 402
     assert response.json()["error"]["code"] == "QUOTA_EXCEEDED"
@@ -230,7 +230,7 @@ def test_chat_completions_rejects_rate_limited_user(monkeypatch) -> None:
     user = _create_user()
     client = TestClient(app)
     headers = _auth_headers(user)
-    payload = {"provider": "deepseek", "model": "deepseek-chat", "messages": [{"role": "user", "content": "hello"}]}
+    payload = {"provider": "deepseek", "model": "deepseek-v4-flash", "messages": [{"role": "user", "content": "hello"}]}
     first_response = client.post("/v1/chat/completions", headers=headers, json=payload)
     second_response = client.post("/v1/chat/completions", headers=headers, json=payload)
     assert first_response.status_code == 200

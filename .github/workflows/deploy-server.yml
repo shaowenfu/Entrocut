@@ -69,6 +69,7 @@ jobs:
           AUTH_GOOGLE_CLIENT_SECRET: ${{ secrets.AUTH_GOOGLE_CLIENT_SECRET }}
           AUTH_GITHUB_CLIENT_ID: ${{ secrets.AUTH_GITHUB_CLIENT_ID }}
           AUTH_GITHUB_CLIENT_SECRET: ${{ secrets.AUTH_GITHUB_CLIENT_SECRET }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           MONGODB_ATLAS_URI: ${{ secrets.MONGODB_ATLAS_URI }}
           DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
@@ -85,6 +86,7 @@ jobs:
             AUTH_GOOGLE_CLIENT_SECRET
             AUTH_GITHUB_CLIENT_ID
             AUTH_GITHUB_CLIENT_SECRET
+            DEEPSEEK_API_KEY
             GOOGLE_API_KEY
             MONGODB_ATLAS_URI
             DASHSCOPE_API_KEY
@@ -117,6 +119,7 @@ jobs:
           GHCR_USERNAME: ${{ github.actor }}
           GHCR_PASSWORD: ${{ secrets.GH_PAT }}
           MONGODB_ATLAS_URI: ${{ secrets.MONGODB_ATLAS_URI }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
           DASHVECTOR_API_KEY: ${{ secrets.DASHVECTOR_API_KEY }}
           DASHVECTOR_ENDPOINT: ${{ secrets.DASHVECTOR_ENDPOINT }}
@@ -124,7 +127,7 @@ jobs:
           host: ${{ secrets.SERVER_SSH_HOST }}
           username: ${{ secrets.SERVER_SSH_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          envs: DEPLOY_DIR,IMAGE_REF,GHCR_USERNAME,GHCR_PASSWORD,MONGODB_ATLAS_URI,DASHSCOPE_API_KEY,DASHVECTOR_API_KEY,DASHVECTOR_ENDPOINT
+          envs: DEPLOY_DIR,IMAGE_REF,GHCR_USERNAME,GHCR_PASSWORD,MONGODB_ATLAS_URI,DEEPSEEK_API_KEY,DASHSCOPE_API_KEY,DASHVECTOR_API_KEY,DASHVECTOR_ENDPOINT
           script_stop: true
           timeout: 20m
           command_timeout: 60m
@@ -157,7 +160,7 @@ jobs:
             AUTH_GITHUB_CLIENT_SECRET=${{ secrets.AUTH_GITHUB_CLIENT_SECRET }}
             AUTH_GOOGLE_SCOPE=openid email profile
             CORS_ALLOW_ORIGINS=${{ vars.CORS_ALLOW_ORIGINS }}
-            LLM_PROXY_MODE=google_gemini
+            DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
             GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}
             DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
             DASHSCOPE_MULTIMODAL_EMBEDDING_MODEL=qwen3-vl-embedding

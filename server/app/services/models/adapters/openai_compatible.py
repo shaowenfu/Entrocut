@@ -20,7 +20,13 @@ async def send_chat(ctx: ChatRequestContext) -> NormalizedChatResponse:
     except httpx.HTTPError as exc:
         raise ServerApiError(status_code=502, code="PROVIDER_TRANSPORT_ERROR", message="Upstream model provider transport failed.", error_type="server_error") from exc
     if response.status_code >= 400:
-        raise ServerApiError(status_code=502, code="MODEL_PROVIDER_UNAVAILABLE", message="Upstream model provider returned an error.", error_type="server_error")
+        raise ServerApiError(
+            status_code=502,
+            code="MODEL_PROVIDER_UNAVAILABLE",
+            message="Upstream model provider returned an error.",
+            error_type="server_error",
+            details={"upstream_status": response.status_code, "upstream_body": response.text[:500]},
+        )
     body = response.json()
     if not isinstance(body, dict):
         raise ServerApiError(status_code=502, code="MODEL_PROVIDER_INVALID_RESPONSE", message="Upstream model provider returned an invalid response body.", error_type="server_error")

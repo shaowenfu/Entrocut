@@ -20,8 +20,8 @@ def _read_api_key(settings: Settings, provider: registry.ProviderDefinition) -> 
 
 
 async def chat(payload: dict, settings: Settings) -> NormalizedChatResponse:
-    provider_id = str(payload.get("provider") or "deepseek")
-    model = str(payload.get("model") or "deepseek-chat")
+    provider_id = str(payload.get("provider") or settings.llm_default_provider)
+    model = str(payload.get("model") or settings.llm_default_model)
     custom_model = str(payload.get("custom_model") or "").strip() or None
     provider = registry.get_provider(settings, provider_id)
     registry.ensure_model(provider, model)
