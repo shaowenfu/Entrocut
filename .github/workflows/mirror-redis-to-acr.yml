@@ -1,0 +1,31 @@
+name: mirror-redis-to-acr
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: crpi-oatwdzh41nknuewb.cn-chengdu.personal.cr.aliyuncs.com
+  REDIS_SOURCE: redis:7-alpine
+  REDIS_TARGET: crpi-oatwdzh41nknuewb.cn-chengdu.personal.cr.aliyuncs.com/entrocut/redis:7-alpine
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to ACR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: SherwenF
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Pull redis from Docker Hub
+        run: docker pull "${{ env.REDIS_SOURCE }}"
+
+      - name: Tag and push to ACR
+        run: |
+          docker tag "${{ env.REDIS_SOURCE }}" "${{ env.REDIS_TARGET }}"
+          docker push "${{ env.REDIS_TARGET }}"

@@ -11,8 +11,9 @@ on:
   workflow_dispatch:
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/entrocut-server
+  REGISTRY: crpi-oatwdzh41nknuewb.cn-chengdu.personal.cr.aliyuncs.com
+  IMAGE_NAME: crpi-oatwdzh41nknuewb.cn-chengdu.personal.cr.aliyuncs.com/entrocut/entrocut
+  REGISTRY_VPC: crpi-oatwdzh41nknuewb-vpc.cn-chengdu.personal.cr.aliyuncs.com
   DEPLOY_DIR: /opt/entrocut-server
 
 jobs:
@@ -20,19 +21,18 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
     outputs:
       image_ref: ${{ steps.meta.outputs.image_ref }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Log in to GHCR
+      - name: Log in to ACR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GH_PAT }}
+          username: SherwenF
+          password: ${{ secrets.ACR_PASSWORD }}
 
       - name: Extract image metadata
         id: meta
@@ -116,8 +116,9 @@ jobs:
         env:
           DEPLOY_DIR: ${{ env.DEPLOY_DIR }}
           IMAGE_REF: ${{ needs.build-and-push.outputs.image_ref }}
-          GHCR_USERNAME: ${{ github.actor }}
-          GHCR_PASSWORD: ${{ secrets.GH_PAT }}
+          ACR_USERNAME: SherwenF
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+          REGISTRY_VPC: ${{ env.REGISTRY_VPC }}
           MONGODB_ATLAS_URI: ${{ secrets.MONGODB_ATLAS_URI }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
@@ -127,7 +128,7 @@ jobs:
           host: ${{ secrets.SERVER_SSH_HOST }}
           username: ${{ secrets.SERVER_SSH_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          envs: DEPLOY_DIR,IMAGE_REF,GHCR_USERNAME,GHCR_PASSWORD,MONGODB_ATLAS_URI,DEEPSEEK_API_KEY,DASHSCOPE_API_KEY,DASHVECTOR_API_KEY,DASHVECTOR_ENDPOINT
+          envs: DEPLOY_DIR,IMAGE_REF,REGISTRY_VPC,ACR_USERNAME,ACR_PASSWORD,MONGODB_ATLAS_URI,DEEPSEEK_API_KEY,DASHSCOPE_API_KEY,DASHVECTOR_API_KEY,DASHVECTOR_ENDPOINT
           script_stop: true
           timeout: 20m
           command_timeout: 60m
@@ -172,7 +173,7 @@ jobs:
             DASHVECTOR_TIMEOUT_SECONDS=10
             DASHVECTOR_PROTOCOL=grpc
             EOF
-            echo "${GHCR_PASSWORD}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+            echo "${ACR_PASSWORD}" | docker login "${REGISTRY_VPC}" -u "${ACR_USERNAME}" --password-stdin
             export IMAGE_REF="${IMAGE_REF}"
             OLD_IMAGE_REF=$(docker inspect -f '{{.Config.Image}}' entrocut-server 2>/dev/null || true)
             OLD_IMAGE_ID=""
@@ -250,7 +251,7 @@ jobs:
               sleep 2
             done
 
-            SERVER_IMAGE_REPO="ghcr.io/${{ github.repository_owner }}/entrocut-server"
+            SERVER_IMAGE_REPO="${REGISTRY_VPC}/entrocut/entrocut"
             CURRENT_IMAGE_ID=$(docker image inspect "${IMAGE_REF}" --format '{{.Id}}')
             docker image ls "${SERVER_IMAGE_REPO}" --format '{{.Repository}}:{{.Tag}}' | while read -r IMAGE_TAG; do
               IMAGE_ID=$(docker image inspect "${IMAGE_TAG}" --format '{{.Id}}' 2>/dev/null || true)
