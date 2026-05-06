@@ -188,7 +188,14 @@ def update_dependency_health() -> dict[str, Any]:
 
 
 def get_current_user(authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    payload = token_service.decode_access_token(bearer_token(authorization))
+    token = bearer_token(authorization)
+    admin_token = (settings.admin_access_token or "").strip()
+    if admin_token and token == admin_token:
+        admin_user: dict[str, Any] = {"_id": "__admin__", "status": "active"}
+        quota_service.ensure_user_quota_defaults(admin_user)
+        admin_user["credits_balance"] = int(admin_user.get("remaining_quota") or 0)
+        return {"user": admin_user, "token_payload": {"sub": "__admin__", "sid": "__admin_session__"}}
+    payload = token_service.decode_access_token(token)
     user = store.mongo.find_user_by_id(payload["sub"])
     if user is None:
         raise ServerApiError(

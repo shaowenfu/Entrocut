@@ -173,6 +173,7 @@ jobs:
             DASHVECTOR_PARTITION=default
             DASHVECTOR_TIMEOUT_SECONDS=10
             DASHVECTOR_PROTOCOL=grpc
+            ADMIN_ACCESS_TOKEN=${{ secrets.ADMIN_ACCESS_TOKEN }}
             EOF
             echo "${ACR_PASSWORD}" | docker login "${REGISTRY_VPC}" -u "${ACR_USERNAME}" --password-stdin
             export IMAGE_REF="${IMAGE_REF/${REGISTRY}/${REGISTRY_VPC}}"
