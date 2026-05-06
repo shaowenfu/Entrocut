@@ -117,6 +117,30 @@ def _make_request_payload() -> dict[str, Any]:
     }
 
 
+def _make_describe_payload() -> dict[str, Any]:
+    return {
+        "mode": "describe",
+        "task_summary": "Agent needs to understand this clip before deciding whether to use it.",
+        "question": "Describe the visible subjects, actions, scene, camera movement, and editing value.",
+        "candidates": [
+            {
+                "clip_id": "clip_001",
+                "asset_id": "asset_001",
+                "clip_duration_ms": 5000,
+                "summary": "人在卧室整理行李。",
+                "frames": [
+                    {
+                        "frame_index": 0,
+                        "timestamp_ms": 0,
+                        "timestamp_label": "00:00",
+                        "image_base64": "QUFBQUFBQUFBQUFBQUFBQQ==",
+                    }
+                ],
+            }
+        ],
+    }
+
+
 def test_inspect_requires_bearer_token() -> None:
     client = TestClient(app)
 
@@ -259,3 +283,177 @@ def test_inspect_successfully_normalizes_selected_clip_from_ranking(monkeypatch)
     assert body["selected_clip_id"] == "clip_002"
     assert body["ranking"] == ["clip_002", "clip_001", "clip_003"]
     assert body["candidate_judgments"][1]["clip_id"] == "clip_002"
+
+
+def test_inspect_describe_normalizes_description_response(monkeypatch) -> None:
+    async def fake_post(self, url: str, json: dict[str, Any], headers: dict[str, str]) -> _DummyResponse:
+        content = json["messages"][1]["content"]
+        prompt_text = content[0]["text"]
+        assert "mode: describe" in prompt_text
+        assert "Describe the visible subjects" in prompt_text
+        assert "visual perception tool" in json["messages"][0]["content"]
+        return _DummyResponse(
+            status_code=200,
+            body={
+                "choices": [
+                    {
+                        "message": {
+                            "content": """
+{
+  "question_type": "describe",
+  "descriptions": [
+    {
+      "clip_id": "clip_001",
+      "description": "A person appears to be preparing luggage in an indoor room.",
+      "observations": ["A suitcase-like object is visible.", "The scene appears indoors."],
+      "actions": ["packing"],
+      "subjects": ["person"],
+      "scene": "indoor room",
+      "camera": "static or minimally moving",
+      "editing_value": "Useful as a preparation beat before travel.",
+      "uncertainty": "Only one frame was provided."
+    }
+  ],
+  "uncertainty": "Limited temporal evidence."
+}
+""",
+                        }
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr("httpx.AsyncClient.post", fake_post)
+    _configure_local_runtime(monkeypatch)
+    user = _create_user()
+    bundle = token_service.issue_session_bundle(user)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/tools/inspect",
+        headers={"Authorization": f"Bearer {bundle['access_token']}"},
+        json=_make_describe_payload(),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["question_type"] == "describe"
+    assert body["selected_clip_id"] == "clip_001"
+    assert body["descriptions"][0]["clip_id"] == "clip_001"
+    assert body["candidate_judgments"] == []
+
+
+def test_inspect_describe_uses_default_question_when_missing(monkeypatch) -> None:
+    async def fake_post(self, url: str, json: dict[str, Any], headers: dict[str, str]) -> _DummyResponse:
+        prompt_text = json["messages"][1]["content"][0]["text"]
+        assert "Describe this clip for a text-only video editing agent" in prompt_text
+        return _DummyResponse(
+            status_code=200,
+            body={
+                "choices": [
+                    {
+                        "message": {
+                            "content": """
+{
+  "descriptions": [
+    {
+      "clip_id": "clip_001",
+      "description": "Indoor preparation scene.",
+      "observations": ["A person is visible."],
+      "actions": [],
+      "subjects": ["person"],
+      "scene": "indoor",
+      "camera": null,
+      "editing_value": "Can introduce preparation.",
+      "uncertainty": null
+    }
+  ]
+}
+""",
+                        }
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr("httpx.AsyncClient.post", fake_post)
+    _configure_local_runtime(monkeypatch)
+    user = _create_user()
+    bundle = token_service.issue_session_bundle(user)
+    client = TestClient(app)
+    payload = _make_describe_payload()
+    del payload["question"]
+
+    response = client.post(
+        "/v1/tools/inspect",
+        headers={"Authorization": f"Bearer {bundle['access_token']}"},
+        json=payload,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["question_type"] == "describe"
+
+
+def test_inspect_describe_rejects_multiple_candidates(monkeypatch) -> None:
+    _configure_local_runtime(monkeypatch)
+    user = _create_user()
+    bundle = token_service.issue_session_bundle(user)
+    client = TestClient(app)
+    payload = _make_describe_payload()
+    payload["candidates"].append(_make_request_payload()["candidates"][1])
+
+    response = client.post(
+        "/v1/tools/inspect",
+        headers={"Authorization": f"Bearer {bundle['access_token']}"},
+        json=payload,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "INVALID_INSPECT_REQUEST"
+
+
+def test_inspect_describe_rejects_unknown_description_clip_id(monkeypatch) -> None:
+    async def fake_post(self, url: str, json: dict[str, Any], headers: dict[str, str]) -> _DummyResponse:
+        return _DummyResponse(
+            status_code=200,
+            body={
+                "choices": [
+                    {
+                        "message": {
+                            "content": """
+{
+  "descriptions": [
+    {
+      "clip_id": "clip_unknown",
+      "description": "Unknown.",
+      "observations": ["Unknown."],
+      "actions": [],
+      "subjects": [],
+      "scene": null,
+      "camera": null,
+      "editing_value": null,
+      "uncertainty": null
+    }
+  ]
+}
+""",
+                        }
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr("httpx.AsyncClient.post", fake_post)
+    _configure_local_runtime(monkeypatch)
+    user = _create_user()
+    bundle = token_service.issue_session_bundle(user)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/tools/inspect",
+        headers={"Authorization": f"Bearer {bundle['access_token']}"},
+        json=_make_describe_payload(),
+    )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "INSPECT_PROVIDER_INVALID_RESPONSE"

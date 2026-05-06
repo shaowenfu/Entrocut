@@ -1,5 +1,36 @@
 # Inspect Describe Mode 最小改动方案
 
+## 0. 实施状态
+
+状态：已落地。
+
+完成内容：
+
+1. server `/v1/tools/inspect` 已支持 `mode: "describe"`
+2. `InspectResponse` 已支持 `descriptions`
+3. 旧 `verify / compare / choose / rank` 行为保持兼容
+4. core `Agent` context 已把 `Inspect` 从候选精筛器升级为可随时调用的视觉理解工具
+5. core `inspect` 执行路径已能基于本地素材抽取 stitched keyframes，并调用 server `/v1/tools/inspect`
+6. 已补 server/core 测试
+
+验证结果：
+
+```bash
+cd server
+source venv/bin/activate
+pytest -q tests/test_inspect_routes.py
+```
+
+结果：`10 passed`
+
+```bash
+cd core
+source venv/bin/activate
+pytest -q
+```
+
+结果：`40 passed, 1 warning`
+
 ## 1. 目标
 
 把 `Inspect` 从 `Retrieval` 之后的候选精筛工具，提升为与 `Retrieval` 平级的视觉理解工具。
@@ -481,4 +512,3 @@ Core 侧：
 4. 调 server `/v1/tools/inspect`
 
 这个 resolver 应该保持局部，不要把素材读取逻辑散进 planner。
-

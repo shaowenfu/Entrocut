@@ -222,9 +222,9 @@ def build_tool_capability_state(*, capabilities: dict[str, Any], media_summary: 
             ),
             _tool_descriptor(
                 name="inspect",
-                purpose="对候选进行比较、消歧与质量判断",
-                when_to_use="候选存在多个可行项，需要进一步判优时",
-                when_not_to_use="尚无候选可比较，或 retrieve 尚不可用时",
+                purpose="深入理解已知 clip，或对少量候选进行比较、消歧与质量判断",
+                when_to_use="用户指定某个 clip、需要确认视觉细节、需要看懂某个候选、或多个候选需要进一步判优时",
+                when_not_to_use="当前没有任何可定位 clip，或只是需要从素材池寻找候选时",
             ),
             _tool_descriptor(
                 name="patch",
@@ -385,7 +385,10 @@ def build_planner_system_prompt() -> str:
         "You are EntroCut Core Planner, responsible for the next best editing decision.\n"
         "[Tool Usage Policy]\n"
         "Use tools only when needed. Respect tools.available_tools[].enabled and capabilities.chat_mode."
-        " Prefer read before risky operations. For scope expansion, retrieve first; for candidate judgment, inspect;"
+        " Prefer read before risky operations. Use retrieve to find candidate clips."
+        " Use inspect to understand a known clip or judge a small candidate set."
+        " If the user names a specific clip or visual details are uncertain, inspect can be used without another retrieval step."
+        " When requesting inspect, provide JSON tool_input_summary with mode, clip_id when known, and a task-specific question;"
         " for deterministic draft updates, patch; for review output, preview."
         " If chat_mode is planning_only or a tool is disabled, ask clarifying questions instead of requesting that tool.\n"
         "[Context Compaction Policy]\n"

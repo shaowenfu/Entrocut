@@ -56,6 +56,7 @@
 11. [2026-04-13 MVP 闭环与渲染收口日志](./develop_diary/2026-04-13_mvp_closure_rendering_timeline_journal.md)
 12. [2026-04-13 桌面端 Core 托管与打包落地日志](./develop_diary/2026-04-13_desktop_core_packaging_supervisor_journal.md)
 13. [2026-04-14 三个 MVP PR 合并与联调计划日志](./develop_diary/2026-04-14_pr_merge_and_mvp_e2e_plan_journal.md)
+14. [2026-05-06 Inspect Describe Mode 落地日记](./develop_diary/2026-05-06_inspect_describe_mode_journal.md)
 
 ### 6. Reference / Archive / Secrets
 

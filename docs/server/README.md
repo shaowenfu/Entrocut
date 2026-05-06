@@ -16,6 +16,7 @@
 3. `credits / BYOK` 的字段、前端入口和部分调用链已经合回主线
 4. 后续仍需要继续做真实上游能力验证、计费回归和端到端测试
 5. `core` 侧已开始在 `agent loop` 中真实调用 `POST /v1/assets/retrieval`，检索契约进入实装联调阶段
+6. `POST /v1/tools/inspect` 已支持 `describe` 模式，可作为文本 `Agent` 理解已知 `clip` 的视觉工具
 
 ## 当前代码目录现实
 
@@ -83,3 +84,4 @@
    - [2026-03-13 GitHub OAuth 接入复盘](../develop_diary/2026-03-13_github_oauth_iteration_journal.md)
    - [2026-03-13 Credits / BYOK 改造复盘](../develop_diary/2026-03-13_credits_byok_settlement_followup_journal.md)
    - [2026-03-29 Server 分支 PR 回收合并日志](../develop_diary/2026-03-29_server_branch_pr_merge_journal.md)
+   - [2026-05-06 Inspect Describe Mode 落地日记](../develop_diary/2026-05-06_inspect_describe_mode_journal.md)

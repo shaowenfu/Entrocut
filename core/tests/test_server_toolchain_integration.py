@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 import os
 import asyncio
+import base64
+import io
 import sys
 import tempfile
 import time
@@ -13,6 +15,7 @@ from unittest.mock import patch
 import sqlite3
 
 from fastapi.testclient import TestClient
+from PIL import Image
 
 CORE_DIR = Path(__file__).resolve().parents[1]
 if str(CORE_DIR) not in sys.path:
@@ -29,6 +32,13 @@ sys.modules["core_server_module"] = core_server
 CORE_SERVER_SPEC.loader.exec_module(core_server)
 
 
+def _valid_jpeg_base64() -> str:
+    image = Image.new("RGB", (16, 16), color="white")
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG")
+    return base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+
 class CoreChatPlannerSkeletonTest(unittest.TestCase):
     def setUp(self) -> None:
         core_server.store.reset_for_test()
@@ -39,7 +49,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self.detect_scenes_patcher = patch("store.detect_scenes", return_value=[(0, 6000), (6000, 12000)])
         self.detect_scenes_mock = self.detect_scenes_patcher.start()
         
-        self.extract_frames_patcher = patch("store.extract_and_stitch_frames", return_value="dummy_b64")
+        self.extract_frames_patcher = patch("store.extract_and_stitch_frames", return_value=_valid_jpeg_base64())
         self.extract_frames_mock = self.extract_frames_patcher.start()
         
         class _MockResponse:
@@ -52,6 +62,32 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             async def __aexit__(self, exc_type, exc_val, exc_tb):
                 pass
             async def post(self, *args, **kwargs):
+                url = str(args[0] if args else kwargs.get("url", ""))
+                payload = kwargs.get("json")
+                headers = kwargs.get("headers") or {}
+                if url.endswith("/v1/assets/vectorize"):
+                    assert headers.get("Authorization") == "Bearer tok_test_access_token_value_12345"
+                    assert headers.get("Content-Type") == "application/json"
+                    assert isinstance(payload, dict)
+                    assert set(payload) == {"docs"}
+                    docs = payload.get("docs")
+                    assert isinstance(docs, list) and docs
+                    for doc in docs:
+                        assert set(doc) == {"id", "content", "fields"}
+                        image_base64 = doc["content"]["image_base64"]
+                        assert isinstance(image_base64, str) and len(image_base64) >= 16
+                        assert not image_base64.startswith("data:")
+                        fields = doc["fields"]
+                        assert fields["clip_id"] == doc["id"]
+                        assert fields["asset_state"] == "active"
+                        assert fields["asset_active"] is True
+                        assert fields["source_start_ms"] < fields["source_end_ms"]
+                        assert fields["frame_count"] == 4
+                if url.endswith("/v1/assets/vector-index-state"):
+                    assert headers.get("Authorization") == "Bearer tok_test_access_token_value_12345"
+                    assert isinstance(payload, dict)
+                    assert isinstance(payload.get("clip_ids"), list)
+                    assert isinstance(payload.get("active"), bool)
                 return _MockResponse()
                 
         self.httpx_patcher = patch("store.AsyncClient", return_value=_MockClientAsyncContextManager())
@@ -159,6 +195,14 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
 
         async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
             self.assertTrue(url.endswith("/v1/chat/completions"))
+            self.assertEqual(headers["Authorization"], "Bearer tok_test_access_token_value_12345")
+            self.assertEqual(headers["Content-Type"], "application/json")
+            self.assertEqual(json["provider"], "deepseek")
+            self.assertEqual(json["model"], "deepseek-v4-flash")
+            self.assertEqual(json["stream"], False)
+            self.assertNotIn("stream_options", json)
+            self.assertIsInstance(json["messages"], list)
+            self.assertGreaterEqual(len(json["messages"]), 2)
 
             class _DummyResponse:
                 status_code = 200
@@ -542,6 +586,101 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self.assertGreaterEqual(len(retrieval_state["candidate_clip_ids"]), 1)
         self.assertEqual(workspace["runtime_state"]["execution_state"]["last_tool_name"], "retrieve")
 
+    def test_inspect_describe_tool_calls_server_with_clip_evidence(self) -> None:
+        project_id, clip_ids = self._create_project()
+        self._set_auth_session()
+        inspect_tool_input = core_server.json.dumps(
+            {
+                "mode": "describe",
+                "clip_id": clip_ids[0],
+                "question": "Describe visible actions and editing value for a travel opener.",
+            },
+            ensure_ascii=False,
+        )
+        planner_responses = [
+            (
+                '{"status":"requires_tool","reasoning_summary":"need visual details",'
+                '"assistant_reply":"我先仔细看这个 clip。","tool_name":"inspect",'
+                f'"tool_input_summary":{core_server.json.dumps(inspect_tool_input)}, "draft_strategy":"no_change"}}'
+            ),
+            (
+                '{"status":"final","reasoning_summary":"visual description available",'
+                '"assistant_reply":"这个 clip 适合作为准备出发的开场。","tool_name":null,'
+                '"tool_input_summary":null, "draft_strategy":"no_change"}'
+            ),
+        ]
+        captured_inspect_payload: dict[str, Any] = {}
+
+        async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
+            if url.endswith("/v1/tools/inspect"):
+                captured_inspect_payload.update(json)
+                self.assertEqual(headers["Authorization"], "Bearer tok_test_access_token_value_12345")
+                self.assertEqual(headers["Content-Type"], "application/json")
+                self.assertEqual(json["mode"], "describe")
+                self.assertEqual(json["candidates"][0]["clip_id"], clip_ids[0])
+                self.assertEqual(json["candidates"][0]["frames"][0]["image_base64"], _valid_jpeg_base64())
+                self.assertEqual(json["question"], "Describe visible actions and editing value for a travel opener.")
+
+                class _InspectResponse:
+                    status_code = 200
+                    text = "{}"
+
+                    @staticmethod
+                    def json() -> dict[str, Any]:
+                        return {
+                            "question_type": "describe",
+                            "selected_clip_id": clip_ids[0],
+                            "descriptions": [
+                                {
+                                    "clip_id": clip_ids[0],
+                                    "description": "A preparation shot with travel-opener value.",
+                                    "observations": ["A subject and travel context are visible."],
+                                    "actions": ["preparing"],
+                                    "subjects": ["person"],
+                                    "scene": "indoor",
+                                    "camera": "static",
+                                    "editing_value": "Can establish departure preparation.",
+                                    "uncertainty": None,
+                                }
+                            ],
+                            "uncertainty": None,
+                        }
+
+                return _InspectResponse()
+
+            planner_json = planner_responses.pop(0)
+
+            class _ChatResponse:
+                status_code = 200
+                text = planner_json
+
+                @staticmethod
+                def json() -> dict[str, Any]:
+                    return {
+                        "choices": [{"message": {"content": planner_json}}],
+                        "usage": {"prompt_tokens": 50, "completion_tokens": 20, "total_tokens": 70},
+                    }
+
+            return _ChatResponse()
+
+        with patch("httpx.AsyncClient.post", fake_post), patch(
+            "inspection.extract_and_stitch_frames",
+            return_value=_valid_jpeg_base64(),
+        ):
+            self.client.post(
+                f"/api/v1/projects/{project_id}/chat",
+                json={"prompt": "仔细看第一个 clip 是否适合开场"},
+            )
+            workspace = self._poll_workspace(project_id)
+
+        self.assertEqual(captured_inspect_payload["mode"], "describe")
+        self.assertEqual(workspace["runtime_state"]["retrieval_state"]["selected_candidate_id"], clip_ids[0])
+        self.assertEqual(
+            workspace["runtime_state"]["retrieval_state"]["inspection_summary"],
+            "A preparation shot with travel-opener value.",
+        )
+        self.assertEqual(workspace["runtime_state"]["execution_state"]["last_tool_name"], "inspect")
+
     def test_create_project_initializes_local_persistence_and_workspace_dir(self) -> None:
         response = self.client.post(
             "/api/v1/projects",
@@ -911,7 +1050,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
 
         with (
             patch("store.detect_scenes", return_value=[(0, 6000), (6000, 12000)]),
-            patch("store.extract_and_stitch_frames", return_value="dummy_b64"),
+            patch("store.extract_and_stitch_frames", return_value=_valid_jpeg_base64()),
         ):
             retry_response = self.client.post(
                 f"/api/v1/projects/{project_id}/assets/{failed_asset['id']}:retry",
@@ -944,7 +1083,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
 
         with (
             patch("store.detect_scenes", return_value=[(0, 6000), (6000, 12000)]),
-            patch("store.extract_and_stitch_frames", return_value="dummy_b64"),
+            patch("store.extract_and_stitch_frames", return_value=_valid_jpeg_base64()),
         ):
             import_response = self.client.post(
                 f"/api/v1/projects/{project_id}/assets:import",
@@ -996,7 +1135,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             await asyncio.sleep(0.5)
             if "detect_scenes" in str(func):
                 return [(0, 6000), (6000, 12000)]
-            return "dummy_b64"
+            return _valid_jpeg_base64()
 
         with patch("store.asyncio.to_thread", slow_to_thread):
             import_response = self.client.post(

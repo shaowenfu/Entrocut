@@ -111,12 +111,15 @@ function getDevPythonBin(devCoreRoot: string): string {
 
 // 按当前环境启动被 Electron 托管的 core 进程。
 function spawnManagedCore(port: number): ChildProcessWithoutNullStreams {
+  const serverBaseUrl =
+    process.env.SERVER_BASE_URL?.trim() || process.env.VITE_SERVER_BASE_URL?.trim() || undefined;
   const env = {
     ...process.env,
     // core 从环境变量读取监听端口。
     CORE_PORT: String(port),
     // 桌面端 core 数据目录放在应用 userData 下，避免写入源码目录。
     ENTROCUT_APP_DATA_ROOT: path.join(app.getPath("userData"), "core-data"),
+    ...(serverBaseUrl ? { SERVER_BASE_URL: serverBaseUrl } : {}),
   };
 
   if (app.isPackaged) {

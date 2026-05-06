@@ -1,14 +1,31 @@
 from __future__ import annotations
 
+import sys
 import unittest
+from pathlib import Path
 
-from core.context import (
-    build_goal_state,
-    build_planner_context_packet,
-    build_scope_state,
-    build_tool_capability_state,
-    build_working_memory_state,
-)
+CORE_DIR = Path(__file__).resolve().parents[1]
+if str(CORE_DIR) not in sys.path:
+    sys.path.append(str(CORE_DIR))
+
+try:
+    from core.context import (
+        build_goal_state,
+        build_planner_context_packet,
+        build_planner_system_prompt,
+        build_scope_state,
+        build_tool_capability_state,
+        build_working_memory_state,
+    )
+except ModuleNotFoundError:
+    from context import (
+        build_goal_state,
+        build_planner_context_packet,
+        build_planner_system_prompt,
+        build_scope_state,
+        build_tool_capability_state,
+        build_working_memory_state,
+    )
 
 
 class ContextEngineeringTest(unittest.TestCase):
@@ -63,7 +80,18 @@ class ContextEngineeringTest(unittest.TestCase):
         self.assertIn("when_not_to_use", read_tool)
         retrieve_tool = next(item for item in tools["available_tools"] if item["name"] == "retrieve")
         self.assertEqual(retrieve_tool["enabled"], False)
+        inspect_tool = next(item for item in tools["available_tools"] if item["name"] == "inspect")
+        self.assertIn("深入理解已知 clip", inspect_tool["purpose"])
+        self.assertIn("用户指定某个 clip", inspect_tool["when_to_use"])
+        self.assertNotIn("retrieve 尚不可用", inspect_tool["when_not_to_use"])
         self.assertEqual(tools["chat_mode"], "planning_only")
+
+    def test_planner_prompt_allows_inspect_without_retrieval_for_known_clip(self) -> None:
+        prompt = build_planner_system_prompt()
+        self.assertIn("Use retrieve to find candidate clips", prompt)
+        self.assertIn("Use inspect to understand a known clip", prompt)
+        self.assertIn("without another retrieval step", prompt)
+        self.assertIn("mode, clip_id", prompt)
 
     def test_working_memory_is_structured(self) -> None:
         memory = build_working_memory_state(

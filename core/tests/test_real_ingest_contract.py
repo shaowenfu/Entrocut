@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import base64
+import io
 import os
 import sys
 import tempfile
@@ -10,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from PIL import Image
 
 CORE_DIR = Path(__file__).resolve().parents[1]
 if str(CORE_DIR) not in sys.path:
@@ -31,6 +34,13 @@ sys.modules["core_server_real_ingest_module"] = core_server
 CORE_SERVER_SPEC.loader.exec_module(core_server)
 
 
+def _valid_jpeg_base64() -> str:
+    image = Image.new("RGB", (16, 16), color="white")
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG")
+    return base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+
 class RealIngestContractTest(unittest.TestCase):
     def setUp(self) -> None:
         core_server.store.reset_for_test()
@@ -38,7 +48,7 @@ class RealIngestContractTest(unittest.TestCase):
         self.client = TestClient(core_server.app)
         self.client.__enter__()
         self.detect_scenes_patcher = patch("store.detect_scenes", return_value=[(0, 5000), (5000, 9000)])
-        self.extract_frames_patcher = patch("store.extract_and_stitch_frames", return_value="dummy_b64")
+        self.extract_frames_patcher = patch("store.extract_and_stitch_frames", return_value=_valid_jpeg_base64())
         self.detect_scenes_patcher.start()
         self.extract_frames_patcher.start()
 

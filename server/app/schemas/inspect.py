@@ -25,11 +25,14 @@ class InspectCandidate(BaseModel):
     frames: list[InspectFrame] = Field(default_factory=list)
 
 
+InspectMode = Literal["verify", "compare", "choose", "rank", "describe"]
+
+
 class InspectRequest(BaseModel):
-    mode: Literal["verify", "compare", "choose", "rank"]
+    mode: InspectMode
     task_summary: str = Field(..., min_length=1, max_length=2000)
     hypothesis_summary: str | None = Field(default=None, max_length=2000)
-    question: str = Field(..., min_length=1, max_length=2000)
+    question: str | None = Field(default=None, min_length=1, max_length=2000)
     criteria: list[InspectCriterion] = Field(default_factory=list)
     candidates: list[InspectCandidate] = Field(default_factory=list)
 
@@ -41,9 +44,22 @@ class CandidateJudgment(BaseModel):
     short_reason: str = Field(..., min_length=1, max_length=500)
 
 
+class InspectDescription(BaseModel):
+    clip_id: str = Field(..., min_length=1, max_length=128)
+    description: str = Field(..., min_length=1, max_length=2000)
+    observations: list[str] = Field(default_factory=list)
+    actions: list[str] = Field(default_factory=list)
+    subjects: list[str] = Field(default_factory=list)
+    scene: str | None = Field(default=None, max_length=1000)
+    camera: str | None = Field(default=None, max_length=1000)
+    editing_value: str | None = Field(default=None, max_length=1000)
+    uncertainty: str | None = Field(default=None, max_length=1000)
+
+
 class InspectResponse(BaseModel):
-    question_type: Literal["verify", "compare", "choose", "rank"]
+    question_type: InspectMode
     selected_clip_id: str | None = Field(default=None, min_length=1, max_length=128)
     ranking: list[str] | None = None
-    candidate_judgments: list[CandidateJudgment] = Field(..., min_length=1)
+    candidate_judgments: list[CandidateJudgment] = Field(default_factory=list)
+    descriptions: list[InspectDescription] = Field(default_factory=list)
     uncertainty: str | None = Field(default=None, max_length=1000)

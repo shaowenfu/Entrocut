@@ -25,7 +25,15 @@ from .auth import (
 )
 from .chat import ChatCompletionsRequest, ChatMessage
 from .common import AssetReference, AssetVector
-from .inspect import CandidateJudgment, InspectCandidate, InspectCriterion, InspectFrame, InspectRequest, InspectResponse
+from .inspect import (
+    CandidateJudgment,
+    InspectCandidate,
+    InspectCriterion,
+    InspectDescription,
+    InspectFrame,
+    InspectRequest,
+    InspectResponse,
+)
 from .runtime import RuntimeModelItem, RuntimeModelsResponse
 from .user import MeResponse, UserProfile, UserProfileResponse, UserUsageResponse, UserUsageSnapshot
 
@@ -41,6 +49,7 @@ __all__ = [
     "ChatMessage",
     "InspectCandidate",
     "InspectCriterion",
+    "InspectDescription",
     "InspectFrame",
     "InspectRequest",
     "InspectResponse",

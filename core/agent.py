@@ -24,7 +24,7 @@ from helpers import (
     _request_id,
     _trimmed,
 )
-from inspection import inspect_candidate, pick_clip_for_inspect
+from inspection import describe_clip_with_server, inspect_candidate, pick_clip_for_inspect
 from patching import apply_edit_draft_patch
 from rendering import build_render_plan, render_preview
 from retrieval import retrieve_candidates
@@ -518,15 +518,26 @@ async def _execute_tool_call_todo(
             )
 
         if tool_call.tool_name == "inspect":
+            mode = _trimmed(str(tool_call.tool_input.get("mode") or "describe")) or "describe"
             clip_id = _trimmed(str(tool_call.tool_input.get("clip_id") or ""))
             candidate_clip_ids = runtime_state.get("retrieval_state", {}).get("candidate_clip_ids") or []
             target_clip = pick_clip_for_inspect(clip_id=clip_id, candidate_clip_ids=candidate_clip_ids, clips=draft.clips)
             score_map = runtime_state.get("retrieval_state", {}).get("candidate_scores") or {}
-            inspection = inspect_candidate(clip=target_clip, retrieval_score=score_map.get(target_clip.id))
+            if mode == "describe":
+                inspection = await describe_clip_with_server(
+                    access_token=access_token,
+                    project_id=project_id,
+                    draft=draft,
+                    clip=target_clip,
+                    question=_trimmed(str(tool_call.tool_input.get("question") or "")) or None,
+                    task_summary=_trimmed(str(tool_call.tool_input.get("task_summary") or decision.reasoning_summary or "")) or None,
+                )
+            else:
+                inspection = inspect_candidate(clip=target_clip, retrieval_score=score_map.get(target_clip.id))
             return ToolObservationModel(
                 tool_name="inspect",
                 success=True,
-                summary="Inspected clip evidence for decision making.",
+                summary="Inspected clip visual evidence for decision making.",
                 output=inspection,
                 state_delta={
                     "runtime_state_update": {

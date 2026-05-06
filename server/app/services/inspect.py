@@ -16,6 +16,12 @@ from ..core.errors import (
 from ..schemas.inspect import InspectRequest, InspectResponse
 
 
+DEFAULT_DESCRIBE_QUESTION = (
+    "Describe this clip for a text-only video editing agent. Focus on visible subjects, actions, scene, timing, "
+    "camera motion, mood, editing value, and uncertainty. Do not invent details."
+)
+
+
 class InspectService:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -94,6 +100,10 @@ class InspectService:
             raise invalid_inspect_request("choose mode requires three to five candidates.")
         if payload.mode == "rank" and not 2 <= candidate_count <= 5:
             raise invalid_inspect_request("rank mode requires two to five candidates.")
+        if payload.mode == "describe" and candidate_count != 1:
+            raise invalid_inspect_request("describe mode requires exactly one candidate.")
+        if payload.mode != "describe" and not payload.question:
+            raise invalid_inspect_request(f"{payload.mode} mode requires question.")
 
         for candidate in payload.candidates:
             if candidate.clip_duration_ms <= 0:
@@ -155,16 +165,8 @@ class InspectService:
         criteria_lines = "\n".join(
             f"- {criterion.name}: {criterion.description}" for criterion in payload.criteria
         ) or "- No explicit criteria provided."
-        system_text = (
-            "You are a visual inspection tool for video editing.\n"
-            "Return exactly one JSON object.\n"
-            "Do not return markdown, code fences, commentary, or extra prose.\n"
-            "Use only these top-level fields when relevant: "
-            "question_type, selected_clip_id, ranking, candidate_judgments, uncertainty.\n"
-            "candidate_judgments must be a non-empty array of objects with clip_id, verdict, confidence, short_reason.\n"
-            "ranking must contain only clip_id values from the provided candidates.\n"
-            "If you cannot make a stable choice, keep the JSON valid and explain uncertainty."
-        )
+        question = payload.question or DEFAULT_DESCRIBE_QUESTION
+        system_text = self._build_system_prompt(payload)
         user_content: list[dict[str, Any]] = [
             {
                 "type": "text",
@@ -172,7 +174,7 @@ class InspectService:
                     f"mode: {payload.mode}\n"
                     f"task_summary: {payload.task_summary}\n"
                     f"hypothesis_summary: {payload.hypothesis_summary or 'N/A'}\n"
-                    f"question: {payload.question}\n"
+                    f"question: {question}\n"
                     f"criteria:\n{criteria_lines}"
                 ),
             }
@@ -215,11 +217,39 @@ class InspectService:
             ],
         }
 
+    def _build_system_prompt(self, payload: InspectRequest) -> str:
+        if payload.mode == "describe":
+            return (
+                "You are the visual perception tool for a text-only video editing agent.\n"
+                "Return exactly one JSON object.\n"
+                "Do not return markdown, code fences, commentary, or extra prose.\n"
+                "Describe only visible evidence from the provided clip frames.\n"
+                "Separate observations from inferences.\n"
+                "Mention uncertainty when the frames are insufficient.\n"
+                "Do not invent identities, events, emotions, or off-screen facts.\n"
+                "Use only these top-level fields: question_type, selected_clip_id, descriptions, uncertainty.\n"
+                "question_type must be describe.\n"
+                "descriptions must contain objects with clip_id, description, observations, actions, subjects, "
+                "scene, camera, editing_value, uncertainty."
+            )
+        return (
+            "You are a visual inspection tool for video editing.\n"
+            "Return exactly one JSON object.\n"
+            "Do not return markdown, code fences, commentary, or extra prose.\n"
+            "Use only these top-level fields when relevant: "
+            "question_type, selected_clip_id, ranking, candidate_judgments, uncertainty.\n"
+            "candidate_judgments must be a non-empty array of objects with clip_id, verdict, confidence, short_reason.\n"
+            "ranking must contain only clip_id values from the provided candidates.\n"
+            "If you cannot make a stable choice, keep the JSON valid and explain uncertainty."
+        )
+
     def _normalize_provider_response(self, body: dict[str, Any], request: InspectRequest) -> InspectResponse:
         content_text = self._extract_response_text(body)
         parsed_payload = self._parse_json_object(content_text)
         if "question_type" not in parsed_payload:
             parsed_payload["question_type"] = request.mode
+        if request.mode == "describe":
+            return self._normalize_describe_response(parsed_payload, request)
         try:
             response = InspectResponse.model_validate(parsed_payload)
         except ValidationError as exc:
@@ -231,6 +261,11 @@ class InspectService:
         candidate_ids = [candidate.clip_id for candidate in request.candidates]
         candidate_id_set = set(candidate_ids)
         normalized = response.model_dump()
+        if normalized.get("question_type") != request.mode:
+            raise inspect_provider_invalid_response(
+                "question_type must match inspect request mode.",
+                details={"question_type": normalized.get("question_type"), "mode": request.mode},
+            )
 
         ranking = normalized.get("ranking")
         if ranking is not None:
@@ -261,6 +296,8 @@ class InspectService:
             )
 
         judgments = normalized.get("candidate_judgments") or []
+        if not judgments:
+            raise inspect_provider_invalid_response("Inspect provider response must include candidate_judgments.")
         seen_judgment_ids: set[str] = set()
         for judgment in judgments:
             clip_id = judgment["clip_id"]
@@ -291,6 +328,50 @@ class InspectService:
         except ValidationError as exc:
             raise inspect_provider_invalid_response(
                 "Inspect response normalization failed.",
+                details={"validation_errors": exc.errors()},
+            ) from exc
+
+    def _normalize_describe_response(self, parsed_payload: dict[str, Any], request: InspectRequest) -> InspectResponse:
+        parsed_payload["question_type"] = "describe"
+        candidate_ids = [candidate.clip_id for candidate in request.candidates]
+        candidate_id_set = set(candidate_ids)
+        descriptions = parsed_payload.get("descriptions")
+        if not isinstance(descriptions, list) or not descriptions:
+            raise inspect_provider_invalid_response("describe mode requires descriptions in provider response.")
+
+        seen_description_ids: set[str] = set()
+        for description in descriptions:
+            if not isinstance(description, dict):
+                raise inspect_provider_invalid_response("description entries must be objects.")
+            clip_id = description.get("clip_id")
+            if clip_id not in candidate_id_set:
+                raise inspect_provider_invalid_response(
+                    "descriptions contains an unknown clip_id.",
+                    details={"clip_id": clip_id},
+                )
+            if clip_id in seen_description_ids:
+                raise inspect_provider_invalid_response(
+                    "descriptions contains duplicate clip_id values.",
+                    details={"clip_id": clip_id},
+                )
+            seen_description_ids.add(clip_id)
+
+        selected_clip_id = parsed_payload.get("selected_clip_id")
+        if selected_clip_id is not None and selected_clip_id not in candidate_id_set:
+            raise inspect_provider_invalid_response(
+                "selected_clip_id is not part of the provided candidates.",
+                details={"clip_id": selected_clip_id},
+            )
+        if not selected_clip_id:
+            parsed_payload["selected_clip_id"] = descriptions[0]["clip_id"]
+        parsed_payload["candidate_judgments"] = parsed_payload.get("candidate_judgments") or []
+        parsed_payload["ranking"] = parsed_payload.get("ranking") or None
+
+        try:
+            return InspectResponse.model_validate(parsed_payload)
+        except ValidationError as exc:
+            raise inspect_provider_invalid_response(
+                "Inspect describe response normalization failed.",
                 details={"validation_errors": exc.errors()},
             ) from exc
 

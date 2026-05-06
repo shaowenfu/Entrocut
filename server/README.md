@@ -170,7 +170,7 @@ server/
 
 ### Inspect
 
-`POST /v1/tools/inspect` 位于 `app/api/routes/inspect.py`，用于让云端视觉模型对候选片段做精判。
+`POST /v1/tools/inspect` 位于 `app/api/routes/inspect.py`，用于让云端视觉模型理解已知片段，或对候选片段做精判。
 
 当前支持的 `mode（模式）`：
 
@@ -178,6 +178,7 @@ server/
 - `compare`：只允许 2 个候选。
 - `choose`：允许 3 到 5 个候选。
 - `rank`：允许 2 到 5 个候选。
+- `describe`：只允许 1 个候选，用于描述已知 `clip` 的可见主体、动作、场景、镜头运动、剪辑价值和不确定性。
 
 每个候选必须提供：
 
@@ -187,7 +188,7 @@ server/
 - 至少一帧 `frames[]`
 - 每帧的 `timestamp_ms`、`timestamp_label`、`image_base64`
 
-当前 provider 只实现了 `google_gemini`。服务会要求上游返回 JSON，然后归一化为 `InspectResponse`，包括 `selected_clip_id`、`ranking`、`candidate_judgments` 和 `uncertainty`。
+当前 provider 只实现了 `google_gemini`。服务会要求上游返回 JSON，然后归一化为 `InspectResponse`。旧判断模式返回 `selected_clip_id`、`ranking`、`candidate_judgments` 和 `uncertainty`；`describe` 模式返回 `descriptions`，且不强制返回 `candidate_judgments`。
 
 ### 运行态与观测
 
