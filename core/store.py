@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from pathlib import Path
 from typing import Any
@@ -108,8 +109,11 @@ class InMemoryProjectStore:
         return None
 
     def _asset_fingerprint_for_path(self, path_obj: Path) -> str:
-        stat = path_obj.stat()
-        return f"{path_obj.resolve()}:{stat.st_size}:{stat.st_mtime_ns}"
+        digest = hashlib.sha256()
+        with path_obj.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return f"sha256:{digest.hexdigest()}"
 
     def _normalize_asset_processing_state(
         self,
@@ -127,6 +131,8 @@ class InMemoryProjectStore:
         stage = normalized_asset.processing_stage
         if normalized_asset.last_error is not None:
             stage = "failed"
+        elif stage in {"pending", "segmenting", "vectorizing"}:
+            stage = normalized_asset.processing_stage
         elif indexed_clip_count > 0 and indexed_clip_count >= normalized_clip_count:
             stage = "ready"
             indexed_clip_count = normalized_clip_count
@@ -153,7 +159,40 @@ class InMemoryProjectStore:
 
     def _normalize_draft_assets(self, draft_payload: dict[str, Any]) -> dict[str, Any]:
         draft = EditDraftModel.model_validate(draft_payload)
-        clip_counts = _asset_clip_counts(draft.clips)
+        assets_by_id = {asset.id: asset for asset in draft.assets}
+
+        def clip_source_key(clip: ClipModel) -> tuple[str, int, int]:
+            asset = assets_by_id.get(clip.asset_id)
+            source_key = (asset.fingerprint or asset.source_path or asset.id) if asset else clip.asset_id
+            return (source_key, int(clip.source_start_ms), int(clip.source_end_ms))
+
+        latest_clip_by_key: dict[tuple[str, int, int], ClipModel] = {}
+        old_clip_id_to_latest: dict[str, str] = {}
+        for clip in draft.clips:
+            clip_key = clip_source_key(clip)
+            previous = latest_clip_by_key.get(clip_key)
+            if previous is not None and previous.id != clip.id:
+                old_clip_id_to_latest[previous.id] = clip.id
+            latest_clip_by_key[clip_key] = clip
+        deduped_clips = [
+            clip
+            for clip in draft.clips
+            if latest_clip_by_key[clip_source_key(clip)].id == clip.id
+        ]
+
+        def latest_clip_id(clip_id: str) -> str:
+            seen: set[str] = set()
+            current = clip_id
+            while current in old_clip_id_to_latest and current not in seen:
+                seen.add(current)
+                current = old_clip_id_to_latest[current]
+            return current
+
+        normalized_shots = [
+            shot.model_copy(update={"clip_id": latest_clip_id(shot.clip_id)})
+            for shot in draft.shots
+        ]
+        clip_counts = _asset_clip_counts(deduped_clips)
         normalized_assets = [
             self._normalize_asset_processing_state(
                 asset.model_dump(),
@@ -162,7 +201,7 @@ class InMemoryProjectStore:
             )
             for asset in draft.assets
         ]
-        return draft.model_copy(update={"assets": normalized_assets}).model_dump()
+        return draft.model_copy(update={"assets": normalized_assets, "clips": deduped_clips, "shots": normalized_shots}).model_dump()
 
     def _sync_runtime_retrieval_state(
         self,
@@ -199,6 +238,7 @@ class InMemoryProjectStore:
         indexed_clip_counts: dict[str, int] | None = None,
         last_error: dict[str, Any] | None = None,
         append_clips: list[Any] | None = None,
+        replace_clip_asset_ids: set[str] | None = None,
         updated_at: str,
         bump_version: bool,
     ) -> EditDraftModel:
@@ -223,10 +263,12 @@ class InMemoryProjectStore:
             next_assets.append(asset.model_copy(update=asset_update))
 
         next_clips = draft.clips
+        if replace_clip_asset_ids:
+            next_clips = [clip for clip in next_clips if clip.asset_id not in replace_clip_asset_ids]
         if append_clips:
-            existing_clip_ids = {clip.id for clip in draft.clips}
+            existing_clip_ids = {clip.id for clip in next_clips}
             next_clips = [
-                *draft.clips,
+                *next_clips,
                 *(clip for clip in append_clips if clip.id not in existing_clip_ids),
             ]
 
@@ -526,6 +568,23 @@ class InMemoryProjectStore:
             }
         )
 
+    async def update_project_title(self, project_id: str, title: str) -> WorkspaceSnapshotModel:
+        record = self.get_project_or_raise(project_id)
+        self._ensure_record_defaults(record)
+        normalized_title = _trimmed(title)
+        if normalized_title is None:
+            raise CoreApiError(
+                status_code=422,
+                code="PROJECT_TITLE_REQUIRED",
+                message="Project title is required.",
+                details={"project_id": project_id},
+            )
+        now = _now_iso()
+        record["project"]["title"] = normalized_title[:80]
+        record["project"]["updated_at"] = now
+        await self.emit(project_id, "project.updated", {"project": record["project"]})
+        return self.workspace_snapshot(project_id)
+
     async def emit(self, project_id: str, event_name: str, data: dict[str, Any]) -> None:
         async with self._lock:
             record = self.get_project_or_raise(project_id)
@@ -590,13 +649,13 @@ class InMemoryProjectStore:
         asset_id: str,
         active: bool,
         clip_ids: list[str],
-    ) -> None:
+    ) -> bool:
         if not clip_ids:
-            return
+            return True
         auth_session = await auth_session_store.snapshot()
         access_token = auth_session.get("access_token")
         if not access_token:
-            return
+            return False
         endpoint_url = f"{SERVER_BASE_URL}/v1/assets/vector-index-state"
         request_headers = {
             "Authorization": f"Bearer {access_token}",
@@ -612,6 +671,7 @@ class InMemoryProjectStore:
             async with AsyncClient(timeout=20.0) as client:
                 response = await client.post(endpoint_url, json=payload, headers=request_headers)
                 response.raise_for_status()
+            return True
         except Exception as exc:
             logger.warning(
                 "Failed to sync remote vector index state: project_id=%s asset_id=%s active=%s error=%s",
@@ -620,6 +680,7 @@ class InMemoryProjectStore:
                 active,
                 exc,
             )
+            return False
 
     async def _set_asset_lifecycle_state(
         self,
@@ -670,6 +731,21 @@ class InMemoryProjectStore:
             vector_index_state = "active" if target_asset.indexed_clip_count > 0 else "none"
             deleted_at = None
             remote_active = True
+        clip_ids = [clip.id for clip in draft.clips if clip.asset_id == asset_id]
+        if clip_ids and target_asset.indexed_clip_count > 0:
+            synced = await self._sync_remote_asset_vector_index_state(
+                project_id=project_id,
+                asset_id=asset_id,
+                active=remote_active,
+                clip_ids=clip_ids,
+            )
+            if not synced:
+                raise CoreApiError(
+                    status_code=502,
+                    code="VECTOR_INDEX_STATE_SYNC_FAILED",
+                    message="Could not update remote vector index state for this asset.",
+                    details={"project_id": project_id, "asset_id": asset_id, "active": remote_active},
+                )
 
         next_assets = []
         for asset in draft.assets:
@@ -707,13 +783,6 @@ class InMemoryProjectStore:
             project_id,
             previous_capabilities=previous_capabilities,
             previous_summary_state=previous_summary_state,
-        )
-        clip_ids = [clip.id for clip in next_draft.clips if clip.asset_id == asset_id]
-        await self._sync_remote_asset_vector_index_state(
-            project_id=project_id,
-            asset_id=asset_id,
-            active=remote_active,
-            clip_ids=clip_ids,
         )
         return self.workspace_snapshot(project_id)
 
@@ -776,7 +845,7 @@ class InMemoryProjectStore:
                     message="Media file path points to a directory.",
                     details={"file_name": file_ref.name, "path": file_path},
                 )
-            fingerprints_by_path[file_path] = self._asset_fingerprint_for_path(path_obj)
+            fingerprints_by_path[file_path] = await asyncio.to_thread(self._asset_fingerprint_for_path, path_obj)
             validated_files.append({"name": file_ref.name, "path": file_path})
         media = MediaReference(files=validated_files)
 
@@ -787,35 +856,60 @@ class InMemoryProjectStore:
         previous_summary_state = record.get("summary_state")
         draft = EditDraftModel.model_validate(record["edit_draft"])
         restored_asset_ids: set[str] = set()
+        skipped_duplicate_asset_ids: set[str] = set()
+        retry_existing_asset_ids: set[str] = set()
         pending_file_refs = []
         next_assets = list(draft.assets)
         for file_ref in _media_file_refs(media):
             file_path = (file_ref.path or "").strip()
             fingerprint = fingerprints_by_path.get(file_path)
-            restored = False
+            existing_index: int | None = None
             for index, asset in enumerate(next_assets):
                 fingerprint_matches = bool(fingerprint and asset.fingerprint == fingerprint)
                 source_path_matches = bool(asset.source_path and asset.source_path == file_path)
-                if (
-                    asset.lifecycle_state == "deleted"
-                    and asset.processing_stage == "ready"
-                    and asset.indexed_clip_count > 0
-                    and (fingerprint_matches or source_path_matches)
-                ):
-                    next_assets[index] = asset.model_copy(
+                if fingerprint_matches or source_path_matches:
+                    existing_index = index
+                    break
+            if existing_index is None:
+                pending_file_refs.append(file_ref)
+                continue
+
+            existing_asset = next_assets[existing_index]
+            if existing_asset.processing_stage == "ready" and existing_asset.indexed_clip_count > 0:
+                if existing_asset.lifecycle_state == "deleted":
+                    next_assets[existing_index] = existing_asset.model_copy(
                         update={
                             "lifecycle_state": "active",
                             "deleted_at": None,
-                            "fingerprint": fingerprint or asset.fingerprint,
+                            "source_path": file_path or existing_asset.source_path,
+                            "fingerprint": fingerprint or existing_asset.fingerprint,
                             "vector_index_state": "active",
                             "updated_at": now,
                         }
                     )
-                    restored_asset_ids.add(asset.id)
-                    restored = True
-                    break
-            if not restored:
-                pending_file_refs.append(file_ref)
+                    restored_asset_ids.add(existing_asset.id)
+                else:
+                    skipped_duplicate_asset_ids.add(existing_asset.id)
+                continue
+
+            if existing_asset.processing_stage in {"pending", "segmenting", "vectorizing"}:
+                skipped_duplicate_asset_ids.add(existing_asset.id)
+                continue
+
+            next_assets[existing_index] = existing_asset.model_copy(
+                update={
+                    "lifecycle_state": "active",
+                    "deleted_at": None,
+                    "source_path": file_path or existing_asset.source_path,
+                    "fingerprint": fingerprint or existing_asset.fingerprint,
+                    "processing_stage": "pending",
+                    "processing_progress": 0,
+                    "last_error": None,
+                    "vector_index_state": "none",
+                    "updated_at": now,
+                }
+            )
+            retry_existing_asset_ids.add(existing_asset.id)
 
         pending_assets = _build_assets(
             MediaReference(files=pending_file_refs),
@@ -832,7 +926,7 @@ class InMemoryProjectStore:
             )
             for asset in pending_assets
         ]
-        if not pending_assets and not restored_asset_ids:
+        if not pending_assets and not restored_asset_ids and not skipped_duplicate_asset_ids and not retry_existing_asset_ids:
             raise CoreApiError(
                 status_code=422,
                 code="MEDIA_REFERENCE_REQUIRED",
@@ -848,9 +942,9 @@ class InMemoryProjectStore:
             )
         )
         record["edit_draft"] = next_draft.model_dump()
-        asset_ids = {asset.id for asset in pending_assets}
-        changed_asset_ids = asset_ids | restored_asset_ids
-        task_status = "queued" if pending_assets else "succeeded"
+        asset_ids = {asset.id for asset in pending_assets} | retry_existing_asset_ids
+        changed_asset_ids = asset_ids | restored_asset_ids | skipped_duplicate_asset_ids
+        task_status = "queued" if asset_ids else "succeeded"
         task = TaskModel(
             id=_entity_id("task_ingest"),
             slot="media",
@@ -858,9 +952,14 @@ class InMemoryProjectStore:
             status=task_status,
             owner_type="project",
             owner_id=project_id,
-            progress=0 if pending_assets else 100,
-            message="Media ingest queued" if pending_assets else "Media assets restored",
-            result={"asset_ids": sorted(restored_asset_ids)} if restored_asset_ids and not pending_assets else {},
+            progress=0 if asset_ids else 100,
+            message="Media ingest queued" if asset_ids else "Media assets already available",
+            result={
+                "asset_ids": sorted(restored_asset_ids | skipped_duplicate_asset_ids),
+                "skipped_duplicate_asset_ids": sorted(skipped_duplicate_asset_ids),
+            }
+            if not asset_ids
+            else {},
             created_at=now,
             updated_at=now,
         )
@@ -888,7 +987,7 @@ class InMemoryProjectStore:
                 active=True,
                 clip_ids=restored_clip_ids,
             )
-        if pending_assets:
+        if asset_ids:
             background_task = asyncio.create_task(self._run_assets_import(project_id, task, asset_ids))
             self._register_background_task(project_id, background_task)
         return task
@@ -945,18 +1044,11 @@ class InMemoryProjectStore:
         previous_capabilities = self._derive_project_capabilities(record)
         previous_summary_state = record.get("summary_state")
         retry_asset_ids = {asset_id}
-        draft_without_old_clips = _bump_draft(
-            draft,
-            clips=[clip for clip in draft.clips if clip.asset_id != asset_id],
-            updated_at=now,
-        )
         reset_draft = self._update_draft_assets(
-            draft_without_old_clips,
+            draft,
             asset_ids=retry_asset_ids,
             stage="pending",
             progress=0,
-            clip_counts={asset_id: 0},
-            indexed_clip_counts={asset_id: 0},
             updated_at=now,
             bump_version=False,
         )
@@ -1037,6 +1129,7 @@ class InMemoryProjectStore:
             
             # 1. Segmenting
             new_clips = []
+            generated_clip_keys: set[tuple[str, int, int]] = set()
             for asset in imported_assets:
                 video_path = asset.source_path
                 if not video_path:
@@ -1044,6 +1137,10 @@ class InMemoryProjectStore:
                 # run CPU intensive detection in thread
                 scene_list = await asyncio.to_thread(detect_scenes, video_path)
                 for i, (start_ms, end_ms) in enumerate(scene_list, start=1):
+                    clip_key = (asset.id, int(start_ms), int(end_ms))
+                    if clip_key in generated_clip_keys:
+                        continue
+                    generated_clip_keys.add(clip_key)
                     new_clips.append(
                         ClipModel(
                             id=_entity_id("clip"),
@@ -1074,7 +1171,6 @@ class InMemoryProjectStore:
                 progress=50,
                 clip_counts=clip_counts,
                 indexed_clip_counts={asset_id: 0 for asset_id in asset_ids},
-                append_clips=new_clips,
                 updated_at=vectorizing_at,
                 bump_version=True,
             )
@@ -1155,6 +1251,10 @@ class InMemoryProjectStore:
 
             # Update stage to ready
             ready_at = _now_iso()
+            old_clip_ids_by_asset = {
+                asset_id: [clip.id for clip in vectorizing_draft.clips if clip.asset_id == asset_id]
+                for asset_id in asset_ids
+            }
             ready_draft = self._update_draft_assets(
                 vectorizing_draft,
                 asset_ids=asset_ids,
@@ -1162,6 +1262,8 @@ class InMemoryProjectStore:
                 progress=100,
                 clip_counts=clip_counts,
                 indexed_clip_counts=clip_counts,
+                append_clips=new_clips,
+                replace_clip_asset_ids=asset_ids,
                 updated_at=ready_at,
                 bump_version=False,
             )
@@ -1181,6 +1283,14 @@ class InMemoryProjectStore:
                 previous_capabilities=previous_capabilities,
                 previous_summary_state=previous_summary_state,
             )
+            for asset_id, old_clip_ids in old_clip_ids_by_asset.items():
+                if old_clip_ids:
+                    await self._sync_remote_asset_vector_index_state(
+                        project_id=project_id,
+                        asset_id=asset_id,
+                        active=False,
+                        clip_ids=old_clip_ids,
+                    )
 
             succeeded = current_task.model_copy(
                 update={
@@ -1438,13 +1548,13 @@ class InMemoryProjectStore:
                 routing_config={
                     "mode": routing_config.get("mode") or "Platform",
                     "provider": routing_config.get("provider") or "deepseek",
-                    "model": routing_config.get("model") or model or "deepseek-chat",
+                    "model": routing_config.get("model") or model or "deepseek-v4-flash",
                     "custom_model": routing_config.get("custom_model") or None,
                     "effective_model": (
                         routing_config.get("custom_model")
                         or routing_config.get("model")
                         or model
-                        or "deepseek-chat"
+                        or "deepseek-v4-flash"
                     ),
                 },
                 byok_key=byok_key,
@@ -1696,6 +1806,11 @@ async def _mark_chat_failed(
         update={
             "status": "failed",
             "message": message,
+            "error": {
+                "code": code,
+                "message": message,
+                "details": details or {},
+            },
             "updated_at": _now_iso(),
         }
     )

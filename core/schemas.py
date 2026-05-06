@@ -320,6 +320,10 @@ class CreateProjectRequest(BaseModel):
     media: MediaReference | None = None
 
 
+class UpdateProjectRequest(BaseModel):
+    title: str
+
+
 class CreateProjectResponse(BaseModel):
     project: ProjectModel
     workspace: WorkspaceSnapshotModel

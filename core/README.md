@@ -276,7 +276,7 @@ uvicorn server:app --host 127.0.0.1 --port 8000 --reload
 export ENTROCUT_APP_DATA_ROOT=/tmp/entrocut-core-data
 export SERVER_BASE_URL=http://127.0.0.1:8001
 export SERVER_DEFAULT_PROVIDER=deepseek
-export SERVER_DEFAULT_MODEL=deepseek-chat
+export SERVER_DEFAULT_MODEL=deepseek-v4-flash
 export SERVER_CHAT_TIMEOUT_SECONDS=30
 export AGENT_LOOP_MAX_ITERATIONS=3
 ```

@@ -53,14 +53,18 @@ def _extract_text_content(content: Any) -> str:
 def _derive_title(title: str | None, prompt: str | None, media: MediaReference | None) -> str:
     explicit = _trimmed(title)
     if explicit:
-        return explicit
+        return explicit[:80]
     normalized_prompt = _trimmed(prompt)
     if normalized_prompt:
-        return normalized_prompt[:48]
+        compact = " ".join(normalized_prompt.split())
+        return compact[:48]
     if media and media.folder_path:
-        return Path(media.folder_path).name or "Untitled Project"
+        return (Path(media.folder_path).name or "Untitled Project")[:80]
     if media and media.files:
-        return media.files[0].name
+        first_name = Path(media.files[0].name).stem or media.files[0].name
+        if len(media.files) > 1:
+            return f"{first_name} + {len(media.files) - 1} videos"[:80]
+        return first_name[:80]
     return "Untitled Project"
 
 

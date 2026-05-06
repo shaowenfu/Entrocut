@@ -16,6 +16,7 @@ from schemas import (
     ListProjectsResponse,
     ProjectModel,
     TaskResponse,
+    UpdateProjectRequest,
 )
 from store import auth_session_store, store
 
@@ -43,6 +44,12 @@ async def create_project(payload: CreateProjectRequest) -> CreateProjectResponse
 @router.get("/api/v1/projects/{project_id}", response_model=GetWorkspaceResponse)
 async def get_project(project_id: str) -> GetWorkspaceResponse:
     return GetWorkspaceResponse(workspace=store.workspace_snapshot(project_id))
+
+
+@router.patch("/api/v1/projects/{project_id}", response_model=GetWorkspaceResponse)
+async def update_project(project_id: str, payload: UpdateProjectRequest) -> GetWorkspaceResponse:
+    workspace = await store.update_project_title(project_id, payload.title)
+    return GetWorkspaceResponse(workspace=workspace)
 
 
 @router.post("/api/v1/projects/{project_id}/assets:import", response_model=TaskResponse)

@@ -206,7 +206,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
             self.assertEqual(url, "https://api.deepseek.com/chat/completions")
             self.assertEqual(json["provider"], "deepseek")
-            self.assertEqual(json["model"], "deepseek-chat")
+            self.assertEqual(json["model"], "deepseek-v4-flash")
             self.assertEqual(json["custom_model"], "custom-planner-model")
             self.assertEqual(headers["Authorization"], "Bearer test-byok-key")
 
@@ -236,7 +236,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
                     "routing": {
                         "mode": "BYOK",
                         "provider": "deepseek",
-                        "model": "deepseek-chat",
+                        "model": "deepseek-v4-flash",
                         "custom_model": "custom-planner-model",
                     },
                 },
@@ -756,6 +756,50 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self.assertFalse((workspace_dir / source_file.name).exists())
         self.assertFalse((workspace_dir / "temp" / source_file.name).exists())
         self.assertTrue(source_file.exists())
+
+    def test_import_skips_duplicate_active_asset(self) -> None:
+        source_path = self._media_path("duplicate-active.mp4")
+        response = self.client.post("/api/v1/projects", json={"title": "Duplicate Media"})
+        self.assertEqual(response.status_code, 200)
+        project_id = response.json()["project"]["id"]
+        self._set_auth_session()
+
+        first_import = self.client.post(
+            f"/api/v1/projects/{project_id}/assets:import",
+            json={"media": {"files": [{"name": "duplicate-active.mp4", "path": source_path}]}},
+        )
+        self.assertEqual(first_import.status_code, 200)
+        first_workspace = self._poll_task_idle(project_id)
+        self.assertEqual(len(first_workspace["edit_draft"]["assets"]), 1)
+        self.assertEqual(len(first_workspace["edit_draft"]["clips"]), 2)
+
+        second_import = self.client.post(
+            f"/api/v1/projects/{project_id}/assets:import",
+            json={"media": {"files": [{"name": "duplicate-active.mp4", "path": source_path}]}},
+        )
+        self.assertEqual(second_import.status_code, 200)
+        second_task = second_import.json()["task"]
+        self.assertEqual(second_task["status"], "succeeded")
+        self.assertEqual(second_task["result"]["skipped_duplicate_asset_ids"], [first_workspace["edit_draft"]["assets"][0]["id"]])
+        second_workspace = self.client.get(f"/api/v1/projects/{project_id}").json()["workspace"]
+        self.assertEqual(len(second_workspace["edit_draft"]["assets"]), 1)
+        self.assertEqual(len(second_workspace["edit_draft"]["clips"]), 2)
+
+    def test_update_project_title_persists_to_workspace(self) -> None:
+        response = self.client.post("/api/v1/projects", json={"title": "Old Project Name"})
+        self.assertEqual(response.status_code, 200)
+        project_id = response.json()["project"]["id"]
+
+        update_response = self.client.patch(
+            f"/api/v1/projects/{project_id}",
+            json={"title": "New Project Name"},
+        )
+        self.assertEqual(update_response.status_code, 200)
+        self.assertEqual(update_response.json()["workspace"]["project"]["title"], "New Project Name")
+
+        reload_response = self.client.get(f"/api/v1/projects/{project_id}")
+        self.assertEqual(reload_response.status_code, 200)
+        self.assertEqual(reload_response.json()["workspace"]["project"]["title"], "New Project Name")
 
     def test_media_task_does_not_block_chat_task_slot(self) -> None:
         project_id, _ = self._create_project()

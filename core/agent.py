@@ -309,6 +309,17 @@ async def _request_server_planner_decision(
             body = response.json()
             if isinstance(body, dict):
                 details["server_error"] = body
+                error_body = body.get("error")
+                if isinstance(error_body, dict):
+                    details["server_error_code"] = error_body.get("code")
+                    details["server_error_message"] = error_body.get("message")
+                    server_error_details = error_body.get("details")
+                    if isinstance(server_error_details, dict):
+                        details["server_request_id"] = server_error_details.get("request_id")
+                        if server_error_details.get("upstream_status") is not None:
+                            details["upstream_status"] = server_error_details.get("upstream_status")
+                        if isinstance(server_error_details.get("upstream_body"), str):
+                            details["upstream_body_excerpt"] = server_error_details["upstream_body"][:500]
         except Exception:
             details["server_error_text"] = response.text[:400]
         raise CoreApiError(
