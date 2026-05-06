@@ -4,7 +4,8 @@ import logging
 from typing import Any
 from uuid import uuid4
 
-from fastapi import Header
+from fastapi import Security
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from ..core.config import RATE_CARDS, Settings, get_settings
 from ..core.errors import ServerApiError
@@ -33,6 +34,7 @@ quota_service = QuotaService(settings, store)
 rate_limit_service = RateLimitService(settings)
 vector_service = VectorService(settings)
 inspect_service = InspectService(settings)
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def bearer_token(authorization: str | None) -> str:
@@ -52,32 +54,6 @@ def bearer_token(authorization: str | None) -> str:
             error_type="auth_error",
         )
     return token.strip()
-
-
-def bootstrap_secret(secret: str | None) -> str:
-    if not settings.is_staging or not settings.staging_test_bootstrap_enabled:
-        raise ServerApiError(
-            status_code=404,
-            code="RESOURCE_NOT_FOUND",
-            message="Staging test bootstrap is disabled.",
-            error_type="invalid_request_error",
-        )
-    expected_secret = (settings.staging_test_bootstrap_secret or "").strip()
-    if not expected_secret:
-        raise ServerApiError(
-            status_code=503,
-            code="DEPENDENCY_UNAVAILABLE",
-            message="STAGING_TEST_BOOTSTRAP_SECRET is not configured.",
-            error_type="server_error",
-        )
-    if (secret or "").strip() != expected_secret:
-        raise ServerApiError(
-            status_code=401,
-            code="AUTH_TOKEN_INVALID",
-            message="Invalid staging bootstrap secret.",
-            error_type="auth_error",
-        )
-    return expected_secret
 
 
 def dependency_status(
@@ -187,7 +163,8 @@ def update_dependency_health() -> dict[str, Any]:
     return dependencies
 
 
-def get_current_user(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+def get_current_user(credentials: HTTPAuthorizationCredentials | None = Security(bearer_scheme)) -> dict[str, Any]:
+    authorization = f"{credentials.scheme} {credentials.credentials}" if credentials else None
     token = bearer_token(authorization)
     admin_token = (settings.admin_access_token or "").strip()
     if admin_token and token == admin_token:
@@ -219,7 +196,6 @@ def get_current_user(authorization: str | None = Header(default=None)) -> dict[s
 __all__ = [
     "RATE_CARDS",
     "Settings",
-    "bootstrap_secret",
     "get_current_user",
     "inspect_service",
     "logger",

@@ -41,19 +41,6 @@ class LoginSessionStatusResponse(BaseModel):
     error: dict[str, Any] | None = None
 
 
-class StagingBootstrapLoginSessionRequest(BaseModel):
-    login_session_id: str = Field(min_length=8)
-    provider: Literal["google", "github"] = "google"
-    email: str | None = None
-    display_name: str | None = None
-
-
-class StagingBootstrapLoginSessionResponse(BaseModel):
-    login_session_id: str
-    status: Literal["authenticated"]
-    user: UserProfile
-
-
 class RefreshTokenRequest(BaseModel):
     refresh_token: str = Field(min_length=16)
 

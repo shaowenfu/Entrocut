@@ -16,22 +16,6 @@ def validate_runtime_settings(settings: Settings) -> None:
             error_type="server_error",
         )
 
-    if settings.auth_dev_fallback_enabled:
-        raise ServerApiError(
-            status_code=503,
-            code="DEPENDENCY_UNAVAILABLE",
-            message="AUTH_DEV_FALLBACK_ENABLED must be false in staging/production.",
-            error_type="server_error",
-        )
-
-    if settings.staging_test_bootstrap_enabled and not (settings.staging_test_bootstrap_secret or "").strip():
-        raise ServerApiError(
-            status_code=503,
-            code="DEPENDENCY_UNAVAILABLE",
-            message="STAGING_TEST_BOOTSTRAP_SECRET is required when staging bootstrap is enabled.",
-            error_type="server_error",
-        )
-
     if not settings.mongodb_uri or not settings.mongodb_uri.strip():
         raise ServerApiError(
             status_code=503,

@@ -50,10 +50,6 @@ class Settings(BaseSettings):
     auth_deep_link_scheme: str = "entrocut"
     auth_token_issuer: str = "entrocut-server"
     auth_token_audience: str = "entrocut-core"
-    auth_dev_fallback_enabled: bool = True
-    auth_dev_fallback_web_url: str = "http://127.0.0.1:5173/"
-    staging_test_bootstrap_enabled: bool = False
-    staging_test_bootstrap_secret: str | None = None
     admin_access_token: str | None = None
 
     auth_google_client_id: str | None = None

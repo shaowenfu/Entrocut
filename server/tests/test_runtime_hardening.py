@@ -21,7 +21,6 @@ def _configure_local_runtime(monkeypatch) -> None:
     monkeypatch.setattr(settings, "allow_inmemory_mongo_fallback", True)
     monkeypatch.setattr(settings, "allow_inmemory_redis_fallback", True)
     monkeypatch.setattr(settings, "observability_enable_metrics", True)
-    monkeypatch.setattr(settings, "auth_dev_fallback_enabled", True)
     monkeypatch.setattr(settings, "deepseek_api_key", "test-deepseek-key")
     monkeypatch.setattr(settings, "google_api_key", "test-google-key")
     rate_limit_service._memory_counters.clear()
@@ -37,7 +36,6 @@ def test_validate_runtime_settings_rejects_production_defaults() -> None:
         allow_inmemory_mongo_fallback=False,
         allow_inmemory_redis_fallback=False,
         cors_allow_origins="https://app.entrocut.com",
-        auth_dev_fallback_enabled=False,
         auth_jwt_secret="entrocut-dev-secret-change-me",
     )
 
@@ -56,7 +54,6 @@ def test_validate_runtime_settings_accepts_strict_configuration() -> None:
         allow_inmemory_mongo_fallback=False,
         allow_inmemory_redis_fallback=False,
         cors_allow_origins="https://app.entrocut.com",
-        auth_dev_fallback_enabled=False,
         auth_jwt_secret="super-secret-production-key",
     )
 
@@ -71,7 +68,6 @@ def test_validate_runtime_settings_accepts_localhost_in_staging() -> None:
         allow_inmemory_mongo_fallback=False,
         allow_inmemory_redis_fallback=False,
         cors_allow_origins="https://entrocut.sherwenfu.com,http://localhost:5173",
-        auth_dev_fallback_enabled=False,
         auth_jwt_secret="super-secret-staging-key",
     )
 
@@ -86,7 +82,6 @@ def test_validate_runtime_settings_rejects_localhost_in_production() -> None:
         allow_inmemory_mongo_fallback=False,
         allow_inmemory_redis_fallback=False,
         cors_allow_origins="https://entrocut.sherwenfu.com,http://localhost:5173",
-        auth_dev_fallback_enabled=False,
         auth_jwt_secret="super-secret-production-key",
     )
 

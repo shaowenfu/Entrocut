@@ -1,13 +1,10 @@
 from __future__ import annotations
 
 from urllib.parse import urlencode
-from uuid import uuid4
-
-from fastapi import APIRouter, Depends, Header, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import RedirectResponse
 
 from ...bootstrap.dependencies import (
-    bootstrap_secret,
     get_current_user,
     logger,
     oauth_service,
@@ -26,8 +23,6 @@ from ...schemas.auth import (
     LogoutResponse,
     RefreshTokenRequest,
     RefreshTokenResponse,
-    StagingBootstrapLoginSessionRequest,
-    StagingBootstrapLoginSessionResponse,
 )
 from ...schemas.user import MeResponse
 
@@ -171,217 +166,6 @@ def get_login_session(request: Request, login_session_id: str) -> LoginSessionSt
         result=LoginSessionResult.model_validate(result) if result else None,
         error=login_session.get("error"),
     )
-
-
-@router.post("/api/v1/test/bootstrap/login-session", response_model=StagingBootstrapLoginSessionResponse)
-def staging_bootstrap_login_session(
-    request: Request,
-    payload: StagingBootstrapLoginSessionRequest,
-    x_bootstrap_secret: str | None = Header(default=None),
-) -> StagingBootstrapLoginSessionResponse:
-    bootstrap_secret(x_bootstrap_secret)
-    login_session = store.login_sessions.get(payload.login_session_id)
-    if login_session is None:
-        raise ServerApiError(
-            status_code=404,
-            code="LOGIN_SESSION_NOT_FOUND",
-            message="The requested login session does not exist.",
-            error_type="invalid_request_error",
-        )
-    unique_suffix = uuid4().hex[:12]
-    profile = {
-        "provider_user_id": f"{payload.provider}_staging_{unique_suffix}",
-        "email": payload.email or f"staging-auth-{unique_suffix}@entrocut.local",
-        "display_name": payload.display_name or f"Staging Bootstrap {unique_suffix[:6]}",
-        "avatar_url": None,
-    }
-    user = user_service.upsert_user_from_provider(payload.provider, profile)
-    token_bundle = token_service.issue_session_bundle(user)
-    login_session["status"] = "authenticated"
-    login_session["result"] = {
-        "access_token": token_bundle["access_token"],
-        "refresh_token": token_bundle["refresh_token"],
-        "expires_in": token_bundle["expires_in"],
-        "token_type": token_bundle["token_type"],
-        "user": user_service.user_profile(user),
-    }
-    login_session["error"] = None
-    store.login_sessions.save(login_session)
-    log_event(
-        logger,
-        "staging_bootstrap_login_session_succeeded",
-        service="server",
-        env=settings.app_env,
-        request_id=getattr(request.state, "request_id", None),
-        login_session_id=payload.login_session_id,
-        user_id=user["_id"],
-        provider=payload.provider,
-    )
-    log_audit_event(
-        "audit_staging_bootstrap_login_session_succeeded",
-        env=settings.app_env,
-        request_id=getattr(request.state, "request_id", None),
-        actor_user_id=user["_id"],
-        actor_session_id=token_bundle["session_id"],
-        action="auth.test_bootstrap.login_session",
-        result="success",
-        target_type="login_session",
-        target_id=payload.login_session_id,
-        details={"provider": payload.provider},
-    )
-    return StagingBootstrapLoginSessionResponse(
-        login_session_id=payload.login_session_id,
-        status="authenticated",
-        user=user_service.user_profile(user),
-    )
-
-
-@router.get("/api/v1/auth/dev/fallback", response_class=HTMLResponse)
-def auth_dev_fallback(login_session_id: str | None = None, status: str | None = None) -> HTMLResponse:
-    if not settings.auth_dev_fallback_enabled:
-        raise ServerApiError(
-            status_code=404,
-            code="NOT_FOUND",
-            message="Auth dev fallback is disabled.",
-            error_type="invalid_request_error",
-        )
-
-    safe_login_session_id = login_session_id or ""
-    safe_status = status or "pending"
-    safe_web_url = settings.auth_dev_fallback_web_url
-    html = f"""<!doctype html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>EntroCut Auth Dev Fallback</title>
-    <style>
-      :root {{
-        color-scheme: light;
-        --bg: #f5f1e8;
-        --panel: #fffdf9;
-        --ink: #1f1b18;
-        --muted: #746a60;
-        --accent: #c8643b;
-        --line: #dfd4c8;
-      }}
-      body {{
-        margin: 0;
-        background: radial-gradient(circle at top, #fff6df 0%, var(--bg) 55%);
-        color: var(--ink);
-        font-family: "Segoe UI", "PingFang SC", sans-serif;
-      }}
-      main {{
-        max-width: 760px;
-        margin: 48px auto;
-        padding: 0 20px;
-      }}
-      .panel {{
-        background: var(--panel);
-        border: 1px solid var(--line);
-        border-radius: 20px;
-        padding: 24px;
-        box-shadow: 0 20px 60px rgba(54, 39, 24, 0.08);
-      }}
-      h1 {{
-        margin: 0 0 12px;
-        font-size: 28px;
-      }}
-      p {{
-        margin: 0 0 12px;
-        color: var(--muted);
-        line-height: 1.6;
-      }}
-      code, pre {{
-        font-family: "SFMono-Regular", Consolas, monospace;
-      }}
-      .meta {{
-        margin: 18px 0;
-        padding: 14px;
-        border-radius: 14px;
-        background: #f8f2ea;
-        border: 1px solid var(--line);
-      }}
-      .actions {{
-        display: flex;
-        gap: 12px;
-        margin: 18px 0;
-        flex-wrap: wrap;
-      }}
-      button {{
-        border: 0;
-        border-radius: 999px;
-        padding: 12px 18px;
-        background: var(--accent);
-        color: white;
-        cursor: pointer;
-        font-size: 14px;
-      }}
-      button.secondary {{
-        background: #e7ddd2;
-        color: var(--ink);
-      }}
-      .ok {{
-        color: #0e7a44;
-      }}
-      .warn {{
-        color: #9b5b17;
-      }}
-    </style>
-  </head>
-  <body>
-    <main>
-      <div class="panel">
-        <h1>EntroCut 登录已回到 Server</h1>
-        <p>这是 <code>dev fallback</code> 页面，仅用于开发调试。正式桌面链路仍应优先回到 <code>entrocut://</code>。</p>
-        <div class="meta">
-          <div><strong>status</strong>: <span class="{ 'ok' if safe_status == 'authenticated' else 'warn' }">{safe_status}</span></div>
-          <div><strong>login_session_id</strong>: <code id="session-id">{safe_login_session_id}</code></div>
-        </div>
-        <p>当前页面只负责开发期回落。它不会展示 token，而是自动把 <code>login_session_id</code> 回传给前端页面，再由前端自行一次性领取登录结果。</p>
-        <div class="actions">
-          <button id="continue-button" type="button">返回 EntroCut</button>
-          <button id="copy-button" type="button" class="secondary">复制 login_session_id</button>
-        </div>
-        <p id="status-line">正在准备跳回 EntroCut...</p>
-      </div>
-    </main>
-    <script>
-      const loginSessionId = {safe_login_session_id!r};
-      const webUrl = {safe_web_url!r};
-      const statusLine = document.getElementById("status-line");
-      const continueButton = document.getElementById("continue-button");
-      const copyButton = document.getElementById("copy-button");
-
-      function buildRedirectUrl() {{
-        const target = new URL(webUrl);
-        target.searchParams.set("auth_login_session_id", loginSessionId);
-        target.searchParams.set("auth_status", "authenticated");
-        return target.toString();
-      }}
-
-      function jumpBack() {{
-        if (!loginSessionId) {{
-          statusLine.textContent = "缺少 login_session_id";
-          return;
-        }}
-        window.location.replace(buildRedirectUrl());
-      }}
-
-      continueButton.addEventListener("click", jumpBack);
-
-      copyButton.addEventListener("click", async () => {{
-        if (!loginSessionId) {{
-          return;
-        }}
-        await navigator.clipboard.writeText(loginSessionId);
-      }});
-
-      window.setTimeout(jumpBack, 800);
-    </script>
-  </body>
-</html>"""
-    return HTMLResponse(content=html)
 
 
 @router.post("/api/v1/auth/refresh", response_model=RefreshTokenResponse)
