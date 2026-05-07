@@ -168,10 +168,24 @@ def get_current_user(credentials: HTTPAuthorizationCredentials | None = Security
     token = bearer_token(authorization)
     admin_token = (settings.admin_access_token or "").strip()
     if admin_token and token == admin_token:
-        admin_user: dict[str, Any] = {"_id": "__admin__", "status": "active"}
-        quota_service.ensure_user_quota_defaults(admin_user)
-        admin_user["credits_balance"] = int(admin_user.get("remaining_quota") or 0)
-        return {"user": admin_user, "token_payload": {"sub": "__admin__", "sid": "__admin_session__"}}
+        user = store.mongo.find_user_by_id("admin")
+        if user is None:
+            raise ServerApiError(
+                status_code=401,
+                code="AUTH_TOKEN_INVALID",
+                message="Admin access token is configured, but MongoDB user 'admin' does not exist.",
+                error_type="auth_error",
+            )
+        if user.get("status") != "active":
+            raise ServerApiError(
+                status_code=403,
+                code="USER_SUSPENDED",
+                message="The current user is suspended.",
+                error_type="auth_error",
+            )
+        quota_service.ensure_user_quota_defaults(user)
+        user["credits_balance"] = int(user.get("remaining_quota") or 0)
+        return {"user": user, "token_payload": {"sub": "admin", "sid": "admin_access_token"}}
     payload = token_service.decode_access_token(token)
     user = store.mongo.find_user_by_id(payload["sub"])
     if user is None:

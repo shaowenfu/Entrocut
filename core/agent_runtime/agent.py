@@ -435,6 +435,11 @@ def _build_tool_call_or_raise(decision: PlannerDecisionModel) -> ToolCallModel:
         ) from exc
 
 
+def _active_clips(draft: EditDraftModel) -> list[ClipModel]:
+    active_asset_ids = {asset.id for asset in draft.assets if asset.lifecycle_state == "active"}
+    return [clip for clip in draft.clips if clip.asset_id in active_asset_ids]
+
+
 async def _execute_tool_call_todo(
     *,
     project_id: str,
@@ -513,7 +518,11 @@ async def _execute_tool_call_todo(
             mode = _trimmed(str(tool_call.tool_input.get("mode") or "describe")) or "describe"
             clip_id = _trimmed(str(tool_call.tool_input.get("clip_id") or ""))
             candidate_clip_ids = runtime_state.get("retrieval_state", {}).get("candidate_clip_ids") or []
-            target_clip = pick_clip_for_inspect(clip_id=clip_id, candidate_clip_ids=candidate_clip_ids, clips=draft.clips)
+            target_clip = pick_clip_for_inspect(
+                clip_id=clip_id,
+                candidate_clip_ids=candidate_clip_ids,
+                clips=_active_clips(draft),
+            )
             score_map = runtime_state.get("retrieval_state", {}).get("candidate_scores") or {}
             if mode == "describe":
                 inspection = await describe_clip_with_server(
@@ -546,10 +555,11 @@ async def _execute_tool_call_todo(
             )
 
         if tool_call.tool_name == "patch":
+            active_clip_ids = {clip.id for clip in _active_clips(draft)}
             clip_id = _trimmed(str(tool_call.tool_input.get("clip_id") or "")) or (
                 (runtime_state.get("retrieval_state", {}).get("candidate_clip_ids") or [None])[0]
             )
-            if not clip_id:
+            if not clip_id or clip_id not in active_clip_ids:
                 raise CoreApiError(status_code=422, code="PATCH_INVALID_CLIP", message="Patch requires clip_id.")
             patch_payload = EditDraftPatchModel(
                 operations=[

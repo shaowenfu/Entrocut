@@ -71,10 +71,12 @@ class InMemoryProjectStore:
     def _load_persisted_records(self) -> None:
         for record in self._repository.load_records():
             project_id = str(record["project"]["id"])
+            self._expire_orphaned_startup_tasks(record)
             self._ensure_record_defaults(record)
             self._projects[project_id] = record
             self._subscribers.setdefault(project_id, set())
             self._background_tasks.setdefault(project_id, set())
+            self._repository.upsert_record(record)
 
     def _default_project_runtime_state(self, *, updated_at: str | None = None) -> dict[str, Any]:
         runtime_state = ProjectRuntimeState().model_dump()
@@ -127,17 +129,19 @@ class InMemoryProjectStore:
         stage = normalized_asset.processing_stage
         if normalized_asset.last_error is not None:
             stage = "failed"
-        elif stage in {"pending", "segmenting", "vectorizing"}:
-            stage = normalized_asset.processing_stage
         elif indexed_clip_count > 0 and indexed_clip_count >= normalized_clip_count:
             stage = "ready"
             indexed_clip_count = normalized_clip_count
+        elif stage in {"pending", "segmenting", "vectorizing"}:
+            stage = normalized_asset.processing_stage
         elif normalized_clip_count > 0:
             stage = "vectorizing"
         elif stage not in {"pending", "segmenting", "failed"}:
             stage = "pending"
         progress = normalized_asset.processing_progress
-        if progress is None:
+        if stage == "ready":
+            progress = 100
+        elif progress is None:
             progress = self._default_processing_progress(stage)
         vector_index_state = normalized_asset.vector_index_state
         if vector_index_state == "none" and indexed_clip_count > 0:
@@ -323,6 +327,60 @@ class InMemoryProjectStore:
         record["summary_state"] = self._derive_summary_state(record, media_summary=media_summary)
         project["summary_state"] = record["summary_state"]
 
+    def _expire_orphaned_startup_tasks(self, record: dict[str, Any]) -> None:
+        project = record.get("project") or {}
+        project_id = str(project.get("id") or "")
+        if not project_id:
+            return
+        now = _now_iso()
+        expired_tasks: list[dict[str, Any]] = []
+        for task in record.get("active_tasks") or []:
+            normalized_task = TaskModel.model_validate(task).model_dump()
+            if normalized_task["status"] not in {"queued", "running"}:
+                continue
+            expired_task = {
+                **normalized_task,
+                "status": "failed",
+                "message": "Task was interrupted when Core restarted.",
+                "error": {
+                    "code": "TASK_ORPHANED_ON_STARTUP",
+                    "message": "Task was interrupted when Core restarted.",
+                },
+                "updated_at": now,
+            }
+            self._repository.upsert_task(project_id, expired_task)
+            expired_tasks.append(expired_task)
+        active_task = record.get("active_task")
+        if active_task is not None:
+            normalized_active_task = TaskModel.model_validate(active_task).model_dump()
+            if normalized_active_task["status"] in {"queued", "running"}:
+                expired_task = {
+                    **normalized_active_task,
+                    "status": "failed",
+                    "message": "Task was interrupted when Core restarted.",
+                    "error": {
+                        "code": "TASK_ORPHANED_ON_STARTUP",
+                        "message": "Task was interrupted when Core restarted.",
+                    },
+                    "updated_at": now,
+                }
+                self._repository.upsert_task(project_id, expired_task)
+        if expired_tasks or active_task is not None:
+            record["active_tasks"] = []
+            record["active_task"] = None
+            record.setdefault("runtime_state", self._default_project_runtime_state())
+            execution_state = record["runtime_state"].setdefault("execution_state", {})
+            execution_state.update(
+                {
+                    "agent_run_state": "idle",
+                    "current_task_id": None,
+                    "last_error": None,
+                    "updated_at": now,
+                }
+            )
+            record["runtime_state"]["updated_at"] = now
+            project["updated_at"] = now
+
     def _task_priority(self, task: dict[str, Any]) -> tuple[int, int, str]:
         slot_priority = {"agent": 0, "preview": 1, "export": 2, "media": 3}
         status_priority = {"running": 0, "queued": 1}
@@ -400,13 +458,15 @@ class InMemoryProjectStore:
     ) -> dict[str, Any]:
         draft = EditDraftModel.model_validate(record["edit_draft"])
         media_summary = media_summary or self._derive_media_summary(record)
+        active_asset_ids = {asset.id for asset in draft.assets if asset.lifecycle_state == "active"}
+        active_clips = [clip for clip in draft.clips if clip.asset_id in active_asset_ids]
         capabilities = self._default_project_capabilities()
         can_retrieve = bool(media_summary["retrieval_ready"])
         can_edit = can_retrieve or bool(draft.shots)
         capabilities["can_send_chat"] = True
         capabilities["chat_mode"] = "editing" if can_edit else "planning_only"
         capabilities["can_retrieve"] = can_retrieve
-        capabilities["can_inspect"] = can_retrieve and bool(draft.clips)
+        capabilities["can_inspect"] = can_retrieve and bool(active_clips)
         capabilities["can_patch_draft"] = can_edit
         capabilities["can_preview"] = bool(draft.shots)
         capabilities["can_export"] = bool(draft.shots)
@@ -736,11 +796,17 @@ class InMemoryProjectStore:
                 clip_ids=clip_ids,
             )
             if not synced:
-                raise CoreApiError(
-                    status_code=502,
-                    code="VECTOR_INDEX_STATE_SYNC_FAILED",
-                    message="Could not update remote vector index state for this asset.",
-                    details={"project_id": project_id, "asset_id": asset_id, "active": remote_active},
+                if lifecycle_state == "active":
+                    raise CoreApiError(
+                        status_code=502,
+                        code="VECTOR_INDEX_STATE_SYNC_FAILED",
+                        message="Could not update remote vector index state for this asset.",
+                        details={"project_id": project_id, "asset_id": asset_id, "active": remote_active},
+                    )
+                logger.warning(
+                    "Continuing soft delete after remote vector index sync failed: project_id=%s asset_id=%s",
+                    project_id,
+                    asset_id,
                 )
 
         next_assets = []
@@ -1543,14 +1609,14 @@ class InMemoryProjectStore:
                 target=target,
                 routing_config={
                     "mode": routing_config.get("mode") or "Platform",
-                    "provider": routing_config.get("provider") or "deepseek",
-                    "model": routing_config.get("model") or model or "deepseek-v4-flash",
+                    "provider": routing_config.get("provider") or "google_gemini",
+                    "model": routing_config.get("model") or model or "gemini-3.1-flash-lite-preview",
                     "custom_model": routing_config.get("custom_model") or None,
                     "effective_model": (
                         routing_config.get("custom_model")
                         or routing_config.get("model")
                         or model
-                        or "deepseek-v4-flash"
+                        or "gemini-3.1-flash-lite-preview"
                     ),
                 },
                 byok_key=byok_key,
@@ -1560,7 +1626,9 @@ class InMemoryProjectStore:
             next_draft = loop_result.draft
             next_runtime_state = loop_result.runtime_state.model_dump()
             if decision.draft_strategy == "placeholder_first_cut" and not next_draft.shots:
-                shots, scenes = _build_edit_plan(next_draft.clips, prompt)
+                active_asset_ids = {asset.id for asset in next_draft.assets if asset.lifecycle_state == "active"}
+                active_clips = [clip for clip in next_draft.clips if clip.asset_id in active_asset_ids]
+                shots, scenes = _build_edit_plan(active_clips, prompt)
                 next_draft = _bump_draft(
                     next_draft,
                     shots=shots,
@@ -1647,6 +1715,7 @@ class InMemoryProjectStore:
                 details=exc.details,
             )
         except Exception as exc:
+            logger.exception("Chat orchestration failed unexpectedly: project_id=%s", project_id)
             await _mark_chat_failed(
                 project_id=project_id,
                 task=running,

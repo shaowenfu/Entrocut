@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import base64
 import json
 from typing import Any
 
-import httpx
 from pydantic import ValidationError
 
 from ..core.config import Settings
@@ -44,49 +44,38 @@ class InspectService:
 
     async def inspect(self, payload: InspectRequest) -> InspectResponse:
         provider = self._resolve_provider()
-        upstream_payload = self._build_upstream_payload(payload, provider_model=provider["model"])
-        headers = {
-            "Authorization": f"Bearer {provider['api_key']}",
-            "Content-Type": "application/json",
-        }
-        if provider["provider"] == "google_gemini":
-            headers["x-goog-api-client"] = "entrocut-server/0.1"
+        genai, types = self._load_genai_modules()
+        client = genai.Client(api_key=provider["api_key"])
+        parts = self._build_content_parts(payload, types)
+        config = types.GenerateContentConfig(
+            temperature=0,
+            system_instruction=self._build_system_prompt(payload),
+            response_mime_type="application/json",
+        )
         try:
-            async with httpx.AsyncClient(timeout=float(self._settings.inspect_timeout_seconds)) as client:
-                response = await client.post(
-                    f"{provider['base_url']}{provider['chat_path']}",
-                    json=upstream_payload,
-                    headers=headers,
-                )
-        except httpx.TimeoutException as exc:
+            response = await client.aio.models.generate_content(
+                model=provider["model"],
+                contents=[types.Content(role="user", parts=parts)],
+                config=config,
+            )
+        except TimeoutError as exc:
             raise inspect_provider_unavailable(
                 "Inspect provider timed out.",
                 status_code=504,
                 details={"provider": provider["provider"]},
             ) from exc
-        except httpx.HTTPError as exc:
+        except Exception as exc:
             raise inspect_provider_unavailable(
-                "Inspect provider transport failed.",
+                f"Inspect provider request failed: {exc}",
                 status_code=502,
                 details={"provider": provider["provider"]},
             ) from exc
-        if response.status_code >= 400:
-            raise inspect_provider_unavailable(
-                "Inspect provider returned an error.",
-                status_code=502,
-                details={
-                    "provider": provider["provider"],
-                    "upstream_status": response.status_code,
-                    "upstream_body": response.text[:500],
-                },
-            )
-        try:
-            body = response.json()
-        except ValueError as exc:
-            raise inspect_provider_invalid_response("Inspect provider returned a non-JSON response.") from exc
-        if not isinstance(body, dict):
-            raise inspect_provider_invalid_response("Inspect provider response body must be a JSON object.")
-        return self._normalize_provider_response(body, payload)
+        finally:
+            await self._close_client(client)
+        text = str(getattr(response, "text", "") or "").strip()
+        if not text:
+            raise inspect_provider_invalid_response("Inspect provider message content is empty.")
+        return self._normalize_provider_text(text, payload)
 
     def _validate_semantics(self, payload: InspectRequest) -> None:
         candidate_count = len(payload.candidates)
@@ -146,76 +135,83 @@ class InspectService:
                 "Inspect provider mode is not supported.",
                 details={"provider_mode": mode},
             )
-        api_key = (self._settings.google_api_key or "").strip()
+        api_key = (self._settings.google_api_key or "").strip() or (self._settings.gemini_api_key or "").strip()
         if not api_key:
             raise inspect_provider_unavailable(
-                "GOOGLE_API_KEY is required when inspect_provider_mode=google_gemini.",
+                "GEMINI_API_KEY or GOOGLE_API_KEY is required when inspect_provider_mode=google_gemini.",
                 details={"provider_mode": mode},
             )
         provider_model = (self._settings.inspect_default_model or "").strip() or self._settings.llm_gemini_default_model.strip()
         return {
             "provider": "google_gemini",
-            "base_url": self._settings.llm_gemini_base_url.rstrip("/"),
-            "chat_path": self._settings.llm_gemini_chat_path,
             "api_key": api_key,
-            "model": provider_model or "gemini-2.5-flash",
+            "model": provider_model or "gemini-3.1-flash-lite-preview",
         }
 
-    def _build_upstream_payload(self, payload: InspectRequest, *, provider_model: str) -> dict[str, Any]:
+    def _load_genai_modules(self) -> tuple[Any, Any]:
+        try:
+            from google import genai
+            from google.genai import types
+        except ImportError as exc:
+            raise inspect_provider_unavailable(
+                "google-genai is required for Gemini inspect provider.",
+                details={"provider_mode": self.peek_provider_name()},
+            ) from exc
+        return genai, types
+
+    async def _close_client(self, client: Any) -> None:
+        async_client = getattr(client, "aio", None)
+        aclose = getattr(async_client, "aclose", None)
+        if callable(aclose):
+            await aclose()
+            return
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
+
+    def _build_content_parts(self, payload: InspectRequest, types: Any) -> list[Any]:
         criteria_lines = "\n".join(
             f"- {criterion.name}: {criterion.description}" for criterion in payload.criteria
         ) or "- No explicit criteria provided."
         question = payload.question or DEFAULT_DESCRIBE_QUESTION
-        system_text = self._build_system_prompt(payload)
-        user_content: list[dict[str, Any]] = [
-            {
-                "type": "text",
-                "text": (
+        parts: list[Any] = [
+            types.Part.from_text(
+                text=(
                     f"mode: {payload.mode}\n"
                     f"task_summary: {payload.task_summary}\n"
                     f"hypothesis_summary: {payload.hypothesis_summary or 'N/A'}\n"
                     f"question: {question}\n"
                     f"criteria:\n{criteria_lines}"
-                ),
-            }
+                )
+            )
         ]
         for candidate in payload.candidates:
-            user_content.append(
-                {
-                    "type": "text",
-                    "text": (
+            parts.append(
+                types.Part.from_text(
+                    text=(
                         f"candidate clip_id={candidate.clip_id} asset_id={candidate.asset_id} "
                         f"clip_duration_ms={candidate.clip_duration_ms} summary={candidate.summary or 'N/A'}"
-                    ),
-                }
+                    )
+                )
             )
             for frame in candidate.frames:
-                user_content.append(
-                    {
-                        "type": "text",
-                        "text": (
+                parts.append(
+                    types.Part.from_text(
+                        text=(
                             f"frame clip_id={candidate.clip_id} frame_index={frame.frame_index} "
                             f"timestamp_label={frame.timestamp_label} timestamp_ms={frame.timestamp_ms}"
-                        ),
-                    }
+                        )
+                    )
                 )
-                user_content.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{frame.image_base64}",
-                        },
-                    }
-                )
-        return {
-            "model": provider_model,
-            "temperature": 0,
-            "response_format": {"type": "json_object"},
-            "messages": [
-                {"role": "system", "content": system_text},
-                {"role": "user", "content": user_content},
-            ],
-        }
+                try:
+                    image_bytes = base64.b64decode(frame.image_base64, validate=True)
+                except ValueError as exc:
+                    raise inspect_evidence_missing(
+                        "Frame image_base64 must be valid base64.",
+                        details={"clip_id": candidate.clip_id, "frame_index": frame.frame_index},
+                    ) from exc
+                parts.append(types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"))
+        return parts
 
     def _build_system_prompt(self, payload: InspectRequest) -> str:
         if payload.mode == "describe":
@@ -243,9 +239,8 @@ class InspectService:
             "If you cannot make a stable choice, keep the JSON valid and explain uncertainty."
         )
 
-    def _normalize_provider_response(self, body: dict[str, Any], request: InspectRequest) -> InspectResponse:
-        content_text = self._extract_response_text(body)
-        parsed_payload = self._parse_json_object(content_text)
+    def _normalize_provider_text(self, text: str, request: InspectRequest) -> InspectResponse:
+        parsed_payload = self._parse_json_object(text)
         if "question_type" not in parsed_payload:
             parsed_payload["question_type"] = request.mode
         if request.mode == "describe":
@@ -374,30 +369,6 @@ class InspectService:
                 "Inspect describe response normalization failed.",
                 details={"validation_errors": exc.errors()},
             ) from exc
-
-    def _extract_response_text(self, body: dict[str, Any]) -> str:
-        choices = body.get("choices")
-        if not isinstance(choices, list) or not choices:
-            raise inspect_provider_invalid_response("Inspect provider response must include choices.")
-        first_choice = choices[0]
-        if not isinstance(first_choice, dict):
-            raise inspect_provider_invalid_response("Inspect provider choice must be an object.")
-        message = first_choice.get("message")
-        if not isinstance(message, dict):
-            raise inspect_provider_invalid_response("Inspect provider response must include message.")
-        content = message.get("content")
-        if isinstance(content, str) and content.strip():
-            return content.strip()
-        if isinstance(content, list):
-            text_parts = [
-                part.get("text", "").strip()
-                for part in content
-                if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str)
-            ]
-            combined = "\n".join(part for part in text_parts if part).strip()
-            if combined:
-                return combined
-        raise inspect_provider_invalid_response("Inspect provider message content is empty.")
 
     def _parse_json_object(self, text: str) -> dict[str, Any]:
         sanitized = text.strip()

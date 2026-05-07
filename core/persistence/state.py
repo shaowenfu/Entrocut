@@ -768,7 +768,9 @@ class LocalStateRepository:
                 merged["processing_stage"] = "vectorizing"
             else:
                 merged["processing_stage"] = merged.get("processing_stage") or "pending"
-            if merged.get("processing_progress") is None:
+            if merged["processing_stage"] == "ready":
+                merged["processing_progress"] = 100
+            elif merged.get("processing_progress") is None:
                 merged["processing_progress"] = self._default_processing_progress(merged["processing_stage"])
             merged["clip_count"] = clip_count
             merged["indexed_clip_count"] = indexed_clip_count

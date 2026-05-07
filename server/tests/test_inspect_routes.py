@@ -13,22 +13,70 @@ from app.shared.time import now_utc, to_iso
 from app.main import app, rate_limit_service, settings, store, token_service
 
 
-class _DummyResponse:
-    def __init__(self, *, status_code: int, body: dict[str, Any]) -> None:
-        self.status_code = status_code
-        self._body = body
-        self.text = str(body)
+class _DummyGeminiResponse:
+    def __init__(self, *, text: str) -> None:
+        self.text = text
 
-    def json(self) -> dict[str, Any]:
-        return self._body
+
+def _install_fake_inspect_sdk(monkeypatch, *, text: str, error: Exception | None = None) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+
+    class _Part:
+        @staticmethod
+        def from_text(*, text: str) -> dict[str, Any]:
+            return {"type": "text", "text": text}
+
+        @staticmethod
+        def from_bytes(*, data: bytes, mime_type: str) -> dict[str, Any]:
+            return {"type": "bytes", "data": data, "mime_type": mime_type}
+
+    class _Content:
+        def __init__(self, *, role: str, parts: list[Any]) -> None:
+            self.role = role
+            self.parts = parts
+
+    class _Config:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+    class _Models:
+        async def generate_content(self, **kwargs: Any) -> _DummyGeminiResponse:
+            calls.append(kwargs)
+            if error is not None:
+                raise error
+            return _DummyGeminiResponse(text=text)
+
+    class _Aio:
+        def __init__(self) -> None:
+            self.models = _Models()
+
+        async def aclose(self) -> None:
+            return None
+
+    class _Client:
+        def __init__(self, *, api_key: str) -> None:
+            self.api_key = api_key
+            self.aio = _Aio()
+
+    class _Genai:
+        Client = _Client
+
+    class _Types:
+        Part = _Part
+        Content = _Content
+        GenerateContentConfig = _Config
+
+    monkeypatch.setattr("app.services.inspect.InspectService._load_genai_modules", lambda _self: (_Genai, _Types))
+    return calls
 
 
 def _configure_local_runtime(monkeypatch) -> None:
     monkeypatch.setattr(settings, "mongodb_uri", None)
     monkeypatch.setattr(settings, "redis_url", None)
     monkeypatch.setattr(settings, "google_api_key", "test-google-key")
+    monkeypatch.setattr(settings, "gemini_api_key", None)
     monkeypatch.setattr(settings, "inspect_provider_mode", "google_gemini")
-    monkeypatch.setattr(settings, "inspect_default_model", "gemini-2.5-flash")
+    monkeypatch.setattr(settings, "inspect_default_model", "gemini-3.1-flash-lite-preview")
     rate_limit_service._memory_counters.clear()
     rate_limit_service._redis = None
     rate_limit_service._redis_ready = None
@@ -191,6 +239,7 @@ def test_inspect_rejects_missing_evidence(monkeypatch) -> None:
 def test_inspect_reports_provider_unavailable(monkeypatch) -> None:
     _configure_local_runtime(monkeypatch)
     monkeypatch.setattr(settings, "google_api_key", None)
+    monkeypatch.setattr(settings, "gemini_api_key", None)
     user = _create_user()
     bundle = token_service.issue_session_bundle(user)
     client = TestClient(app)
@@ -206,21 +255,7 @@ def test_inspect_reports_provider_unavailable(monkeypatch) -> None:
 
 
 def test_inspect_rejects_invalid_provider_response(monkeypatch) -> None:
-    async def fake_post(self, url: str, json: dict[str, Any], headers: dict[str, str]) -> _DummyResponse:
-        return _DummyResponse(
-            status_code=200,
-            body={
-                "choices": [
-                    {
-                        "message": {
-                            "content": "not a json object",
-                        }
-                    }
-                ]
-            },
-        )
-
-    monkeypatch.setattr("httpx.AsyncClient.post", fake_post)
+    _install_fake_inspect_sdk(monkeypatch, text="not a json object")
     _configure_local_runtime(monkeypatch)
     user = _create_user()
     bundle = token_service.issue_session_bundle(user)
@@ -237,17 +272,9 @@ def test_inspect_rejects_invalid_provider_response(monkeypatch) -> None:
 
 
 def test_inspect_successfully_normalizes_selected_clip_from_ranking(monkeypatch) -> None:
-    async def fake_post(self, url: str, json: dict[str, Any], headers: dict[str, str]) -> _DummyResponse:
-        assert url == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-        assert json["model"] == "gemini-2.5-flash"
-        assert json["messages"][1]["content"][0]["type"] == "text"
-        return _DummyResponse(
-            status_code=200,
-            body={
-                "choices": [
-                    {
-                        "message": {
-                            "content": """
+    calls = _install_fake_inspect_sdk(
+        monkeypatch,
+        text="""
 ```json
 {
   "question_type": "choose",
@@ -259,13 +286,7 @@ def test_inspect_successfully_normalizes_selected_clip_from_ranking(monkeypatch)
   ]
 }
 ```""",
-                        }
-                    }
-                ]
-            },
-        )
-
-    monkeypatch.setattr("httpx.AsyncClient.post", fake_post)
+    )
     _configure_local_runtime(monkeypatch)
     user = _create_user()
     bundle = token_service.issue_session_bundle(user)
@@ -278,6 +299,10 @@ def test_inspect_successfully_normalizes_selected_clip_from_ranking(monkeypatch)
     )
 
     assert response.status_code == 200
+    assert calls[0]["model"] == "gemini-3.1-flash-lite-preview"
+    assert calls[0]["contents"][0].role == "user"
+    assert calls[0]["contents"][0].parts[0]["type"] == "text"
+    assert calls[0]["config"].kwargs["response_mime_type"] == "application/json"
     body = response.json()
     assert body["question_type"] == "choose"
     assert body["selected_clip_id"] == "clip_002"
@@ -286,19 +311,9 @@ def test_inspect_successfully_normalizes_selected_clip_from_ranking(monkeypatch)
 
 
 def test_inspect_describe_normalizes_description_response(monkeypatch) -> None:
-    async def fake_post(self, url: str, json: dict[str, Any], headers: dict[str, str]) -> _DummyResponse:
-        content = json["messages"][1]["content"]
-        prompt_text = content[0]["text"]
-        assert "mode: describe" in prompt_text
-        assert "Describe the visible subjects" in prompt_text
-        assert "visual perception tool" in json["messages"][0]["content"]
-        return _DummyResponse(
-            status_code=200,
-            body={
-                "choices": [
-                    {
-                        "message": {
-                            "content": """
+    calls = _install_fake_inspect_sdk(
+        monkeypatch,
+        text="""
 {
   "question_type": "describe",
   "descriptions": [
@@ -317,13 +332,7 @@ def test_inspect_describe_normalizes_description_response(monkeypatch) -> None:
   "uncertainty": "Limited temporal evidence."
 }
 """,
-                        }
-                    }
-                ]
-            },
-        )
-
-    monkeypatch.setattr("httpx.AsyncClient.post", fake_post)
+    )
     _configure_local_runtime(monkeypatch)
     user = _create_user()
     bundle = token_service.issue_session_bundle(user)
@@ -336,6 +345,10 @@ def test_inspect_describe_normalizes_description_response(monkeypatch) -> None:
     )
 
     assert response.status_code == 200
+    prompt_text = calls[0]["contents"][0].parts[0]["text"]
+    assert "mode: describe" in prompt_text
+    assert "Describe the visible subjects" in prompt_text
+    assert "visual perception tool" in calls[0]["config"].kwargs["system_instruction"]
     body = response.json()
     assert body["question_type"] == "describe"
     assert body["selected_clip_id"] == "clip_001"
@@ -344,16 +357,9 @@ def test_inspect_describe_normalizes_description_response(monkeypatch) -> None:
 
 
 def test_inspect_describe_uses_default_question_when_missing(monkeypatch) -> None:
-    async def fake_post(self, url: str, json: dict[str, Any], headers: dict[str, str]) -> _DummyResponse:
-        prompt_text = json["messages"][1]["content"][0]["text"]
-        assert "Describe this clip for a text-only video editing agent" in prompt_text
-        return _DummyResponse(
-            status_code=200,
-            body={
-                "choices": [
-                    {
-                        "message": {
-                            "content": """
+    calls = _install_fake_inspect_sdk(
+        monkeypatch,
+        text="""
 {
   "descriptions": [
     {
@@ -370,13 +376,7 @@ def test_inspect_describe_uses_default_question_when_missing(monkeypatch) -> Non
   ]
 }
 """,
-                        }
-                    }
-                ]
-            },
-        )
-
-    monkeypatch.setattr("httpx.AsyncClient.post", fake_post)
+    )
     _configure_local_runtime(monkeypatch)
     user = _create_user()
     bundle = token_service.issue_session_bundle(user)
@@ -391,6 +391,8 @@ def test_inspect_describe_uses_default_question_when_missing(monkeypatch) -> Non
     )
 
     assert response.status_code == 200
+    prompt_text = calls[0]["contents"][0].parts[0]["text"]
+    assert "Describe this clip for a text-only video editing agent" in prompt_text
     assert response.json()["question_type"] == "describe"
 
 
@@ -413,14 +415,9 @@ def test_inspect_describe_rejects_multiple_candidates(monkeypatch) -> None:
 
 
 def test_inspect_describe_rejects_unknown_description_clip_id(monkeypatch) -> None:
-    async def fake_post(self, url: str, json: dict[str, Any], headers: dict[str, str]) -> _DummyResponse:
-        return _DummyResponse(
-            status_code=200,
-            body={
-                "choices": [
-                    {
-                        "message": {
-                            "content": """
+    _install_fake_inspect_sdk(
+        monkeypatch,
+        text="""
 {
   "descriptions": [
     {
@@ -437,13 +434,7 @@ def test_inspect_describe_rejects_unknown_description_clip_id(monkeypatch) -> No
   ]
 }
 """,
-                        }
-                    }
-                ]
-            },
-        )
-
-    monkeypatch.setattr("httpx.AsyncClient.post", fake_post)
+    )
     _configure_local_runtime(monkeypatch)
     user = _create_user()
     bundle = token_service.issue_session_bundle(user)

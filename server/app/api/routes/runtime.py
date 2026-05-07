@@ -13,8 +13,8 @@ router = APIRouter(tags=["runtime"])
 def _runtime_models() -> RuntimeModelsResponse:
     response_providers = []
     warnings: list[str] = []
-    default_provider = settings.llm_default_provider.strip() or "deepseek"
-    default_model = settings.llm_default_model.strip() or "deepseek-v4-flash"
+    default_provider = settings.llm_default_provider.strip() or "google_gemini"
+    default_model = settings.llm_default_model.strip() or "gemini-3.1-flash-lite-preview"
     first_available_provider: str | None = None
     first_available_model: str | None = None
     configured_default_available = False

@@ -9,6 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 RATE_CARDS: dict[str, dict[str, int]] = {
     "deepseek-v4-flash": {"prompt_per_1m": 18_000, "completion_per_1m": 72_000},
     "deepseek-v4-pro": {"prompt_per_1m": 18_000, "completion_per_1m": 72_000},
+    "gemini-3.1-flash-lite-preview": {"prompt_per_1m": 18_000, "completion_per_1m": 72_000},
     "gemini-2.5-flash": {"prompt_per_1m": 18_000, "completion_per_1m": 72_000},
     "gemini-2.5-pro": {"prompt_per_1m": 18_000, "completion_per_1m": 72_000},
 }
@@ -57,15 +58,14 @@ class Settings(BaseSettings):
     auth_github_client_id: str | None = None
     auth_github_client_secret: str | None = None
     auth_google_scope: str = "openid email profile"
-    llm_default_provider: str = "deepseek"
-    llm_default_model: str = "deepseek-v4-flash"
+    llm_default_provider: str = "google_gemini"
+    llm_default_model: str = "gemini-3.1-flash-lite-preview"
+    gemini_api_key: str | None = None
     google_api_key: str | None = None
     deepseek_api_key: str | None = None
-    llm_gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
-    llm_gemini_chat_path: str = "/chat/completions"
-    llm_gemini_default_model: str = "gemini-2.5-flash"
+    llm_gemini_default_model: str = "gemini-3.1-flash-lite-preview"
     inspect_provider_mode: str = "google_gemini"
-    inspect_default_model: str | None = None
+    inspect_default_model: str = "gemini-3.1-flash-lite-preview"
     inspect_timeout_seconds: int = 45
 
     # DashScope MultiModal Embedding

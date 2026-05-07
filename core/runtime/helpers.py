@@ -177,11 +177,13 @@ def _build_edit_plan(clips: list[ClipModel], prompt: str) -> tuple[list[ShotMode
 
 
 def _draft_summary(draft: EditDraftModel) -> dict[str, Any]:
+    active_asset_ids = {asset.id for asset in draft.assets if asset.lifecycle_state == "active"}
+    active_clips = [clip for clip in draft.clips if clip.asset_id in active_asset_ids]
     return {
         "draft_id": draft.id,
         "draft_version": draft.version,
-        "asset_count": len(draft.assets),
-        "clip_count": len(draft.clips),
+        "asset_count": len(active_asset_ids),
+        "clip_count": len(active_clips),
         "shot_count": len(draft.shots),
         "scene_count": len(draft.scenes or []),
         "selected_scene_id": draft.selected_scene_id,
@@ -193,7 +195,7 @@ def _draft_summary(draft: EditDraftModel) -> dict[str, Any]:
                 "visual_desc": clip.visual_desc,
                 "semantic_tags": clip.semantic_tags,
             }
-            for clip in draft.clips[:6]
+            for clip in active_clips[:6]
         ],
     }
 

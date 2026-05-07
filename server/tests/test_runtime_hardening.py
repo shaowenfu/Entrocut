@@ -136,10 +136,13 @@ def test_runtime_models_exposes_registry_providers_and_real_models(monkeypatch) 
 
     assert response.status_code == 200
     body = response.json()
-    assert body["default_provider"] == "deepseek"
-    assert body["default_model"] == "deepseek-v4-flash"
+    assert body["default_provider"] == "google_gemini"
+    assert body["default_model"] == "gemini-3.1-flash-lite-preview"
     provider_ids = {provider["id"] for provider in body["providers"]}
     assert {"deepseek", "google_gemini"} <= provider_ids
+    gemini = next(provider for provider in body["providers"] if provider["id"] == "google_gemini")
+    assert gemini["available"] is True
+    assert gemini["models"][0]["id"] == "gemini-3.1-flash-lite-preview"
     deepseek = next(provider for provider in body["providers"] if provider["id"] == "deepseek")
     assert deepseek["available"] is True
     assert deepseek["models"][0]["id"] == "deepseek-v4-flash"
@@ -157,4 +160,4 @@ def test_runtime_models_defaults_to_first_available_provider(monkeypatch) -> Non
     assert response.status_code == 200
     body = response.json()
     assert body["default_provider"] == "google_gemini"
-    assert body["default_model"] == "gemini-2.5-flash"
+    assert body["default_model"] == "gemini-3.1-flash-lite-preview"

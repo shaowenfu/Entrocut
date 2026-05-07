@@ -6,9 +6,6 @@ from .schemas import ModelDefinition, ProviderDefinition
 
 
 def providers(settings: Settings) -> tuple[ProviderDefinition, ...]:
-    gemini_base_url = settings.llm_gemini_base_url.rstrip("/")
-    if gemini_base_url.endswith("/openai"):
-        gemini_base_url = gemini_base_url.removesuffix("/openai")
     return (
         ProviderDefinition(
             id="deepseek",
@@ -26,10 +23,11 @@ def providers(settings: Settings) -> tuple[ProviderDefinition, ...]:
             id="google_gemini",
             label="Google Gemini",
             adapter="gemini",
-            api_key_env="GOOGLE_API_KEY",
-            base_url=gemini_base_url,
+            api_key_env="GEMINI_API_KEY",
+            base_url=None,
             chat_path=None,
             models=(
+                ModelDefinition(id="gemini-3.1-flash-lite-preview", label="Gemini 3.1 Flash-Lite Preview"),
                 ModelDefinition(id="gemini-2.5-flash", label="Gemini 2.5 Flash"),
                 ModelDefinition(id="gemini-2.5-pro", label="Gemini 2.5 Pro"),
             ),
@@ -63,8 +61,8 @@ def ensure_model(provider: ProviderDefinition, model_id: str) -> None:
 def provider_api_key(settings: Settings, provider: ProviderDefinition) -> str:
     if provider.api_key_env == "DEEPSEEK_API_KEY":
         return (settings.deepseek_api_key or "").strip()
-    if provider.api_key_env == "GOOGLE_API_KEY":
-        return (settings.google_api_key or "").strip()
+    if provider.api_key_env == "GEMINI_API_KEY":
+        return (settings.google_api_key or "").strip() or (settings.gemini_api_key or "").strip()
     return ""
 
 

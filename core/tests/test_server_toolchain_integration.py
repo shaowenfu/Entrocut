@@ -199,8 +199,8 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             self.assertTrue(url.endswith("/v1/chat/completions"))
             self.assertEqual(headers["Authorization"], "Bearer tok_test_access_token_value_12345")
             self.assertEqual(headers["Content-Type"], "application/json")
-            self.assertEqual(json["provider"], "deepseek")
-            self.assertEqual(json["model"], "deepseek-v4-flash")
+            self.assertEqual(json["provider"], "google_gemini")
+            self.assertEqual(json["model"], "gemini-3.1-flash-lite-preview")
             self.assertEqual(json["stream"], False)
             self.assertNotIn("stream_options", json)
             self.assertIsInstance(json["messages"], list)
@@ -1128,6 +1128,87 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         explicit_restore_workspace = restore_response.json()["workspace"]
         self.assertEqual(explicit_restore_workspace["edit_draft"]["assets"][0]["lifecycle_state"], "active")
         self.assertEqual(explicit_restore_workspace["media_summary"]["asset_count"], 1)
+
+    def test_reimport_restores_deleted_asset_when_stage_was_stale_vectorizing(self) -> None:
+        source_file = Path(CORE_TEST_APPDATA_DIR.name) / "restore-stale-vectorizing.mp4"
+        source_file.write_bytes(b"restore stale vectorizing media placeholder")
+
+        response = self.client.post("/api/v1/projects", json={})
+        self.assertEqual(response.status_code, 200)
+        project_id = response.json()["project"]["id"]
+        self._set_auth_session()
+
+        import_response = self.client.post(
+            f"/api/v1/projects/{project_id}/assets:import",
+            json={"media": {"files": [{"name": source_file.name, "path": str(source_file)}]}},
+        )
+        self.assertEqual(import_response.status_code, 200)
+        ready_workspace = self._poll_task_idle(project_id)
+        asset = ready_workspace["edit_draft"]["assets"][0]
+
+        record = store.get_project_or_raise(project_id)
+        stale_draft = dict(record["edit_draft"])
+        stale_draft["assets"] = [
+            {
+                **item,
+                "processing_stage": "vectorizing",
+                "processing_progress": 75,
+            }
+            if item["id"] == asset["id"]
+            else item
+            for item in stale_draft["assets"]
+        ]
+        record["edit_draft"] = stale_draft
+        store._ensure_record_defaults(record)
+        normalized_asset = record["edit_draft"]["assets"][0]
+        self.assertEqual(normalized_asset["processing_stage"], "ready")
+
+        delete_response = self.client.delete(f"/api/v1/projects/{project_id}/assets/{asset['id']}")
+        self.assertEqual(delete_response.status_code, 200)
+        self.assertEqual(delete_response.json()["workspace"]["edit_draft"]["assets"][0]["lifecycle_state"], "deleted")
+
+        reimport_response = self.client.post(
+            f"/api/v1/projects/{project_id}/assets:import",
+            json={"media": {"files": [{"name": source_file.name, "path": str(source_file)}]}},
+        )
+        self.assertEqual(reimport_response.status_code, 200)
+        self.assertEqual(reimport_response.json()["task"]["status"], "succeeded")
+        restored_workspace = self.client.get(f"/api/v1/projects/{project_id}").json()["workspace"]
+        restored_asset = restored_workspace["edit_draft"]["assets"][0]
+        self.assertEqual(restored_asset["id"], asset["id"])
+        self.assertEqual(restored_asset["lifecycle_state"], "active")
+        self.assertEqual(restored_asset["processing_stage"], "ready")
+        self.assertEqual(restored_asset["vector_index_state"], "active")
+        self.assertTrue(restored_workspace["media_summary"]["retrieval_ready"])
+
+    def test_startup_expires_orphaned_running_media_task(self) -> None:
+        response = self.client.post("/api/v1/projects", json={"title": "Orphaned Task"})
+        self.assertEqual(response.status_code, 200)
+        project_id = response.json()["project"]["id"]
+        record = store.get_project_or_raise(project_id)
+        running_task = {
+            "id": "task_orphaned_media",
+            "slot": "media",
+            "type": "ingest",
+            "status": "running",
+            "owner_type": "project",
+            "owner_id": project_id,
+            "progress": 50,
+            "message": "Vectorizing clips for retrieval",
+            "result": {},
+            "error": None,
+            "created_at": record["project"]["created_at"],
+            "updated_at": record["project"]["updated_at"],
+        }
+        record["active_tasks"] = [running_task]
+        record["active_task"] = running_task
+        store._repository.upsert_record(record)
+
+        reloaded_store = InMemoryProjectStore(app_data_root=CORE_TEST_APPDATA_DIR.name)
+        workspace = reloaded_store.workspace_snapshot(project_id).model_dump()
+        self.assertEqual(workspace["active_tasks"], [])
+        self.assertIsNone(workspace["active_task"])
+        self.assertIsNone(reloaded_store.get_running_task(project_id, "media"))
 
     def test_partial_media_processing_keeps_editing_capability_when_existing_clips_exist(self) -> None:
         project_id, _ = self._create_project()
