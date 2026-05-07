@@ -6,12 +6,11 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from api.routers import api_router
+from api.routers.projects import set_agent_loop_max_iterations_resolver
 from config import AGENT_LOOP_MAX_ITERATIONS, APP_VERSION, REWRITE_PHASE
-from helpers import _request_id
-from routers import api_router
-from routers.projects import set_agent_loop_max_iterations_resolver
-from schemas import CoreApiError, ErrorBody, ErrorEnvelope
-from store import CoreAuthSessionStore, InMemoryProjectStore, auth_session_store, store
+from contracts import CoreApiError, ErrorBody, ErrorEnvelope
+from runtime.helpers import _request_id
 
 app = FastAPI(title="EntroCut Core", version=APP_VERSION)
 app.add_middleware(

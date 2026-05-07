@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from config import SERVER_BASE_URL
-from helpers import (
+from runtime.helpers import (
     _asset_clip_counts,
     _build_assets,
     _build_edit_plan,
@@ -19,10 +19,10 @@ from helpers import (
     _trimmed,
     _bump_draft,
 )
-from ingestion import detect_scenes, extract_and_stitch_frames
-from rendering import build_render_plan, render_export
+from media.ingestion import detect_scenes, extract_and_stitch_frames
+from media.rendering import build_render_plan, render_export
 from httpx import AsyncClient
-from schemas import (
+from contracts import (
     AssistantDecisionOperationModel,
     AssistantDecisionTurnModel,
     AssetModel,
@@ -43,12 +43,8 @@ from schemas import (
     WorkspaceSnapshotModel,
 )
 
-try:
-    from core.state import LocalStateRepository
-    from core.manager import WorkspaceManager
-except ModuleNotFoundError:
-    from state import LocalStateRepository
-    from manager import WorkspaceManager
+from persistence.state import LocalStateRepository
+from runtime.manager import WorkspaceManager
 
 
 logger = logging.getLogger(__name__)
@@ -1504,7 +1500,7 @@ class InMemoryProjectStore:
         byok_key: str | None,
         agent_loop_max_iterations: int,
     ) -> None:
-        from agent import _run_chat_agent_loop
+        from agent_runtime.agent import _run_chat_agent_loop
 
         record = self.get_project_or_raise(project_id)
         self._ensure_record_defaults(record)

@@ -20,7 +20,7 @@
 要实现丰富的 UI 交互，前提是前后端对 Agent 运行时的状态切片有精确的共识。当前 `core` 已经通过 `agent.step.updated` 事件推送 Agent 的执行轨迹。
 
 ### 2.1 后端事件发射 (Core Event Emitting)
-在 Agent Loop 运转时，`core/agent.py` 与 `core/store.py` 会产生以下关键事件：
+在 Agent Loop 运转时，`core/agent_runtime/agent.py` 与 `core/application/store.py` 会产生以下关键事件：
 *   `chat.turn.created`: 标志着一个新对话轮次的开始。
 *   `agent.step.updated`: 核心状态流转。包含：
     *   `phase`: 如 `planning`, `tool_execution`, `write_back`, `finalizing`。

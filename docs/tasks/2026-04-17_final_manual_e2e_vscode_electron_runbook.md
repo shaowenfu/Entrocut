@@ -340,7 +340,7 @@ Debug Client (Electron -> Local Core + Cloud Server)
 
 1. `retrieval_ready` 是否为 `true`
 2. 云端 `server /v1/assets/retrieval` 是否成功
-3. `core/inspection.py` 是否对 server 返回做了稳定解析
+3. `core/agent_runtime/inspection.py` 是否对 server 返回做了稳定解析
 4. `patch` 后 draft 是否被事实层覆盖或没有正确广播
 
 ---

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PIL import Image
 
-from ingestion import (
+from media.ingestion import (
     detect_scenes,
     extract_and_stitch_frames,
     stitch_frames_to_base64,
@@ -29,7 +29,7 @@ def test_stitch_frames_to_base64():
     stitched_img = Image.open(io.BytesIO(decoded_bytes))
     assert stitched_img.size == (640, 480)
 
-@patch("ingestion.detect")
+@patch("media.ingestion.detect")
 def test_detect_scenes(mock_detect):
     # Mock scenedetect output
     mock_scene_1 = (MagicMock(), MagicMock())
@@ -47,7 +47,7 @@ def test_detect_scenes(mock_detect):
     assert scenes[0] == (0, 5500)
     assert scenes[1] == (5500, 10000)
 
-@patch("ingestion.ffmpeg")
+@patch("media.ingestion.ffmpeg")
 def test_extract_and_stitch_frames(mock_ffmpeg):
     # Mock ffmpeg extract frame
     mock_run = MagicMock()

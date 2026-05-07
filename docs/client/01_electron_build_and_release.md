@@ -242,7 +242,7 @@ PATCH: 向后兼容的问题修复
 |---|---|
 | `core/scripts/build_desktop_core.sh` | 触发 PyInstaller，输出 `core-dist` |
 | `core/pyinstaller.spec` | Core 可执行单目录打包配置 |
-| `core/desktop_entry.py` | 桌面可执行入口（读取 `CORE_PORT` 启动服务） |
+| `core/desktop_entry.py` | 桌面可执行入口（读取 `CORE_PORT` 启动 `main:app`） |
 | `client/main/coreSupervisor.ts` | Electron Main 生命周期托管器 |
 
 ### Main 托管策略

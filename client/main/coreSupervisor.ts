@@ -136,7 +136,7 @@ function spawnManagedCore(port: number): ChildProcessWithoutNullStreams {
   // 开发态直接从 core/ 目录启动 FastAPI 服务。
   return spawn(
     pythonBin,
-    ["-m", "uvicorn", "server:app", "--host", "127.0.0.1", "--port", String(port)],
+    ["-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", String(port)],
     {
       cwd: path.join(devCoreRoot, "core"),
       env,

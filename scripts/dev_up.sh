@@ -50,7 +50,7 @@ start_client_service() {
 echo "启动时间戳: ${TIMESTAMP}"
 echo "PID 文件: ${PID_FILE}"
 
-start_python_service "core" "${ROOT_DIR}/core" "server:app" "8000" "${CORE_LOG}"
+start_python_service "core" "${ROOT_DIR}/core" "main:app" "8000" "${CORE_LOG}"
 start_python_service "server" "${ROOT_DIR}/server" "main:app" "8001" "${SERVER_LOG}"
 start_client_service "${ROOT_DIR}/client" "${CLIENT_LOG}"
 

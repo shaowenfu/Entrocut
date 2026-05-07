@@ -8,7 +8,7 @@
 
 ## 1. 为什么要把上下文编排独立成模块
 
-在重构之前，`core/server.py` 里的上下文编排是：
+在重构之前，`core/main.py` 里的上下文编排是：
 
 1. 一边读取运行时数据
 2. 一边做字段裁剪
@@ -17,7 +17,7 @@
 
 这种写法短期能跑，但有两个根本问题：
 
-1. `server.py` 同时承担 `API / schema / state store / task orchestration / context assembly`
+1. `main.py` 同时承担 `API / schema / state store / task orchestration / context assembly`
 2. 上下文工程会退化成“临时变量拼接”，而不是“从 runtime state 裁剪 decision context”
 
 所以这次拆模块的目标很克制：
@@ -89,7 +89,7 @@
 作用：
 
 1. 统一把分块状态装配成 `planner_input`
-2. 把 `system prompt` 从 `server.py` 中剥离出来
+2. 把 `system prompt` 从 `main.py` 中剥离出来
 
 ---
 
@@ -150,11 +150,11 @@
 
 ---
 
-## 6. 当前模块与 server.py 的关系
+## 6. 当前模块与 main.py 的关系
 
 现在的关系应理解成：
 
-1. `server.py`
+1. `main.py`
    - 提供上下文原材料
    - 发起 planner 调用
    - 处理 loop 控制流
@@ -162,7 +162,7 @@
 2. `context_engineering.py`
    - 负责把原材料装成 `planner_input`
 
-所以 `server.py` 现在已经不应该再知道：
+所以 `main.py` 现在已经不应该再知道：
 
 1. `identity` 细节怎么生成
 2. `goal` 细节怎么提炼
@@ -239,7 +239,7 @@
 
 一句话：
 
-`当前模块的目标不是把上下文工程做满，而是把它从 server.py 里解耦出来，变成一个可以稳定继续演进的独立层。`
+`当前模块的目标不是把上下文工程做满，而是把它从 main.py 里解耦出来，变成一个可以稳定继续演进的独立层。`
 
 ---
 
@@ -249,4 +249,4 @@
 
 `项目第一次把上下文工程明确建模成了一个独立的运行时层。`
 
-从现在开始，后续的上下文优化应该优先发生在这个模块里，而不是重新回到 `server.py` 里继续堆字符串。
+从现在开始，后续的上下文优化应该优先发生在这个模块里，而不是重新回到 `main.py` 里继续堆字符串。

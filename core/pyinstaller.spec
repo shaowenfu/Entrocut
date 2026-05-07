@@ -3,7 +3,13 @@
 from PyInstaller.utils.hooks import collect_submodules
 
 hiddenimports = []
-hiddenimports += collect_submodules("routers")
+hiddenimports += collect_submodules("api")
+hiddenimports += collect_submodules("application")
+hiddenimports += collect_submodules("agent_runtime")
+hiddenimports += collect_submodules("contracts")
+hiddenimports += collect_submodules("media")
+hiddenimports += collect_submodules("persistence")
+hiddenimports += collect_submodules("runtime")
 
 
 a = Analysis(

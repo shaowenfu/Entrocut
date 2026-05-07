@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from helpers import _bump_draft, _entity_id
-from schemas import CoreApiError, EditDraftModel, EditDraftPatchModel, SceneModel, ShotModel
+from contracts import CoreApiError, EditDraftModel, EditDraftPatchModel, SceneModel, ShotModel
+from runtime.helpers import _bump_draft, _entity_id
 
 
 def apply_edit_draft_patch(draft: EditDraftModel, patch: EditDraftPatchModel) -> EditDraftModel:

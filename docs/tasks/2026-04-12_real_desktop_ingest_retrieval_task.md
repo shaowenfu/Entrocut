@@ -26,7 +26,7 @@
 
 ### 2.1 fake clips 仍然污染主流程
 
-当前 [core/store.py](/home/sherwen/MyProjects/Entrocut_server/core/store.py:446) 的 `create_project` 会直接调用 [core/helpers.py](/home/sherwen/MyProjects/Entrocut_server/core/helpers.py:166) 的 `_draft_from_payload`。
+当前 [core/application/store.py](/home/sherwen/MyProjects/Entrocut_server/core/application/store.py:446) 的 `create_project` 会直接调用 [core/runtime/helpers.py](/home/sherwen/MyProjects/Entrocut_server/core/runtime/helpers.py:166) 的 `_draft_from_payload`。
 
 而 `_draft_from_payload` 会：
 
@@ -45,20 +45,20 @@
 
 ### 2.2 `folder_path` 契约错误
 
-当前 `Electron` 入口返回的是目录路径，但 [core/helpers.py](/home/sherwen/MyProjects/Entrocut_server/core/helpers.py:67) 会把这个目录路径包装成一个伪造的 `MediaFileReference`：
+当前 `Electron` 入口返回的是目录路径，但 [core/runtime/helpers.py](/home/sherwen/MyProjects/Entrocut_server/core/runtime/helpers.py:67) 会把这个目录路径包装成一个伪造的 `MediaFileReference`：
 
 1. `name=<folder>.mp4`
 2. `path=<folder_path>`
 
-随后真实 ingest 在 [core/store.py](/home/sherwen/MyProjects/Entrocut_server/core/store.py:685) 直接对 `asset.source_path` 调 `detect_scenes`。
+随后真实 ingest 在 [core/application/store.py](/home/sherwen/MyProjects/Entrocut_server/core/application/store.py:685) 直接对 `asset.source_path` 调 `detect_scenes`。
 
 这意味着当前系统把“目录”错当成“视频文件”。
 
 ### 2.3 auth gating 放得太晚
 
-当前 `assets:import` 在 [core/routers/projects.py](/home/sherwen/MyProjects/Entrocut_server/core/routers/projects.py:48) 没有前置校验登录态。
+当前 `assets:import` 在 [core/api/routers/projects.py](/home/sherwen/MyProjects/Entrocut_server/core/api/routers/projects.py:48) 没有前置校验登录态。
 
-但真实向量化前，`core` 才在 [core/store.py](/home/sherwen/MyProjects/Entrocut_server/core/store.py:745) 检查 `auth_session_store`。
+但真实向量化前，`core` 才在 [core/application/store.py](/home/sherwen/MyProjects/Entrocut_server/core/application/store.py:745) 检查 `auth_session_store`。
 
 结果是：
 
@@ -480,6 +480,6 @@
 本项目当前由三位工程师并行推进，请在开发时严格遵守以下边界，避免产生代码冲突：
 
 1. **你的专属领域**：删除与清理假数据注入（fake clips）、重构真实目录扫描逻辑（`fileScanner.ts`）、以及收紧 Core 层的素材入口契约。
-2. **核心公共文件 `core/store.py`**：你主要负责修改 `create_project` 和 `assets:import`，清理掉初始化占位逻辑。负责 MVP 收口的工程师 A 也会修改此文件以增加 Render/Preview 任务。**约定**：锁定你负责的方法块进行删改，互不干涉。
-3. **核心公共文件 `core/schemas.py`**：你需要收紧 `MediaReference` 等相关契约。其他工程师也会追加新的 Schema。**约定**：在对应结构处进行精准修改，遇到合并冲突时保留双方的增量即可。
+2. **核心公共文件 `core/application/store.py`**：你主要负责修改 `create_project` 和 `assets:import`，清理掉初始化占位逻辑。负责 MVP 收口的工程师 A 也会修改此文件以增加 Render/Preview 任务。**约定**：锁定你负责的方法块进行删改，互不干涉。
+3. **核心公共文件 `core/contracts/__init__.py`**：你需要收紧 `MediaReference` 等相关契约。其他工程师也会追加新的 Schema。**约定**：在对应结构处进行精准修改，遇到合并冲突时保留双方的增量即可。
 4. **核心公共文件 `client/main/main.ts`**：你将在此注册文件扫描的 IPC Handler。负责打包的工程师 B 也会修改此文件以托管 Core 进程。**约定**：将扫描逻辑完全封装在独立文件（如 `fileScanner.ts`）中，在 `main.ts` 中仅增加一行 IPC 注册代码。`

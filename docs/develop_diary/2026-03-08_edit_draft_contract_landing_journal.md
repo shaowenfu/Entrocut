@@ -9,7 +9,7 @@
 这次工作的目标很明确：
 
 1. 先把文档口径统一到 `EditDraft`
-2. 再把 `client` 和 `core/server.py` 的 contract 实现切过去
+2. 再把 `client` 和 `core/main.py` 的 contract 实现切过去
 3. 保持当前 UI 还能跑，不做一轮大拆
 
 ---
@@ -108,7 +108,7 @@
 
 文档固定之后，我把实现层也推进到了同一口径。
 
-### 1. `core/server.py`
+### 1. `core/main.py`
 
 这是今天实现层最核心的变化。
 

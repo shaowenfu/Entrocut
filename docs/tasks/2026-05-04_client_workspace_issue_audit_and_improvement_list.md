@@ -38,7 +38,7 @@ properties: ["openFile", "openDirectory", "multiSelections"]
 - 上传入口：`client/src/pages/WorkspacePage.tsx:591-605`
 - 失败展示：`client/src/pages/WorkspacePage.tsx:741-784`
 
-`core/routers/projects.py` 目前只有：
+`core/api/routers/projects.py` 目前只有：
 
 - `POST /api/v1/projects/{project_id}/assets:import`
 - `POST /api/v1/projects/{project_id}/chat`
@@ -46,7 +46,7 @@ properties: ["openFile", "openDirectory", "multiSelections"]
 
 没有 `delete asset（删除素材）`、`restore asset（恢复素材）`、`retry asset（重试素材）` 级别的 `API（接口）`。
 
-`core/store.py:902-948` 会把导入失败的素材标成 `failed`，但没有暴露重新入队能力。
+`core/application/store.py:902-948` 会把导入失败的素材标成 `failed`，但没有暴露重新入队能力。
 
 ### 3.3 credit 显示为 0
 
@@ -96,7 +96,7 @@ properties: ["openFile", "openDirectory", "multiSelections"]
 1. `google_gemini`：使用 `GOOGLE_API_KEY` 和 Gemini 的 `OpenAI-compatible endpoint（OpenAI 兼容接口）`。
 2. `upstream`：使用 `llm_upstream_base_url / llm_upstream_api_key / llm_upstream_chat_path`。
 
-默认 `mock（模拟）` 模式不是一个 provider；它会在 `server/app/services/gateway/chat_proxy.py` 生成普通自然语言 mock 内容。但 `core/agent.py:330-350` 期望模型返回 `PlannerDecisionModel（规划器决策模型）` 的 JSON。也就是说，默认 `mock chat（模拟聊天）` 很可能会触发 `PLANNER_DECISION_INVALID`，这是“模型链路不通”的关键原因之一。
+默认 `mock（模拟）` 模式不是一个 provider；它会在 `server/app/services/gateway/chat_proxy.py` 生成普通自然语言 mock 内容。但 `core/agent_runtime/agent.py:330-350` 期望模型返回 `PlannerDecisionModel（规划器决策模型）` 的 JSON。也就是说，默认 `mock chat（模拟聊天）` 很可能会触发 `PLANNER_DECISION_INVALID`，这是“模型链路不通”的关键原因之一。
 
 ### 3.5 BYOK 当前能力
 
@@ -115,7 +115,7 @@ properties: ["openFile", "openDirectory", "multiSelections"]
 - `X-BYOK-Key`
 - `X-BYOK-BaseURL`
 
-`core/agent.py:274-284` 在 `BYOK（自带密钥）` 模式下固定把地址拼成：
+`core/agent_runtime/agent.py:274-284` 在 `BYOK（自带密钥）` 模式下固定把地址拼成：
 
 ```py
 endpoint_url = f"{base_url}/v1/chat/completions"
@@ -167,7 +167,7 @@ endpoint_url = f"{base_url}/v1/chat/completions"
    - `mock`：专门返回合法 `PlannerDecisionModel（规划器决策模型）` JSON。
    - `google_gemini`：默认 `gemini-2.5-flash`。
    - `upstream`：`llm_upstream_default_model` 或请求传入模型。
-4. 如果 `llm_proxy_mode=mock`，mock 输出必须符合 `core/agent.py` 的 planner JSON 契约，不能再返回普通编辑建议文本。
+4. 如果 `llm_proxy_mode=mock`，mock 输出必须符合 `core/agent_runtime/agent.py` 的 planner JSON 契约，不能再返回普通编辑建议文本。
 5. `client（客户端）` 模型下拉从 runtime API 动态加载；没有可用真实 provider 时，展示 `mock planner` 或禁用编辑型 chat。
 6. `rate card（计费价目）` 不应决定 UI 模型列表；`RATE_CARDS` 只负责计费。
 
@@ -224,7 +224,7 @@ endpoint_url = f"{base_url}/v1/chat/completions"
    - `POST /v1/assets/vector-index-state`
    - 入参：`project_id`, `asset_id`, `active`
    - 作用：把云端向量元数据置为 active/inactive，或维护可被 retrieval filter 使用的索引状态。
-5. `core/retrieval.py` 的 filter 不能只用 `project_id == "..."`，需要加入 active 过滤条件。当前 `core/retrieval.py:39` 只按 `project_id` 过滤，会让被删除素材仍进入候选池。
+5. `core/agent_runtime/retrieval.py` 的 filter 不能只用 `project_id == "..."`，需要加入 active 过滤条件。当前 `core/agent_runtime/retrieval.py:39` 只按 `project_id` 过滤，会让被删除素材仍进入候选池。
 6. 重新导入时先计算 `fingerprint（指纹）`：
    - 短期：`source_path + size + mtime_ns`
    - 长期：内容 hash 或分段 hash
@@ -254,7 +254,7 @@ endpoint_url = f"{base_url}/v1/chat/completions"
    - `Retry icon button（重试按钮）`
    - `Delete icon button（删除按钮）`
    - `lastError（最后错误）` tooltip 或详情。
-4. `core/store.py` 当前还有一个相关风险：`ready_draft` 在 `core/store.py:857-866` 使用的是旧 `draft`，而不是前面追加过 `new_clips` 的 `vectorizing_draft`。这可能导致 ready 阶段状态覆盖掉已生成的 clips。重试实现前应先修正为基于最新 draft 状态推进。
+4. `core/application/store.py` 当前还有一个相关风险：`ready_draft` 在 `core/application/store.py:857-866` 使用的是旧 `draft`，而不是前面追加过 `new_clips` 的 `vectorizing_draft`。这可能导致 ready 阶段状态覆盖掉已生成的 clips。重试实现前应先修正为基于最新 draft 状态推进。
 5. `server（服务端）` 的 `/v1/assets/vectorize` 最好具备 `idempotent（幂等）` 语义：同一个 `doc.id` 重试时应 upsert 或安全覆盖，而不是因重复插入失败。
 
 验收：

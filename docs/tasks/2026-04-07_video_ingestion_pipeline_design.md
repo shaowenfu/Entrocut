@@ -4,7 +4,7 @@
 
 ## 1. Context (背景)
 
-当前 `EntroCut` 已经完成了核心事实的架构和状态管理的重构（如 `2026-03-31_project_state_management_refactor_task.md` 所示），但在视频导入处理链路中，`core/store.py` 的 `_run_assets_import` 仍然使用的是 `asyncio.sleep` 模拟的占位逻辑。
+当前 `EntroCut` 已经完成了核心事实的架构和状态管理的重构（如 `2026-03-31_project_state_management_refactor_task.md` 所示），但在视频导入处理链路中，`core/application/store.py` 的 `_run_assets_import` 仍然使用的是 `asyncio.sleep` 模拟的占位逻辑。
 
 为了跑通“视频素材增量上传 -> 本地切分 -> 抽帧拼接 -> 云端向量化 -> 界面响应”的真实 MVP 闭环，本设计文档详细规划了这部分基础设施的真实落地实现。该设计严格遵循：
 
@@ -52,7 +52,7 @@
 1. **依赖引入**：
    - 修改 `core/requirements.txt`，添加 `scenedetect[opencv]`, `ffmpeg-python`, `Pillow`。
 
-2. **新建算力模块 `core/ingestion.py`** (或 `core/services/ingestion.py`)：
+2. **新建算力模块 `core/media/ingestion.py`** (或 `core/services/ingestion.py`)：
    - 负责封装所有无状态（Stateless）处理函数，隔离业务与库：
    - `detect_scenes(video_path) -> list[tuple[int, int]]`：返回毫秒级的 `start_ms`, `end_ms` 列表。
    - `extract_and_stitch_frames(video_path, start_ms, end_ms) -> str`：抽取指定时间段的 4 帧，拼成 `2x2`，角落加数字水印，最终返回 UTF-8 的 Base64 字符串 `image_base64`。
@@ -76,7 +76,7 @@
 为了不引起大的代码冲突与回归，建议分 3 个 PR 稳步推进：
 
 - [ ] **PR 1 (核心算力层)**：在 `core` 中引入依赖，开发 `ingestion.py`。包含本地视频切分测试与 2x2 多帧拼接图片生成的独立单元测试。
-- [ ] **PR 2 (状态调度层)**：重构 `core/store.py` 的 `_run_assets_import`。接入真实的 ingestion 服务，替换 `asyncio.sleep`。实现 HTTP 调用并处理失败回调，更新状态机制。
+- [ ] **PR 2 (状态调度层)**：重构 `core/application/store.py` 的 `_run_assets_import`。接入真实的 ingestion 服务，替换 `asyncio.sleep`。实现 HTTP 调用并处理失败回调，更新状态机制。
 - [ ] **PR 3 (前端展示层)**：在 `client` 端对接新的 Loading 态。在素材列表区域正确渲染 `processing_stage` 的流转进度（`segmenting` -> `vectorizing` -> `ready`/`failed`），完善重试与异常报错展示。
 
 ## 5. 风险与缓解 (Risks & Mitigations)

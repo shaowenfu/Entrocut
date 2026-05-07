@@ -5,10 +5,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-try:
-    from core.storage import ensure_app_data_layout, resolve_app_data_root, sqlite_db_path
-except ModuleNotFoundError:
-    from storage import ensure_app_data_layout, resolve_app_data_root, sqlite_db_path
+from runtime.storage import ensure_app_data_layout, resolve_app_data_root, sqlite_db_path
 
 
 class LocalStateRepository:

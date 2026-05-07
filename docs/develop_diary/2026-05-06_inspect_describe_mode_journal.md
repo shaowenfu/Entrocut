@@ -49,7 +49,7 @@ POST /v1/tools/inspect
 
 ### 2. Core Context Engineering
 
-`core/context.py` 中的 tool 描述从“候选判优”改成“双职责”：
+`core/application/context.py` 中的 tool 描述从“候选判优”改成“双职责”：
 
 1. 深入理解已知 `clip`
 2. 对少量候选进行比较、消歧与质量判断
@@ -63,7 +63,7 @@ POST /v1/tools/inspect
 
 ### 3. Core Inspect Execution
 
-原来的 `core/inspection.py` 只基于 `clip.visual_desc` 返回本地摘要，不是真正的视觉理解。
+原来的 `core/agent_runtime/inspection.py` 只基于 `clip.visual_desc` 返回本地摘要，不是真正的视觉理解。
 
 本轮新增 `describe_clip_with_server(...)`：
 

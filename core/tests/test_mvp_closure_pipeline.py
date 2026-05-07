@@ -5,27 +5,17 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.append(str(REPO_ROOT))
+CORE_DIR = Path(__file__).resolve().parents[1]
+if str(CORE_DIR) not in sys.path:
+    sys.path.append(str(CORE_DIR))
 
-from core.helpers import _entity_id, _now_iso
-from core.patching import apply_edit_draft_patch
-from core.rendering import build_render_plan
-from core.schemas import AssetModel, ClipModel, EditDraftModel, EditDraftPatchModel, ShotModel
-
-sys.modules.setdefault(
-    "ingestion",
-    SimpleNamespace(
-        detect_scenes=lambda *args, **kwargs: [],
-        extract_and_stitch_frames=lambda *args, **kwargs: "",
-    ),
-)
-
-from core.store import InMemoryProjectStore, TaskModel
+from agent_runtime.patching import apply_edit_draft_patch
+from application.store import InMemoryProjectStore
+from contracts import AssetModel, ClipModel, EditDraftModel, EditDraftPatchModel, ShotModel, TaskModel
+from media.rendering import build_render_plan
+from runtime.helpers import _entity_id, _now_iso
 
 
 class MvpClosurePipelineTest(unittest.TestCase):
@@ -109,7 +99,7 @@ class MvpClosurePipelineTest(unittest.TestCase):
             fake_output.parent.mkdir(parents=True, exist_ok=True)
             fake_output.write_bytes(b"00")
 
-            with patch("core.store.render_export", return_value={
+            with patch("application.store.render_export", return_value={
                 "output_url": fake_output.resolve().as_uri(),
                 "duration_ms": 3000,
                 "file_size_bytes": 2,

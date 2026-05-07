@@ -24,12 +24,14 @@ if str(CORE_DIR) not in sys.path:
 CORE_TEST_APPDATA_DIR = tempfile.TemporaryDirectory()
 os.environ["ENTROCUT_APP_DATA_ROOT"] = CORE_TEST_APPDATA_DIR.name
 
-CORE_SERVER_SPEC = importlib.util.spec_from_file_location("core_server_module", CORE_DIR / "server.py")
+CORE_SERVER_SPEC = importlib.util.spec_from_file_location("core_main_module", CORE_DIR / "main.py")
 if CORE_SERVER_SPEC is None or CORE_SERVER_SPEC.loader is None:
-    raise RuntimeError("Unable to load core/server.py for tests.")
+    raise RuntimeError("Unable to load core/main.py for tests.")
 core_server = importlib.util.module_from_spec(CORE_SERVER_SPEC)
-sys.modules["core_server_module"] = core_server
+sys.modules["core_main_module"] = core_server
 CORE_SERVER_SPEC.loader.exec_module(core_server)
+import api.routers.projects as projects_router
+from application.store import CoreAuthSessionStore, InMemoryProjectStore, auth_session_store, store
 
 
 def _valid_jpeg_base64() -> str:
@@ -41,15 +43,15 @@ def _valid_jpeg_base64() -> str:
 
 class CoreChatPlannerSkeletonTest(unittest.TestCase):
     def setUp(self) -> None:
-        core_server.store.reset_for_test()
-        core_server.auth_session_store.reset_for_test()
+        store.reset_for_test()
+        auth_session_store.reset_for_test()
         self.client = TestClient(core_server.app)
         self.client.__enter__()
         
-        self.detect_scenes_patcher = patch("store.detect_scenes", return_value=[(0, 6000), (6000, 12000)])
+        self.detect_scenes_patcher = patch("application.store.detect_scenes", return_value=[(0, 6000), (6000, 12000)])
         self.detect_scenes_mock = self.detect_scenes_patcher.start()
         
-        self.extract_frames_patcher = patch("store.extract_and_stitch_frames", return_value=_valid_jpeg_base64())
+        self.extract_frames_patcher = patch("application.store.extract_and_stitch_frames", return_value=_valid_jpeg_base64())
         self.extract_frames_mock = self.extract_frames_patcher.start()
         
         class _MockResponse:
@@ -90,7 +92,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
                     assert isinstance(payload.get("active"), bool)
                 return _MockResponse()
                 
-        self.httpx_patcher = patch("store.AsyncClient", return_value=_MockClientAsyncContextManager())
+        self.httpx_patcher = patch("application.store.AsyncClient", return_value=_MockClientAsyncContextManager())
         self.httpx_mock = self.httpx_patcher.start()
 
     def tearDown(self) -> None:
@@ -235,7 +237,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self.assertIn("planner_decision_finalized", op_actions)
         self.assertIn("agent_tool_execution_loop", op_actions)
         self.assertIn("placeholder_edit_draft_applied", op_actions)
-        self.assertEqual(core_server.store.pending_background_task_count(project_id), 0)
+        self.assertEqual(store.pending_background_task_count(project_id), 0)
 
     def test_byok_chat_uses_custom_endpoint_model_and_headers(self) -> None:
         response = self.client.post("/api/v1/projects", json={"title": "BYOK Custom"})
@@ -325,7 +327,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
 
         with (
             patch("httpx.AsyncClient.post", fake_post),
-            patch("agent.retrieve_candidates", self._fake_retrieve_candidates),
+            patch("agent_runtime.agent.retrieve_candidates", self._fake_retrieve_candidates),
         ):
             chat_response = self.client.post(
                 f"/api/v1/projects/{project_id}/chat",
@@ -337,7 +339,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self.assertGreaterEqual(len(workspace["edit_draft"]["shots"]), 1)
         assistant_turn = [turn for turn in workspace["chat_turns"] if turn.get("role") == "assistant"][-1]
         self.assertIn("检索完成", assistant_turn["reasoning_summary"])
-        self.assertEqual(core_server.store.pending_background_task_count(project_id), 0)
+        self.assertEqual(store.pending_background_task_count(project_id), 0)
 
     def test_chat_fails_when_tool_execution_invalid(self) -> None:
         project_id, _ = self._create_project()
@@ -372,7 +374,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             workspace = self._poll_task_idle(project_id)
         self.assertEqual(len([turn for turn in workspace["chat_turns"] if turn.get("role") == "assistant"]), 0)
         self.assertEqual(workspace["summary_state"], "attention_required")
-        self.assertEqual(core_server.store.pending_background_task_count(project_id), 0)
+        self.assertEqual(store.pending_background_task_count(project_id), 0)
 
     def test_chat_tool_patch_writeback_updates_draft(self) -> None:
         project_id, clip_ids = self._create_project()
@@ -413,7 +415,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             )
             workspace = self._poll_workspace(project_id)
         self.assertGreaterEqual(len(workspace["edit_draft"]["shots"]), 1)
-        self.assertEqual(core_server.store.pending_background_task_count(project_id), 0)
+        self.assertEqual(store.pending_background_task_count(project_id), 0)
 
     def test_chat_fails_when_loop_exhausts_iterations(self) -> None:
         project_id, _ = self._create_project()
@@ -439,7 +441,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
 
             return _DummyResponse()
 
-        with patch.object(core_server, "AGENT_LOOP_MAX_ITERATIONS", 1):
+        with patch.object(projects_router, "_agent_loop_max_iterations_resolver", lambda: 1):
             with patch("httpx.AsyncClient.post", fake_post):
                 self.client.post(
                     f"/api/v1/projects/{project_id}/chat",
@@ -448,7 +450,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
                 workspace = self._poll_task_idle(project_id)
         self.assertEqual(len([turn for turn in workspace["chat_turns"] if turn.get("role") == "assistant"]), 0)
         self.assertEqual(workspace["summary_state"], "attention_required")
-        self.assertEqual(core_server.store.pending_background_task_count(project_id), 0)
+        self.assertEqual(store.pending_background_task_count(project_id), 0)
 
     def test_chat_planner_context_contains_structured_tools_and_scope(self) -> None:
         project_id, _ = self._create_project()
@@ -573,7 +575,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
 
         with (
             patch("httpx.AsyncClient.post", fake_post),
-            patch("agent.retrieve_candidates", self._fake_retrieve_candidates),
+            patch("agent_runtime.agent.retrieve_candidates", self._fake_retrieve_candidates),
         ):
             self.client.post(
                 f"/api/v1/projects/{project_id}/chat",
@@ -664,7 +666,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             return _ChatResponse()
 
         with patch("httpx.AsyncClient.post", fake_post), patch(
-            "inspection.extract_and_stitch_frames",
+            "agent_runtime.inspection.extract_and_stitch_frames",
             return_value=_valid_jpeg_base64(),
         ):
             self.client.post(
@@ -702,8 +704,8 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self.assertIn("active_tasks", workspace)
         self.assertEqual(workspace["active_tasks"], [])
 
-        self.assertTrue(core_server.store.db_path.exists())
-        workspace_dir = core_server.store.app_data_root / "projects" / project_id
+        self.assertTrue(store.db_path.exists())
+        workspace_dir = store.app_data_root / "projects" / project_id
         self.assertTrue(workspace_dir.exists())
         self.assertTrue((workspace_dir / "thumbs").exists())
         self.assertTrue((workspace_dir / "preview").exists())
@@ -711,7 +713,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self.assertTrue((workspace_dir / "temp").exists())
         self.assertTrue((workspace_dir / "proxies").exists())
 
-        reloaded_store = core_server.InMemoryProjectStore(app_data_root=core_server.store.app_data_root)
+        reloaded_store = InMemoryProjectStore(app_data_root=store.app_data_root)
         persisted = reloaded_store.get_project_or_raise(project_id)
         self.assertEqual(persisted["project"]["title"], "Local Persistence Bootstrap")
         self.assertEqual(persisted["workspace_dir"], str(workspace_dir))
@@ -807,13 +809,13 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             workspace = self._poll_workspace(project_id)
 
         self.assertGreaterEqual(workspace["last_event_sequence"] if "last_event_sequence" in workspace else 0, 0)
-        reloaded_store = core_server.InMemoryProjectStore(app_data_root=core_server.store.app_data_root)
+        reloaded_store = InMemoryProjectStore(app_data_root=store.app_data_root)
         persisted = reloaded_store.get_project_or_raise(project_id)
         self.assertEqual(len(persisted["chat_turns"]), 2)
         self.assertGreaterEqual(len(persisted["edit_draft"]["shots"]), 1)
         self.assertGreaterEqual(int(persisted["sequence"]), 1)
 
-        connection = sqlite3.connect(core_server.store.db_path)
+        connection = sqlite3.connect(store.db_path)
         try:
             table_names = {
                 row[0]
@@ -891,7 +893,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         assets = workspace["edit_draft"]["assets"]
         self.assertEqual(assets[0]["source_path"], str(source_file))
 
-        workspace_dir = core_server.store.app_data_root / "projects" / project_id
+        workspace_dir = store.app_data_root / "projects" / project_id
         self.assertFalse((workspace_dir / source_file.name).exists())
         self.assertFalse((workspace_dir / "temp" / source_file.name).exists())
         self.assertTrue(source_file.exists())
@@ -1032,7 +1034,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         project_id = response.json()["project"]["id"]
         self._set_auth_session()
 
-        with patch("store.detect_scenes", side_effect=RuntimeError("segmenter unavailable")):
+        with patch("application.store.detect_scenes", side_effect=RuntimeError("segmenter unavailable")):
             import_response = self.client.post(
                 f"/api/v1/projects/{project_id}/assets:import",
                 json={"media": {"files": [{"name": source_file.name, "path": str(source_file)}]}},
@@ -1049,8 +1051,8 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         )
 
         with (
-            patch("store.detect_scenes", return_value=[(0, 6000), (6000, 12000)]),
-            patch("store.extract_and_stitch_frames", return_value=_valid_jpeg_base64()),
+            patch("application.store.detect_scenes", return_value=[(0, 6000), (6000, 12000)]),
+            patch("application.store.extract_and_stitch_frames", return_value=_valid_jpeg_base64()),
         ):
             retry_response = self.client.post(
                 f"/api/v1/projects/{project_id}/assets/{failed_asset['id']}:retry",
@@ -1082,8 +1084,8 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self._set_auth_session()
 
         with (
-            patch("store.detect_scenes", return_value=[(0, 6000), (6000, 12000)]),
-            patch("store.extract_and_stitch_frames", return_value=_valid_jpeg_base64()),
+            patch("application.store.detect_scenes", return_value=[(0, 6000), (6000, 12000)]),
+            patch("application.store.extract_and_stitch_frames", return_value=_valid_jpeg_base64()),
         ):
             import_response = self.client.post(
                 f"/api/v1/projects/{project_id}/assets:import",
@@ -1137,7 +1139,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
                 return [(0, 6000), (6000, 12000)]
             return _valid_jpeg_base64()
 
-        with patch("store.asyncio.to_thread", slow_to_thread):
+        with patch("application.store.asyncio.to_thread", slow_to_thread):
             import_response = self.client.post(
                 f"/api/v1/projects/{project_id}/assets:import",
                 json={"media": {"files": [{"name": "extra.mp4", "path": self._media_path("extra-late.mp4")}]}},
@@ -1186,7 +1188,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self.assertEqual(import_response.status_code, 200)
         self._poll_task_idle(project_id)
 
-        reloaded_store = core_server.InMemoryProjectStore(app_data_root=core_server.store.app_data_root)
+        reloaded_store = InMemoryProjectStore(app_data_root=store.app_data_root)
         persisted = reloaded_store.get_project_or_raise(project_id)
         assets = persisted["edit_draft"]["assets"]
 
@@ -1237,7 +1239,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
                 "file_size_bytes": output_path.stat().st_size,
             }
 
-        with patch("store.render_export", fake_render_export):
+        with patch("application.store.render_export", fake_render_export):
             export_response = self.client.post(
                 f"/api/v1/projects/{project_id}/export",
                 json={"format": "mp4", "quality": "preview"},
@@ -1245,7 +1247,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             self.assertEqual(export_response.status_code, 200)
             workspace = self._poll_task_idle(project_id)
 
-        reloaded_store = core_server.InMemoryProjectStore(app_data_root=core_server.store.app_data_root)
+        reloaded_store = InMemoryProjectStore(app_data_root=store.app_data_root)
         persisted = reloaded_store.get_project_or_raise(project_id)
         export_result = persisted["export_result"]
         self.assertIsNotNone(export_result)
@@ -1264,7 +1266,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
 
-        reloaded_auth_store = core_server.CoreAuthSessionStore(app_data_root=core_server.store.app_data_root)
+        reloaded_auth_store = CoreAuthSessionStore(app_data_root=store.app_data_root)
         persisted = asyncio.run(reloaded_auth_store.snapshot())
         self.assertEqual(persisted["access_token"], "tok_test_access_token_value_12345")
         self.assertEqual(persisted["user_id"], "user_persisted")

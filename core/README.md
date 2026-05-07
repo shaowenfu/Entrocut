@@ -10,27 +10,17 @@
 
 ```text
 core/
-├── server.py                         # FastAPI app 装配入口：CORS、request_id、异常 envelope、router 挂载
+├── main.py                           # FastAPI app 装配入口：CORS、request_id、异常 envelope、router 挂载
 ├── desktop_entry.py                  # Electron 打包后启动入口：读取 CORE_PORT 并运行 uvicorn
 ├── config.py                         # 运行时配置：Server 地址、模型名、超时、agent loop 最大轮次
-├── schemas.py                        # Pydantic Schema（数据契约）：API、WS、EditDraft、Task、RenderPlan
-├── store.py                          # 本地应用服务层：项目内存镜像、任务编排、事件广播、chat/import/export 队列
-├── state.py                          # SQLite Repository（仓储）：projects、drafts、tasks、assets、auth session 持久化
-├── storage.py                        # app data 路径解析：db/projects/logs 根目录与 SQLite 文件位置
-├── manager.py                        # WorkspaceManager：项目工作目录、preview/export/temp/proxies 子目录管理
-├── helpers.py                        # 纯辅助函数：ID、时间、草案构建、摘要、兼容数据转换
-├── context.py                        # Planner Context（规划上下文）组装：goal/scope/media/capabilities/memory
-├── agent.py                          # chat 主链：请求 planner、校验决策、执行 read/retrieve/inspect/patch/preview
-├── retrieval.py                      # retrieve tool：调用 Server /v1/assets/retrieval 召回候选 clip
-├── inspection.py                     # inspect tool：对候选 clip 做轻量结构化检查
-├── patching.py                       # patch tool：应用 EditDraftPatch 到 shots/scenes
-├── rendering.py                      # preview/export 渲染：RenderPlan -> ffmpeg 输出文件
-├── ingestion.py                      # 媒体 ingest 辅助：SceneDetect 分段、ffmpeg 抽帧、Pillow 拼图
-├── routers/
-│   ├── __init__.py                   # 聚合 projects/auth/system routers
-│   ├── system.py                     # /、/health、runtime capabilities、project events WebSocket
-│   ├── projects.py                   # projects/workspace/assets:import/chat/export API
-│   └── auth.py                       # core auth session mirror API
+├── api/
+│   └── routers/                      # HTTP API 与 WebSocket 路由
+├── contracts/                        # Pydantic Schema（数据契约）：API、WS、EditDraft、Task、RenderPlan
+├── application/                      # 应用服务层：store facade、planner context
+├── agent_runtime/                    # agent loop 与 read/retrieve/inspect/patch/preview 工具链
+├── media/                            # ingest 与 preview/export 渲染
+├── persistence/                      # SQLite Repository（仓储）
+├── runtime/                          # app data、workspace、通用 helper
 ├── tests/
 │   ├── test_context_engineering.py   # planner context 与 runtime state 相关回归
 │   ├── test_ingestion.py             # ingest 链路基础测试
@@ -267,7 +257,7 @@ pip install -r requirements.txt
 ```bash
 cd core
 source venv/bin/activate
-uvicorn server:app --host 127.0.0.1 --port 8000 --reload
+uvicorn main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 可选环境变量：
@@ -311,15 +301,15 @@ pytest
 
 建议按职责从外到内阅读：
 
-1. [server.py](./server.py) - app 装配、异常格式、router 挂载。
-2. [routers/projects.py](./routers/projects.py) - client 可调用的项目主 API。
-3. [store.py](./store.py) - 任务、事件、导入、chat、导出编排。
-4. [schemas.py](./schemas.py) - 公开契约和内部模型边界。
-5. [state.py](./state.py) - SQLite 持久化形状。
-6. [context.py](./context.py) - planner 输入如何由 workspace 派生。
-7. [agent.py](./agent.py) - planner 调用、tool gating、tool execution loop。
-8. [patching.py](./patching.py) 与 [rendering.py](./rendering.py) - 草案修改与渲染闭环。
-9. [ingestion.py](./ingestion.py) 与 [retrieval.py](./retrieval.py) - 媒体入库与检索外部依赖。
+1. [main.py](./main.py) - app 装配、异常格式、router 挂载。
+2. [api/routers/projects.py](./api/routers/projects.py) - client 可调用的项目主 API。
+3. [application/store.py](./application/store.py) - 任务、事件、导入、chat、导出编排。
+4. [contracts/__init__.py](./contracts/__init__.py) - 公开契约和内部模型边界。
+5. [persistence/state.py](./persistence/state.py) - SQLite 持久化形状。
+6. [application/context.py](./application/context.py) - planner 输入如何由 workspace 派生。
+7. [agent_runtime/agent.py](./agent_runtime/agent.py) - planner 调用、tool gating、tool execution loop。
+8. [agent_runtime/patching.py](./agent_runtime/patching.py) 与 [media/rendering.py](./media/rendering.py) - 草案修改与渲染闭环。
+9. [media/ingestion.py](./media/ingestion.py) 与 [agent_runtime/retrieval.py](./agent_runtime/retrieval.py) - 媒体入库与检索外部依赖。
 
 ## 当前非目标
 

@@ -3,8 +3,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from helpers import _entity_id
-from schemas import CoreApiError, EditDraftModel, RenderPlan, RenderSegment
+from contracts import CoreApiError, EditDraftModel, RenderPlan, RenderSegment
+from runtime.helpers import _entity_id
 
 
 def build_render_plan(draft: EditDraftModel) -> RenderPlan:

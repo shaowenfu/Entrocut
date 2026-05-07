@@ -112,7 +112,7 @@
 
 开发态：
 
-1. 允许继续 `cd core && uvicorn server:app`
+1. 允许继续 `cd core && uvicorn main:app`
 2. Electron 开发时可连外部手动启动的 `core`
 
 发布态：
@@ -187,7 +187,7 @@ Electron 主进程不做：
 
 职责：
 
-1. 固定入口：`server:app`
+1. 固定入口：`main:app`
 2. 固定依赖收集
 3. 固定输出结构
 4. 明确平台相关差异

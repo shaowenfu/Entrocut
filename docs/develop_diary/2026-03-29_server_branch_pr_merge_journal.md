@@ -62,7 +62,7 @@
 
 1. `client/src/pages/LaunchpadPage.tsx`
 2. `client/src/store/useWorkspaceStore.ts`
-3. `core/server.py`
+3. `core/main.py`
 
 这 3 处冲突其实很有代表性：它们正好落在“新旧两套能力交叉”的位置上。
 
@@ -100,7 +100,7 @@
 
 这样一来，聊天请求不会丢掉已经落地的“局部编辑语义”，也不会丢掉 `#2` 的模型路由能力。
 
-### 3) core/server.py
+### 3) core/main.py
 
 这里的冲突最值得小心。
 
@@ -136,7 +136,7 @@
 
 合并完成后，我又做了最小验证：
 
-1. `core/server.py` 语法编译通过
+1. `core/main.py` 语法编译通过
 2. `server/app/*.py` 关键文件语法编译通过
 3. `server` worktree 状态干净
 

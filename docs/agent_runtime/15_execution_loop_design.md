@@ -4,7 +4,7 @@
 
 它直接回答当前仓库里最现实的问题：
 
-`core/server.py` 里的 `_run_chat_agent_loop` 现在只有 `planner loop skeleton（规划循环骨架）`，如果要把它改成一个真正可持续推进任务的最小闭环，应该怎么改？
+`core/main.py` 里的 `_run_chat_agent_loop` 现在只有 `planner loop skeleton（规划循环骨架）`，如果要把它改成一个真正可持续推进任务的最小闭环，应该怎么改？
 
 本文档的目标不是设计最终生产形态，而是给当前 `core` 提供一条最短、最稳、最少概念膨胀的落地路径。
 
@@ -12,7 +12,7 @@
 
 ## 1. 当前代码的真实状态
 
-当前 `core/server.py` 已经具备这些能力：
+当前 `core/main.py` 已经具备这些能力：
 
 1. 能读取当前 `project / edit_draft / chat_turns`
 2. 能组装 `planner context`
@@ -220,7 +220,7 @@
 
 ## 6. 推荐的数据结构增量
 
-当前不建议大改全局架构，只建议在 `core/server.py` 附近增加三个最小结构。
+当前不建议大改全局架构，只建议在 `core/main.py` 附近增加三个最小结构。
 
 ### 6.1 `ToolCallModel`
 
@@ -270,7 +270,7 @@ class AgentLoopResultModel(BaseModel):
 
 ## 7. 推荐的最小代码拆分
 
-当前最稳的做法不是重写整个 `core`，而是在 `core/server.py` 内先把 `_run_chat_agent_loop` 周边拆成 4 个辅助函数。
+当前最稳的做法不是重写整个 `core`，而是在 `core/main.py` 内先把 `_run_chat_agent_loop` 周边拆成 4 个辅助函数。
 
 ### 7.1 `_validate_planner_decision(...)`
 
@@ -402,7 +402,7 @@ async def _run_chat_agent_loop(...) -> AgentLoopResultModel:
 3. 不做并行工具调度
 4. 不做通用 `tool registry（工具注册中心）`
 5. 不做复杂 `memory compaction（记忆压缩）`
-6. 不把 `core/server.py` 立即拆成多文件架构
+6. 不把 `core/main.py` 立即拆成多文件架构
 
 这很重要。
 

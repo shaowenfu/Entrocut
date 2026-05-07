@@ -91,8 +91,8 @@
 - `server/app/core/config.py`
 - `server/app/api/routes/runtime.py`
 - `core/config.py`
-- `core/store.py`
-- `core/agent.py`
+- `core/application/store.py`
+- `core/agent_runtime/agent.py`
 - `client/src/store/useAuthStore.ts`
 - `client/src/store/useWorkspaceStore.ts`
 - `client/src/pages/WorkspacePage.tsx`
@@ -109,15 +109,15 @@
 
 当前事实：
 
-- `core/helpers.py` 的 `_derive_title()` 只是简单使用 explicit title、prompt 前 48 字符、folder 名或第一个文件名。
+- `core/runtime/helpers.py` 的 `_derive_title()` 只是简单使用 explicit title、prompt 前 48 字符、folder 名或第一个文件名。
 - `client/src/store/useLaunchpadStore.ts` 对无媒体 prompt 创建项目时主动传 `title: prompt.slice(0, 32)`，绕过了更好的 core 命名策略。
-- `core/routers/projects.py` 没有 `PATCH /api/v1/projects/{project_id}` 或类似 rename API。
+- `core/api/routers/projects.py` 没有 `PATCH /api/v1/projects/{project_id}` 或类似 rename API。
 - `WorkspacePage` 只展示 `workspaceName`，没有编辑入口。
 
 改进目标：
 
 - [x] 新增 project rename contract：`PATCH /api/v1/projects/{project_id}`，schema 至少包含 `title`。
-- [x] `core/store.py` 实现 title 更新、SQLite 持久化和 `project.updated` event。
+- [x] `core/application/store.py` 实现 title 更新、SQLite 持久化和 `project.updated` event。
 - [x] `Launchpad` 和 `Workspace` 都使用 project title 事实源，不再维护不可编辑的静态 `workspaceName`。
 - [x] 自动命名分两层：先用本地 deterministic heuristic（确定性启发式）生成可读名称，后续可选接入 LLM 生成短标题。
 - [x] 明确 `Non-goal（非目标）`：rename 不触发素材重处理，不修改 workspace 目录名。
@@ -149,8 +149,8 @@
 当前行为是设计上的异步任务模式：
 
 - `client` 调 `POST /api/v1/projects/{project_id}/chat`。
-- `core/routers/projects.py` 调 `store.queue_chat()`。
-- `core/store.py` 立即创建 `TaskModel(status=queued)` 并返回。
+- `core/api/routers/projects.py` 调 `store.queue_chat()`。
+- `core/application/store.py` 立即创建 `TaskModel(status=queued)` 并返回。
 - 真正的 planner 调用在 background task 里执行。
 - 结果通过 `WS /api/v1/projects/{project_id}/events` 推送：
   - `chat.turn.created`
@@ -165,12 +165,12 @@
 
 - [x] UI 没有明显展示 `eventStreamState（事件流状态）`，用户无法知道 WebSocket 是否连接成功。
 - [x] 如果 WebSocket 断开，client 没有对 active task 做 HTTP polling fallback，聊天结果可能永远不刷新。
-- [x] `core/store.py::_mark_chat_failed()` 发出的 failed `task.updated` 没有填充 `task.error`，只靠 `error.occurred` 传错误。
+- [x] `core/application/store.py::_mark_chat_failed()` 发出的 failed `task.updated` 没有填充 `task.error`，只靠 `error.occurred` 传错误。
 - [x] `client` 只展示 `details.cause`，没有展示 `details.server_error`、`server_status`、`upstream_status` 等嵌套错误，导致真实 server/provider 失败原因被吞掉。
 
 ### 7. Gemini 报 SERVER_PLANNER_PROXY_FAILED 的真实含义
 
-`SERVER_PLANNER_PROXY_FAILED` 来自 `core/agent.py::_request_server_planner_decision()`：
+`SERVER_PLANNER_PROXY_FAILED` 来自 `core/agent_runtime/agent.py::_request_server_planner_decision()`：
 
 ```text
 core -> POST {SERVER_BASE_URL}/v1/chat/completions -> server 返回 HTTP >= 400 -> core 包装成 SERVER_PLANNER_PROXY_FAILED
@@ -202,7 +202,7 @@ core -> POST {SERVER_BASE_URL}/v1/chat/completions -> server 返回 HTTP >= 400 
 
 当前已有能力：
 
-- `core/store.py::queue_assets_import()` 会计算文件 fingerprint。
+- `core/application/store.py::queue_assets_import()` 会计算文件 fingerprint。
 - 如果上传的是已删除、已 ready、且 indexed_clip_count > 0 的同一素材，会直接恢复，不重复切分。
 
 当前缺口：

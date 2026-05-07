@@ -1,8 +1,8 @@
 from fastapi import APIRouter
 
-from routers.auth import router as auth_router
-from routers.projects import router as projects_router
-from routers.system import router as system_router
+from api.routers.auth import router as auth_router
+from api.routers.projects import router as projects_router
+from api.routers.system import router as system_router
 
 api_router = APIRouter()
 api_router.include_router(projects_router)

@@ -17,7 +17,7 @@ def _read_port() -> int:
 
 
 def main() -> None:
-    uvicorn.run("server:app", host="127.0.0.1", port=_read_port(), log_level=os.getenv("CORE_LOG_LEVEL", "info"))
+    uvicorn.run("main:app", host="127.0.0.1", port=_read_port(), log_level=os.getenv("CORE_LOG_LEVEL", "info"))
 
 
 if __name__ == "__main__":

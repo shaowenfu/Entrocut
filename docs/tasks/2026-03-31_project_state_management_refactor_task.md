@@ -187,8 +187,8 @@
 
 必改文件：
 
-1. [core/schemas.py](/home/sherwen/MyProjects/Entrocut/core/schemas.py)
-2. [core/state.py](/home/sherwen/MyProjects/Entrocut/core/state.py)
+1. [core/contracts/__init__.py](/home/sherwen/MyProjects/Entrocut/core/contracts/__init__.py)
+2. [core/persistence/state.py](/home/sherwen/MyProjects/Entrocut/core/persistence/state.py)
 
 任务：
 
@@ -257,9 +257,9 @@
 
 必改文件：
 
-1. [core/store.py](/home/sherwen/MyProjects/Entrocut/core/store.py)
-2. [core/helpers.py](/home/sherwen/MyProjects/Entrocut/core/helpers.py)
-3. [core/state.py](/home/sherwen/MyProjects/Entrocut/core/state.py)
+1. [core/application/store.py](/home/sherwen/MyProjects/Entrocut/core/application/store.py)
+2. [core/runtime/helpers.py](/home/sherwen/MyProjects/Entrocut/core/runtime/helpers.py)
+3. [core/persistence/state.py](/home/sherwen/MyProjects/Entrocut/core/persistence/state.py)
 
 任务：
 
@@ -310,9 +310,9 @@
 
 必改文件：
 
-1. [core/store.py](/home/sherwen/MyProjects/Entrocut/core/store.py)
-2. [core/state.py](/home/sherwen/MyProjects/Entrocut/core/state.py)
-3. 如有必要，补充 [core/helpers.py](/home/sherwen/MyProjects/Entrocut/core/helpers.py)
+1. [core/application/store.py](/home/sherwen/MyProjects/Entrocut/core/application/store.py)
+2. [core/persistence/state.py](/home/sherwen/MyProjects/Entrocut/core/persistence/state.py)
+3. 如有必要，补充 [core/runtime/helpers.py](/home/sherwen/MyProjects/Entrocut/core/runtime/helpers.py)
 
 任务：
 
@@ -354,10 +354,10 @@
 
 必改文件：
 
-1. [core/store.py](/home/sherwen/MyProjects/Entrocut/core/store.py)
-2. [core/context.py](/home/sherwen/MyProjects/Entrocut/core/context.py)
-3. [core/agent.py](/home/sherwen/MyProjects/Entrocut/core/agent.py)
-4. 如有必要，调整 [core/routers/projects.py](/home/sherwen/MyProjects/Entrocut/core/routers/projects.py)
+1. [core/application/store.py](/home/sherwen/MyProjects/Entrocut/core/application/store.py)
+2. [core/application/context.py](/home/sherwen/MyProjects/Entrocut/core/application/context.py)
+3. [core/agent_runtime/agent.py](/home/sherwen/MyProjects/Entrocut/core/agent_runtime/agent.py)
+4. 如有必要，调整 [core/api/routers/projects.py](/home/sherwen/MyProjects/Entrocut/core/api/routers/projects.py)
 
 任务：
 
@@ -413,8 +413,8 @@
 
 必改文件：
 
-1. [core/store.py](/home/sherwen/MyProjects/Entrocut/core/store.py)
-2. [core/routers/system.py](/home/sherwen/MyProjects/Entrocut/core/routers/system.py)
+1. [core/application/store.py](/home/sherwen/MyProjects/Entrocut/core/application/store.py)
+2. [core/api/routers/system.py](/home/sherwen/MyProjects/Entrocut/core/api/routers/system.py)
 3. [docs/store/01_core_api_ws_contract.md](/home/sherwen/MyProjects/Entrocut/docs/store/01_core_api_ws_contract.md)
 4. 视范围而定，后续同步 `client` 读取逻辑
 
@@ -449,18 +449,18 @@
 
 ### 必改
 
-1. [core/schemas.py](/home/sherwen/MyProjects/Entrocut/core/schemas.py)
-2. [core/state.py](/home/sherwen/MyProjects/Entrocut/core/state.py)
-3. [core/store.py](/home/sherwen/MyProjects/Entrocut/core/store.py)
-4. [core/context.py](/home/sherwen/MyProjects/Entrocut/core/context.py)
-5. [core/agent.py](/home/sherwen/MyProjects/Entrocut/core/agent.py)
+1. [core/contracts/__init__.py](/home/sherwen/MyProjects/Entrocut/core/contracts/__init__.py)
+2. [core/persistence/state.py](/home/sherwen/MyProjects/Entrocut/core/persistence/state.py)
+3. [core/application/store.py](/home/sherwen/MyProjects/Entrocut/core/application/store.py)
+4. [core/application/context.py](/home/sherwen/MyProjects/Entrocut/core/application/context.py)
+5. [core/agent_runtime/agent.py](/home/sherwen/MyProjects/Entrocut/core/agent_runtime/agent.py)
 6. [docs/store/01_core_api_ws_contract.md](/home/sherwen/MyProjects/Entrocut/docs/store/01_core_api_ws_contract.md)
 
 ### 大概率会改
 
-1. [core/helpers.py](/home/sherwen/MyProjects/Entrocut/core/helpers.py)
-2. [core/routers/projects.py](/home/sherwen/MyProjects/Entrocut/core/routers/projects.py)
-3. [core/routers/system.py](/home/sherwen/MyProjects/Entrocut/core/routers/system.py)
+1. [core/runtime/helpers.py](/home/sherwen/MyProjects/Entrocut/core/runtime/helpers.py)
+2. [core/api/routers/projects.py](/home/sherwen/MyProjects/Entrocut/core/api/routers/projects.py)
+3. [core/api/routers/system.py](/home/sherwen/MyProjects/Entrocut/core/api/routers/system.py)
 4. [core/README.md](/home/sherwen/MyProjects/Entrocut/core/README.md)
 
 ### 测试必改

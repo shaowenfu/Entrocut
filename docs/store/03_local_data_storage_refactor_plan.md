@@ -28,7 +28,7 @@
 
 当前 `main` 分支上的主要落差如下：
 
-1. [core/server.py](/home/sherwen/MyProjects/Entrocut/core/server.py) 仍由 `InMemoryProjectStore` 持有：
+1. [core/main.py](/home/sherwen/MyProjects/Entrocut/core/main.py) 仍由 `InMemoryProjectStore` 持有：
    - `project`
    - `edit_draft`
    - `chat_turns`
@@ -339,7 +339,7 @@ app_data_root/
 
 1. `client` 继续通过现有 `HTTP + WebSocket` 和 `core` 通信
 2. 不让 `client` 直接感知数据库
-3. `core/server.py` 先做“存储后端替换”，不顺手重写全部业务逻辑
+3. `core/main.py` 先做“存储后端替换”，不顺手重写全部业务逻辑
 4. `InMemoryProjectStore` 应逐步替换成：
    - `repository`
    - `runtime service`

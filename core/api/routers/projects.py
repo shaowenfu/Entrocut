@@ -5,7 +5,7 @@ from collections.abc import Callable
 from fastapi import APIRouter, Query, Request
 
 from config import AGENT_LOOP_MAX_ITERATIONS
-from schemas import (
+from contracts import (
     ChatRequest,
     CoreApiError,
     CreateProjectRequest,
@@ -18,7 +18,7 @@ from schemas import (
     TaskResponse,
     UpdateProjectRequest,
 )
-from store import auth_session_store, store
+from application.store import auth_session_store, store
 
 router = APIRouter()
 _agent_loop_max_iterations_resolver: Callable[[], int] = lambda: AGENT_LOOP_MAX_ITERATIONS

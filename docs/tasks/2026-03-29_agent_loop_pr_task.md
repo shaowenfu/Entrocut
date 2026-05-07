@@ -72,7 +72,7 @@
    - `_execute_tool_call_todo(...)`
    - `_apply_tool_observation_to_draft_todo(...)`
 3. `planner context` 已经能够接收 `tool_observations`
-4. `server.py` 中上下文编排已抽到 [context_engineering.py](/home/sherwen/MyProjects/Entrocut/core/context_engineering.py)
+4. `main.py` 中上下文编排已抽到 [context_engineering.py](/home/sherwen/MyProjects/Entrocut/core/context_engineering.py)
 
 也就是说，你现在不是从零开始，而是在已有骨架上把执行层真正补起来。
 
@@ -163,7 +163,7 @@ loop 内回写不要走散乱字段更新。
 
 代码入口优先看：
 
-1. [server.py](/home/sherwen/MyProjects/Entrocut/core/server.py)
+1. [main.py](/home/sherwen/MyProjects/Entrocut/core/main.py)
 2. [context_engineering.py](/home/sherwen/MyProjects/Entrocut/core/context_engineering.py)
 3. [test_server_toolchain_integration.py](/home/sherwen/MyProjects/Entrocut/core/tests/test_server_toolchain_integration.py)
 
@@ -212,7 +212,7 @@ loop 内回写不要走散乱字段更新。
 1. 不要重写 `context_engineering.py` 的整体结构
 2. 如需新增字段，优先增量式追加，不做大改名
 3. 尽量把 loop 逻辑的新增模型和辅助函数放在执行层邻近位置
-4. 保持 `server.py` 外部 API 稳定
+4. 保持 `main.py` 外部 API 稳定
 5. 在必要处写简短注释，说明为什么这样做，而不是描述显而易见的代码动作
 
 ---

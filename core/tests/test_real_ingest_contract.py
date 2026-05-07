@@ -26,12 +26,13 @@ fake_scenedetect.ContentDetector = object
 fake_scenedetect.detect = lambda *args, **kwargs: []
 sys.modules.setdefault("scenedetect", fake_scenedetect)
 
-CORE_SERVER_SPEC = importlib.util.spec_from_file_location("core_server_real_ingest_module", CORE_DIR / "server.py")
+CORE_SERVER_SPEC = importlib.util.spec_from_file_location("core_main_real_ingest_module", CORE_DIR / "main.py")
 if CORE_SERVER_SPEC is None or CORE_SERVER_SPEC.loader is None:
-    raise RuntimeError("Unable to load core/server.py for tests.")
+    raise RuntimeError("Unable to load core/main.py for tests.")
 core_server = importlib.util.module_from_spec(CORE_SERVER_SPEC)
-sys.modules["core_server_real_ingest_module"] = core_server
+sys.modules["core_main_real_ingest_module"] = core_server
 CORE_SERVER_SPEC.loader.exec_module(core_server)
+from application.store import auth_session_store, store
 
 
 def _valid_jpeg_base64() -> str:
@@ -43,12 +44,12 @@ def _valid_jpeg_base64() -> str:
 
 class RealIngestContractTest(unittest.TestCase):
     def setUp(self) -> None:
-        core_server.store.reset_for_test()
-        core_server.auth_session_store.reset_for_test()
+        store.reset_for_test()
+        auth_session_store.reset_for_test()
         self.client = TestClient(core_server.app)
         self.client.__enter__()
-        self.detect_scenes_patcher = patch("store.detect_scenes", return_value=[(0, 5000), (5000, 9000)])
-        self.extract_frames_patcher = patch("store.extract_and_stitch_frames", return_value=_valid_jpeg_base64())
+        self.detect_scenes_patcher = patch("application.store.detect_scenes", return_value=[(0, 5000), (5000, 9000)])
+        self.extract_frames_patcher = patch("application.store.extract_and_stitch_frames", return_value=_valid_jpeg_base64())
         self.detect_scenes_patcher.start()
         self.extract_frames_patcher.start()
 
@@ -69,7 +70,7 @@ class RealIngestContractTest(unittest.TestCase):
             async def post(self, *args, **kwargs):
                 return _MockResponse()
 
-        self.httpx_patcher = patch("store.AsyncClient", return_value=_MockClientAsyncContextManager())
+        self.httpx_patcher = patch("application.store.AsyncClient", return_value=_MockClientAsyncContextManager())
         self.httpx_patcher.start()
 
     def tearDown(self) -> None:

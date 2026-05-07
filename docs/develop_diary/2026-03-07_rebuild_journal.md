@@ -39,7 +39,7 @@
    - `useWorkspaceStore.ts`
    - `prototypeWorkspace.ts`
 3. 最小 `FastAPI skeleton`
-   - `core/server.py`
+   - `core/main.py`
    - `server/main.py`
 4. 当前阶段说明和最小启动脚本
    - `core/README.md`
@@ -254,7 +254,7 @@
 3. 真实 `DashVector`
 4. 更复杂的 `server auth/proxy`
 
-我选择先扩 `core/server.py`，做一个单文件 `in-memory` 假实现。
+我选择先扩 `core/main.py`，做一个单文件 `in-memory` 假实现。
 
 这不是偷懒，而是明确地在追求最短反馈路径。
 

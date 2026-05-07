@@ -8,24 +8,14 @@ CORE_DIR = Path(__file__).resolve().parents[1]
 if str(CORE_DIR) not in sys.path:
     sys.path.append(str(CORE_DIR))
 
-try:
-    from core.context import (
-        build_goal_state,
-        build_planner_context_packet,
-        build_planner_system_prompt,
-        build_scope_state,
-        build_tool_capability_state,
-        build_working_memory_state,
-    )
-except ModuleNotFoundError:
-    from context import (
-        build_goal_state,
-        build_planner_context_packet,
-        build_planner_system_prompt,
-        build_scope_state,
-        build_tool_capability_state,
-        build_working_memory_state,
-    )
+from application.context import (
+    build_goal_state,
+    build_planner_context_packet,
+    build_planner_system_prompt,
+    build_scope_state,
+    build_tool_capability_state,
+    build_working_memory_state,
+)
 
 
 class ContextEngineeringTest(unittest.TestCase):

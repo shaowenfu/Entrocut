@@ -136,7 +136,7 @@ interface InspectResponse {
 
 ### 2.4 Core tool context
 
-文件：`core/context.py`
+文件：`core/application/context.py`
 
 当前 tool 描述：
 
@@ -168,8 +168,8 @@ For scope expansion, retrieve first; for candidate judgment, inspect.
 
 文件：
 
-1. `core/agent.py`
-2. `core/inspection.py`
+1. `core/agent_runtime/agent.py`
+2. `core/agent_runtime/inspection.py`
 
 当前执行：
 
@@ -337,7 +337,7 @@ user prompt 由：
 
 ## 6. Core context 最小改动
 
-文件：`core/context.py`
+文件：`core/application/context.py`
 
 ### 6.1 Tool descriptor
 
@@ -372,8 +372,8 @@ Use retrieve to find candidate clips. Use inspect to understand a known clip or 
 
 文件：
 
-1. `core/agent.py`
-2. `core/inspection.py`
+1. `core/agent_runtime/agent.py`
+2. `core/agent_runtime/inspection.py`
 
 第一阶段可以先不直接接 server VLM，只把 tool input 和状态语义打通；但这会让 `describe` 名义上存在、实际仍是本地摘要。
 
@@ -389,7 +389,7 @@ Use retrieve to find candidate clips. Use inspect to understand a known clip or 
 }
 ```
 
-2. `core/agent.py` 识别 `mode`
+2. `core/agent_runtime/agent.py` 识别 `mode`
 3. `mode=describe` 时先选中目标 clip
 4. 如果当前 clip 没有 frame evidence，返回明确错误或 fallback 到本地 summary
 5. 如果已有 frame evidence，则调用 server `/v1/tools/inspect`
@@ -430,9 +430,9 @@ Use retrieve to find candidate clips. Use inspect to understand a known clip or 
 1. 修改 `server/app/schemas/inspect.py`
 2. 修改 `server/app/services/inspect.py`
 3. 补 `server/tests/test_inspect_routes.py`
-4. 修改 `core/context.py`
-5. 检查 `core/schemas.py` 的 tool input 是否需要显式字段
-6. 修改 `core/agent.py` 与 `core/inspection.py`
+4. 修改 `core/application/context.py`
+5. 检查 `core/contracts/__init__.py` 的 tool input 是否需要显式字段
+6. 修改 `core/agent_runtime/agent.py` 与 `core/agent_runtime/inspection.py`
 7. 补 core 测试
 8. 手动在 `/docs` 验证 `/v1/tools/inspect` 出现 `describe` mode
 
@@ -491,13 +491,13 @@ Server 侧：
 
 Core 侧：
 
-1. `core/context.py:build_tool_capability_state`
+1. `core/application/context.py:build_tool_capability_state`
    - 看 planner 是否拿到新的 inspect 描述
-2. `core/context.py:build_planner_system_prompt`
+2. `core/application/context.py:build_planner_system_prompt`
    - 看 planner system prompt 是否解除 retrieve-first 限制
-3. `core/agent.py` 的 `tool_call.tool_name == "inspect"` 分支
+3. `core/agent_runtime/agent.py` 的 `tool_call.tool_name == "inspect"` 分支
    - 看 `tool_input.mode`、`clip_id`、`question` 是否被保留
-4. `core/inspection.py`
+4. `core/agent_runtime/inspection.py`
    - 看本地 fallback 或 server inspect 调用输入是否正确
 
 ## 12. 关键风险

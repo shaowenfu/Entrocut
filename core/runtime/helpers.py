@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from schemas import (
+from contracts import (
     AssetModel,
     AssetProcessingStage,
     AssetType,

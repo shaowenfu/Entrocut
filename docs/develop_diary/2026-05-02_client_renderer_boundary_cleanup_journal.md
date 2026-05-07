@@ -6,7 +6,7 @@
 
 1. `client/main` 是桌面宿主层，不负责 UI，也不负责核心业务；它负责窗口、IPC、文件选择、本地媒体协议、secure store、deep link、core 托管。
 2. `client/src` 是 Renderer 交互应用层，不只是页面渲染；它承担 UI、前端状态机、core API 适配、事件可视化。
-3. Agent 编排事实源应只在 `core`。`core/agent.py` 已经负责 planner context、planner 调用、tool gating、tool execution loop、runtime_state 回写与 `agent.step.updated` 广播。
+3. Agent 编排事实源应只在 `core`。`core/agent_runtime/agent.py` 已经负责 planner context、planner 调用、tool gating、tool execution loop、runtime_state 回写与 `agent.step.updated` 广播。
 4. `client/src/agent` 是旧的前端 agent runtime prototype（原型），继续保留会让人误以为 Renderer 可以绕过 core 自行编排 agent。
 5. `client/src/mocks` 已无生产引用，且与当前 core-backed client 状态不一致，保留只会干扰阅读。
 
@@ -56,7 +56,7 @@ npm run typecheck
 
 ## 后续注意
 
-1. 如果要新增 Agent 能力，应优先进入 `core/agent.py`、`core/context.py`、`core/schemas.py`，而不是恢复前端 agent runtime。
+1. 如果要新增 Agent 能力，应优先进入 `core/agent_runtime/agent.py`、`core/application/context.py`、`core/contracts/__init__.py`，而不是恢复前端 agent runtime。
 2. `client` 可以展示 `agent.step.updated`，但不应自行决定 planner 下一步或执行 tool。
 3. `selectionContext` 是 UI 交互状态，不是 Agent runtime state；它只用于构造 chat target。
 4. 如需保留演示数据，应放到明确的测试/fixture 目录，并避免被生产 README 描述为运行时能力。

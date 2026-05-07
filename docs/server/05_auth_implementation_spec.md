@@ -417,7 +417,7 @@ X-Request-ID: req_xxxxxxxxxxxx
    - 前端登录态编排
 6. `client/src/services/coreClient.ts`
    - `client -> core` 的 token sync 接口
-7. `core/server.py`
+7. `core/main.py`
    - 本地 auth session、`core -> server` chat 调用
 
 ## 12. 维护建议

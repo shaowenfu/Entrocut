@@ -26,7 +26,7 @@
 
 1. 前端原型 `UI`
 2. `Launchpad / Workspace` 的状态层
-3. 最小可运行的 `core/server.py` 和 `server/main.py`
+3. 最小可运行的 `core/main.py` 和 `server/main.py`
 4. 启动脚本和说明文档
 
 删除掉的是旧业务目录、旧测试、旧事件层、旧实验性脚本。
@@ -76,7 +76,7 @@
 
 随后实现层也对齐到了这套口径：
 
-1. `core/server.py` 不再围绕 `storyboard` 维护事实源，而是围绕 `edit_draft`
+1. `core/main.py` 不再围绕 `storyboard` 维护事实源，而是围绕 `edit_draft`
 2. `client` 端以 `edit_draft` 为真实事实源，再派生出当前 UI 还在消费的 `storyboard` 展示视图
 
 这一阶段的本质，不是“结构更复杂”，而是：
@@ -319,7 +319,7 @@
 
 问题出在 `core /api/v1/projects/{project_id}/chat`。
 
-前一轮继续往 `Core -> Server` 联调时，`core/server.py` 一度变成了：
+前一轮继续往 `Core -> Server` 联调时，`core/main.py` 一度变成了：
 
 1. 用户输入进入 `/chat`
 2. `core` 直接拿用户输入做 prompt

@@ -6,9 +6,9 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from config import APP_VERSION, CORE_MODE, REWRITE_PHASE, SERVER_BASE_URL
-from helpers import _now_iso
-from schemas import CoreApiError, RuntimeCapabilitiesResponse
-from store import store
+from application.store import store
+from contracts import CoreApiError, RuntimeCapabilitiesResponse
+from runtime.helpers import _now_iso
 
 router = APIRouter()
 

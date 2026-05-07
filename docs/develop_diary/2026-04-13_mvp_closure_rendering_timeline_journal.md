@@ -10,18 +10,18 @@
 ## 实施摘要
 
 ### 1) 渲染链路落地
-- 新增 `core/rendering.py`，把 `EditDraft.shots` 统一转换为 `RenderPlan`。
+- 新增 `core/media/rendering.py`，把 `EditDraft.shots` 统一转换为 `RenderPlan`。
 - `preview/export` 复用同一套分段渲染逻辑，避免两套实现分叉。
 - `store._run_export` 从占位文本文件切到真实渲染产物输出。
 
 ### 2) 检索与证据化 Inspect
-- 新增 `core/retrieval.py`，`retrieve` 改为调用 `server /v1/assets/retrieval`。
-- 新增 `core/inspection.py`，`inspect` 输出 clip + score + source range + summary。
+- 新增 `core/agent_runtime/retrieval.py`，`retrieve` 改为调用 `server /v1/assets/retrieval`。
+- 新增 `core/agent_runtime/inspection.py`，`inspect` 输出 clip + score + source range + summary。
 - runtime state 增加候选分数、已选候选与 inspect 摘要，便于后续 planner 复用。
 
 ### 3) Patch 正规化
 - 新增 `EditDraftPatchModel` 与 `PatchOperationModel`。
-- 新增 `core/patching.py`：所有草案修改收口为 `apply_edit_draft_patch(...)`。
+- 新增 `core/agent_runtime/patching.py`：所有草案修改收口为 `apply_edit_draft_patch(...)`。
 - `agent` 的 patch 工具不再直接拼接 `Shot/Scene`，而是生成并执行正式 patch。
 
 ### 4) 前端过程展示

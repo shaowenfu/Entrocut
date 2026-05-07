@@ -6,8 +6,8 @@ from typing import Any
 import httpx
 
 from config import SERVER_BASE_URL
-from ingestion import extract_and_stitch_frames
-from schemas import ClipModel, CoreApiError, EditDraftModel
+from contracts import ClipModel, CoreApiError, EditDraftModel
+from media.ingestion import extract_and_stitch_frames
 
 
 DEFAULT_DESCRIBE_QUESTION = (

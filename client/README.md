@@ -166,8 +166,8 @@ Electron Main Process
 
 Agent 编排事实源已经收敛到 `core`：
 
-- planner context（规划上下文）由 `core/context.py` 派生
-- planner/tool loop（规划与工具循环）由 `core/agent.py` 执行
+- planner context（规划上下文）由 `core/application/context.py` 派生
+- planner/tool loop（规划与工具循环）由 `core/agent_runtime/agent.py` 执行
 - `read / retrieve / inspect / patch / preview` 的 gating（能力门控）与执行在 `core`
 - `client` 只负责发送 chat、传递 selection target（选择目标）、展示 `agent.step.updated` 可视化事件
 

@@ -3,10 +3,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-try:
-    from core.storage import ensure_app_data_layout, project_workspace_dir, resolve_app_data_root
-except ModuleNotFoundError:
-    from storage import ensure_app_data_layout, project_workspace_dir, resolve_app_data_root
+from runtime.storage import ensure_app_data_layout, project_workspace_dir, resolve_app_data_root
 
 
 class WorkspaceManager:

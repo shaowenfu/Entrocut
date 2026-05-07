@@ -32,7 +32,7 @@
 2. 裁剪规则可解释
 3. 结构可测试
 4. 后续可继续演进
-5. 不把逻辑重新塞回 `server.py`
+5. 不把逻辑重新塞回 `main.py`
 
 ---
 
@@ -49,7 +49,7 @@
 
 你可以少量触碰这些部分，但不要主导其整体设计：
 
-1. `server.py` 中 `_build_planner_messages(...)` 的接线
+1. `main.py` 中 `_build_planner_messages(...)` 的接线
 2. `_run_chat_agent_loop(...)` 为传递 observation/scope 新增的少量字段
 
 你不应主导这些部分：
@@ -77,7 +77,7 @@
    - `build_working_memory_state`
    - `build_runtime_capabilities_state`
    - `build_trace_state`
-4. `server.py` 已通过该模块生成 `planner_input`
+4. `main.py` 已通过该模块生成 `planner_input`
 
 也就是说，你现在不是在“提新想法”，而是在已有模块化框架上把它做成正式可用层。
 
@@ -198,7 +198,7 @@
 2. 字段来源清楚
 3. 文本结构稳定
 
-哪怕部分内容仍需占位，也不要再回到 `server.py` 里写长字符串。
+哪怕部分内容仍需占位，也不要再回到 `main.py` 里写长字符串。
 
 ---
 
@@ -219,7 +219,7 @@
 代码入口优先看：
 
 1. [context_engineering.py](/home/sherwen/MyProjects/Entrocut/core/context_engineering.py)
-2. [server.py](/home/sherwen/MyProjects/Entrocut/core/server.py)
+2. [main.py](/home/sherwen/MyProjects/Entrocut/core/main.py)
 3. [test_server_toolchain_integration.py](/home/sherwen/MyProjects/Entrocut/core/tests/test_server_toolchain_integration.py)
 
 ---
@@ -236,7 +236,7 @@
 4. `tools` 注入测试，明确包含 `read`
 5. `memory` 构建测试
 6. `planner_input` 裁剪测试
-7. 至少一个和 `server.py` 接线的集成式测试
+7. 至少一个和 `main.py` 接线的集成式测试
 
 建议测试覆盖：
 
@@ -263,7 +263,7 @@
 1. 不要重写 `_run_chat_agent_loop(...)` 的整体控制流
 2. 如需新增字段，优先增量式追加，不做大规模字段更名
 3. 尽量把语义建模限制在 `context_engineering.py` 附近
-4. 如需修改 `server.py`，优先改接线而不是改业务流程
+4. 如需修改 `main.py`，优先改接线而不是改业务流程
 5. 保持当前 `PlannerDecisionModel` 外部契约稳定，除非有非常强的理由
 
 ---

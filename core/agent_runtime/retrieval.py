@@ -5,7 +5,7 @@ from typing import Any
 import httpx
 
 from config import SERVER_BASE_URL
-from schemas import CoreApiError, EditDraftModel
+from contracts import CoreApiError, EditDraftModel
 
 
 async def retrieve_candidates(

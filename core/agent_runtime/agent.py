@@ -13,7 +13,7 @@ from config import (
     SERVER_DEFAULT_PROVIDER,
     SERVER_CHAT_TIMEOUT_SECONDS,
 )
-from helpers import (
+from runtime.helpers import (
     _bump_draft,
     _chat_history_summary,
     _draft_summary,
@@ -24,11 +24,10 @@ from helpers import (
     _request_id,
     _trimmed,
 )
-from inspection import describe_clip_with_server, inspect_candidate, pick_clip_for_inspect
-from patching import apply_edit_draft_patch
-from rendering import build_render_plan, render_preview
-from retrieval import retrieve_candidates
-from schemas import (
+from agent_runtime.inspection import describe_clip_with_server, inspect_candidate, pick_clip_for_inspect
+from agent_runtime.patching import apply_edit_draft_patch
+from agent_runtime.retrieval import retrieve_candidates
+from contracts import (
     AgentLoopResultModel,
     ChatTarget,
     ClipModel,
@@ -41,22 +40,15 @@ from schemas import (
     ToolCallModel,
     ToolObservationModel,
 )
-from store import store
+from application.store import store
+from media.rendering import build_render_plan, render_preview
 
-try:
-    from core.context import (
-        build_goal_state,
-        build_planner_context_packet,
-        build_planner_system_prompt,
-        build_scope_state,
-    )
-except ModuleNotFoundError:
-    from context import (
-        build_goal_state,
-        build_planner_context_packet,
-        build_planner_system_prompt,
-        build_scope_state,
-    )
+from application.context import (
+    build_goal_state,
+    build_planner_context_packet,
+    build_planner_system_prompt,
+    build_scope_state,
+)
 
 
 async def _emit_agent_progress(

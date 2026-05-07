@@ -59,7 +59,7 @@
 
 ### 步骤 D：补全 Core 的路由协议闭环
 
-我在 `core/server.py` 做了 BYOK/Platform 两路打通：
+我在 `core/main.py` 做了 BYOK/Platform 两路打通：
 
 - Core 的 `/api/v1/projects/{project_id}/chat` 接收并识别 `X-Routing-Mode`；
 - `Platform` 模式继续走 EntroCut Server；

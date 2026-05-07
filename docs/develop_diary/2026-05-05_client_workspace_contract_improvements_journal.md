@@ -98,7 +98,7 @@
    - `POST /api/v1/projects/{project_id}/assets/{asset_id}:restore`
 3. `SQLite（嵌入式数据库）` assets 表补齐 lifecycle 与 vector state 字段。
 4. Workspace 默认只展示 active assets（活跃素材），提供 deleted assets（已删除素材）切换与 restore（恢复）按钮。
-5. `core/retrieval.py` 增加 `asset_state == "active"` filter（过滤器），并在本地二次过滤 deleted assets 的 clips。
+5. `core/agent_runtime/retrieval.py` 增加 `asset_state == "active"` filter（过滤器），并在本地二次过滤 deleted assets 的 clips。
 6. `server` 新增：
    - `POST /v1/assets/vector-index-state`
 7. vector docs（向量文档）写入时带上：
@@ -126,7 +126,7 @@
 3. `client -> core` 增加 headers：
    - `X-BYOK-Chat-Path`
    - `X-BYOK-Headers`
-4. `core/agent.py` 根据用户配置构造 endpoint。
+4. `core/agent_runtime/agent.py` 根据用户配置构造 endpoint。
 5. BYOK endpoint 增加基础安全校验：
    - 允许 `https`
    - `http` 仅允许 localhost development（本地开发）

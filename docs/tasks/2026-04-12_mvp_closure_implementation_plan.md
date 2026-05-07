@@ -198,24 +198,24 @@ preview 和 export 必须共用同一套 `render plan`。
 
 建议新增：
 
-1. `core/rendering.py`
+1. `core/media/rendering.py`
    - `render plan`
    - preview/export 渲染执行
-2. `core/retrieval.py`
+2. `core/agent_runtime/retrieval.py`
    - 调 `server /v1/assets/retrieval`
    - 结果标准化
-3. `core/inspection.py`
+3. `core/agent_runtime/inspection.py`
    - 候选证据读取与格式化
-4. `core/patching.py`
+4. `core/agent_runtime/patching.py`
    - `EditDraftPatch`
    - patch 应用逻辑
 
 重点改造：
 
-1. `core/agent.py`
-2. `core/store.py`
-3. `core/schemas.py`
-4. `core/context.py`
+1. `core/agent_runtime/agent.py`
+2. `core/application/store.py`
+3. `core/contracts/__init__.py`
+4. `core/application/context.py`
 
 ### 6.2 Server 侧改造模块
 
@@ -316,8 +316,8 @@ preview 和 export 必须共用同一套 `render plan`。
 
 建议落点：
 
-1. `core/schemas.py`
-2. `core/rendering.py`
+1. `core/contracts/__init__.py`
+2. `core/media/rendering.py`
 
 验收：
 
@@ -343,7 +343,7 @@ preview 和 export 必须共用同一套 `render plan`。
 
 建议落点：
 
-1. `core/rendering.py`
+1. `core/media/rendering.py`
 
 验收：
 
@@ -371,8 +371,8 @@ preview 和 export 必须共用同一套 `render plan`。
 
 建议落点：
 
-1. `core/schemas.py`
-2. `core/store.py`
+1. `core/contracts/__init__.py`
+2. `core/application/store.py`
 
 验收：
 
@@ -401,8 +401,8 @@ preview 和 export 必须共用同一套 `render plan`。
 
 建议落点：
 
-1. `core/store.py`
-2. `core/schemas.py`
+1. `core/application/store.py`
+2. `core/contracts/__init__.py`
 3. `client/src/services/coreClient.ts`
 
 验收：
@@ -413,9 +413,9 @@ preview 和 export 必须共用同一套 `render plan`。
 
 至少涉及：
 
-1. `core/schemas.py`
-2. `core/rendering.py`
-3. `core/store.py`
+1. `core/contracts/__init__.py`
+2. `core/media/rendering.py`
+3. `core/application/store.py`
 4. `client/src/services/coreClient.ts`
 5. `client/src/store/useWorkspaceStore.ts`
 6. `client/src/pages/WorkspacePage.tsx`
@@ -480,7 +480,7 @@ preview 和 export 必须共用同一套 `render plan`。
 
 1. `server/app/schemas/assets.py`
 2. `client/src/services/coreClient.ts`
-3. `core/retrieval.py`
+3. `core/agent_runtime/retrieval.py`
 
 ### 任务 2：实现 core retrieval executor
 
@@ -499,8 +499,8 @@ preview 和 export 必须共用同一套 `render plan`。
 
 建议落点：
 
-1. `core/retrieval.py`
-2. `core/agent.py`
+1. `core/agent_runtime/retrieval.py`
+2. `core/agent_runtime/agent.py`
 
 验收：
 
@@ -532,9 +532,9 @@ preview 和 export 必须共用同一套 `render plan`。
 
 建议落点：
 
-1. `core/inspection.py`
-2. `core/schemas.py`
-3. `core/agent.py`
+1. `core/agent_runtime/inspection.py`
+2. `core/contracts/__init__.py`
+3. `core/agent_runtime/agent.py`
 
 ### 任务 4：把 retrieval/inspect 写回 runtime_state
 
@@ -553,18 +553,18 @@ preview 和 export 必须共用同一套 `render plan`。
 
 建议落点：
 
-1. `core/schemas.py`
-2. `core/agent.py`
+1. `core/contracts/__init__.py`
+2. `core/agent_runtime/agent.py`
 
 ## 9.3 Phase 2 文件改动清单
 
 至少涉及：
 
-1. `core/schemas.py`
-2. `core/retrieval.py`
-3. `core/inspection.py`
-4. `core/agent.py`
-5. `core/context.py`
+1. `core/contracts/__init__.py`
+2. `core/agent_runtime/retrieval.py`
+3. `core/agent_runtime/inspection.py`
+4. `core/agent_runtime/agent.py`
+5. `core/application/context.py`
 6. `server/app/schemas/assets.py`
 7. `server/app/services/vector.py`
 8. `server/app/api/routes/assets.py`
@@ -615,7 +615,7 @@ preview 和 export 必须共用同一套 `render plan`。
 
 建议落点：
 
-1. `core/schemas.py`
+1. `core/contracts/__init__.py`
 
 ### 任务 2：实现统一 patch apply
 
@@ -636,7 +636,7 @@ preview 和 export 必须共用同一套 `render plan`。
 
 建议落点：
 
-1. `core/patching.py`
+1. `core/agent_runtime/patching.py`
 
 ### 任务 3：agent patch 工具改为生成或消费正式 patch
 
@@ -672,17 +672,17 @@ preview 和 export 必须共用同一套 `render plan`。
 
 建议落点：
 
-1. `core/context.py`
+1. `core/application/context.py`
 
 ## 10.3 Phase 3 文件改动清单
 
 至少涉及：
 
-1. `core/schemas.py`
-2. `core/patching.py`
-3. `core/agent.py`
-4. `core/context.py`
-5. `core/store.py`
+1. `core/contracts/__init__.py`
+2. `core/agent_runtime/patching.py`
+3. `core/agent_runtime/agent.py`
+4. `core/application/context.py`
+5. `core/application/store.py`
 
 ## 10.4 Phase 3 测试
 
@@ -734,8 +734,8 @@ preview 和 export 必须共用同一套 `render plan`。
 
 建议落点：
 
-1. `core/rendering.py`
-2. `core/store.py`
+1. `core/media/rendering.py`
+2. `core/application/store.py`
 
 ### 任务 2：定义 agent step 状态结构
 
@@ -756,8 +756,8 @@ preview 和 export 必须共用同一套 `render plan`。
 
 建议落点：
 
-1. `core/agent.py`
-2. `core/schemas.py`
+1. `core/agent_runtime/agent.py`
+2. `core/contracts/__init__.py`
 3. `client/src/services/coreClient.ts`
 
 ### 任务 3：前端消费 agent.step.updated
@@ -821,9 +821,9 @@ preview 和 export 必须共用同一套 `render plan`。
 
 至少涉及：
 
-1. `core/rendering.py`
-2. `core/store.py`
-3. `core/agent.py`
+1. `core/media/rendering.py`
+2. `core/application/store.py`
+3. `core/agent_runtime/agent.py`
 4. `client/src/services/coreClient.ts`
 5. `client/src/store/useWorkspaceStore.ts`
 6. `client/src/pages/WorkspacePage.tsx`
@@ -940,7 +940,7 @@ preview 和 export 必须共用同一套 `render plan`。
 
 ### 15.1 第一轮
 
-1. 建 `core/rendering.py`
+1. 建 `core/media/rendering.py`
 2. 定义 `RenderPlan`
 3. 打通 preview 真实渲染
 4. 前端能拿到 preview 并播放
@@ -948,14 +948,14 @@ preview 和 export 必须共用同一套 `render plan`。
 ### 15.2 第二轮
 
 1. 定义 retrieval 契约
-2. 实现 `core/retrieval.py`
+2. 实现 `core/agent_runtime/retrieval.py`
 3. 改造 `agent retrieve`
 4. 实现 inspection 输出
 
 ### 15.3 第三轮
 
 1. 定义 `EditDraftPatch`
-2. 实现 `core/patching.py`
+2. 实现 `core/agent_runtime/patching.py`
 3. 替换当前 patch 临时逻辑
 4. 接通 patch -> preview 回归验证
 
@@ -1084,7 +1084,7 @@ preview 和 export 必须共用同一套 `render plan`。
 
 本项目当前由三位工程师并行推进，请在开发时严格遵守以下边界，避免产生代码冲突：
 
-1. **你的专属领域**：`core/rendering.py`、`core/patching.py`、`core/retrieval.py`、`core/inspection.py` 等新增业务逻辑；以及前端的 Timeline 和 Preview 切换组件。
-2. **核心公共文件 `core/store.py`**：你只需关注任务调度（如新增 preview/export 的 TaskSlot）和事件广播。**绝对不要**修改项目创建 (`create_project`) 和素材导入 (`assets:import`) 的初始化逻辑，这部分由负责 Ingest 的工程师 C 处理。
-3. **核心公共文件 `core/schemas.py`**：你将新增 `RenderPlan`、`EditDraftPatch` 等结构。请直接在文件末尾或新建独立区块追加，不要修改现有的 `MediaReference` 等基础定义。
+1. **你的专属领域**：`core/media/rendering.py`、`core/agent_runtime/patching.py`、`core/agent_runtime/retrieval.py`、`core/agent_runtime/inspection.py` 等新增业务逻辑；以及前端的 Timeline 和 Preview 切换组件。
+2. **核心公共文件 `core/application/store.py`**：你只需关注任务调度（如新增 preview/export 的 TaskSlot）和事件广播。**绝对不要**修改项目创建 (`create_project`) 和素材导入 (`assets:import`) 的初始化逻辑，这部分由负责 Ingest 的工程师 C 处理。
+3. **核心公共文件 `core/contracts/__init__.py`**：你将新增 `RenderPlan`、`EditDraftPatch` 等结构。请直接在文件末尾或新建独立区块追加，不要修改现有的 `MediaReference` 等基础定义。
 4. **前端入口与生命周期**：前端最外层的 `isCoreReady` 状态和网络请求的 Base URL 动态获取由负责打包的工程师 B 负责，你只需关注内部业务组件的呈现。

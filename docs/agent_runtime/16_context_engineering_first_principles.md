@@ -60,7 +60,7 @@
 
 存储位置：
 
-1. [core/server.py](/home/sherwen/MyProjects/Entrocut/core/server.py) 中 `InMemoryProjectStore._projects`
+1. [core/main.py](/home/sherwen/MyProjects/Entrocut/core/main.py) 中 `InMemoryProjectStore._projects`
 
 当前数据变量：
 
@@ -89,7 +89,7 @@
 
 存储位置：
 
-1. [core/server.py](/home/sherwen/MyProjects/Entrocut/core/server.py) 中 `CoreAuthSessionStore`
+1. [core/main.py](/home/sherwen/MyProjects/Entrocut/core/main.py) 中 `CoreAuthSessionStore`
 
 当前数据变量：
 

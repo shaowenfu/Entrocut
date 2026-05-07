@@ -1,8 +1,8 @@
-# 拆分 core/server.py 为多模块结构
+# 拆分 core/main.py 为多模块结构
 
 ## Context
 
-`core/server.py` 当前约 1781 行，包含 FastAPI app 创建、配置、数据模型、工具函数、Agent 循环、Store 类、API 路由等所有逻辑。需要按 FastAPI 最佳实践拆分为独立模块，便于维护和阅读。
+`core/main.py` 当前约 1781 行，包含 FastAPI app 创建、配置、数据模型、工具函数、Agent 循环、Store 类、API 路由等所有逻辑。需要按 FastAPI 最佳实践拆分为独立模块，便于维护和阅读。
 
 **约束**：不改变任何业务逻辑，只做文件搬迁和 import 调整。
 
@@ -10,7 +10,7 @@
 
 ```
 core/
-├── server.py              # FastAPI app + middleware + error handlers + router 挂载 + re-export
+├── main.py              # FastAPI app + middleware + error handlers + router 挂载 + re-export
 ├── config.py              # 常量 + 环境变量 (~12 lines)
 ├── schemas.py             # 所有 Pydantic models + 类型别名 + CoreApiError (~250 lines)
 ├── helpers.py             # 所有工具函数 (~200 lines)
@@ -25,12 +25,12 @@ core/
 ├── local_state_repository.py # 不变
 ├── storage_paths.py       # 不变
 ├── workspace_manager.py   # 不变
-└── tests/                 # 测试文件无需修改（server.py re-export 保持兼容）
+└── tests/                 # 测试文件无需修改（main.py re-export 保持兼容）
 ```
 
 ## 各模块内容
 
-### 1. `config.py` — 从 server.py 提取 lines 20-27
+### 1. `config.py` — 从 main.py 提取 lines 20-27
 
 ```python
 import os
@@ -45,7 +45,7 @@ SERVER_CHAT_TIMEOUT_SECONDS = float(os.getenv("SERVER_CHAT_TIMEOUT_SECONDS", "30
 AGENT_LOOP_MAX_ITERATIONS = int(os.getenv("AGENT_LOOP_MAX_ITERATIONS", "3"))
 ```
 
-### 2. `schemas.py` — 从 server.py 提取 lines 45-311
+### 2. `schemas.py` — 从 main.py 提取 lines 45-311
 
 包含：
 - 所有 `Literal` 类型别名（ProjectWorkflowState, AssetType, TaskType 等）
@@ -55,7 +55,7 @@ AGENT_LOOP_MAX_ITERATIONS = int(os.getenv("AGENT_LOOP_MAX_ITERATIONS", "3"))
 
 依赖：仅 `pydantic` + `typing`（无项目内依赖）
 
-### 3. `helpers.py` — 从 server.py 提取 lines 313-529
+### 3. `helpers.py` — 从 main.py 提取 lines 313-529
 
 包含：
 - `_now_iso`, `_request_id`, `_entity_id`, `_trimmed`
@@ -67,7 +67,7 @@ AGENT_LOOP_MAX_ITERATIONS = int(os.getenv("AGENT_LOOP_MAX_ITERATIONS", "3"))
 
 依赖：`schemas.py`（使用 Pydantic model 类型）
 
-### 4. `agent.py` — 从 server.py 提取 lines 531-1007
+### 4. `agent_runtime/agent.py` — 从 main.py 提取 lines 531-1007
 
 包含：
 - `_emit_agent_progress`
@@ -79,9 +79,9 @@ AGENT_LOOP_MAX_ITERATIONS = int(os.getenv("AGENT_LOOP_MAX_ITERATIONS", "3"))
 - `_apply_tool_observation_to_draft_todo`
 - `_run_chat_agent_loop`
 
-依赖：`config.py`, `helpers.py`, `schemas.py`, `context_engineering.py`, `store.py`
+依赖：`config.py`, `helpers.py`, `schemas.py`, `context_engineering.py`, `application/store.py`
 
-### 5. `store.py` — 从 server.py 提取 lines 1010-1614
+### 5. `application/store.py` — 从 main.py 提取 lines 1010-1614
 
 包含：
 - `InMemoryProjectStore` 类（lines 1010-1538）
@@ -90,9 +90,9 @@ AGENT_LOOP_MAX_ITERATIONS = int(os.getenv("AGENT_LOOP_MAX_ITERATIONS", "3"))
 - 全局实例：`store`, `auth_session_store`（lines 1613-1614）
 
 依赖：`schemas.py`, `helpers.py`, `local_state_repository.py`, `workspace_manager.py`
-延迟导入：`agent.py`（在 `_run_chat` 方法内部 `from agent import _run_chat_agent_loop`）
+延迟导入：`agent_runtime/agent.py`（在 `_run_chat` 方法内部 `from agent_runtime.agent import _run_chat_agent_loop`）
 
-### 6. `routers/projects.py` — 从 server.py 提取项目相关路由
+### 6. `routers/projects.py` — 从 main.py 提取项目相关路由
 
 路由：
 - `GET /api/v1/projects`
@@ -102,17 +102,17 @@ AGENT_LOOP_MAX_ITERATIONS = int(os.getenv("AGENT_LOOP_MAX_ITERATIONS", "3"))
 - `POST /api/v1/projects/{project_id}/chat`
 - `POST /api/v1/projects/{project_id}/export`
 
-依赖：`store.py`, `schemas.py`
+依赖：`application/store.py`, `schemas.py`
 
-### 7. `routers/auth.py` — 从 server.py 提取认证路由
+### 7. `routers/auth.py` — 从 main.py 提取认证路由
 
 路由：
 - `POST /api/v1/auth/session`
 - `DELETE /api/v1/auth/session`
 
-依赖：`store.py`, `schemas.py`
+依赖：`application/store.py`, `schemas.py`
 
-### 8. `routers/system.py` — 从 server.py 提取系统/元路由
+### 8. `routers/system.py` — 从 main.py 提取系统/元路由
 
 路由：
 - `GET /`
@@ -120,7 +120,7 @@ AGENT_LOOP_MAX_ITERATIONS = int(os.getenv("AGENT_LOOP_MAX_ITERATIONS", "3"))
 - `GET /api/v1/runtime/capabilities`
 - `WebSocket /api/v1/projects/{project_id}/events`
 
-依赖：`store.py`, `schemas.py`, `config.py`
+依赖：`application/store.py`, `schemas.py`, `config.py`
 
 ### 9. `routers/__init__.py`
 
@@ -136,7 +136,7 @@ api_router.include_router(auth_router)
 api_router.include_router(system_router)
 ```
 
-### 10. `server.py`（瘦身后的入口文件）
+### 10. `main.py`（瘦身后的入口文件）
 
 保留：
 - FastAPI app 创建
@@ -147,55 +147,55 @@ api_router.include_router(system_router)
 - **Re-export**（保持测试兼容）：
 
 ```python
-from store import store, auth_session_store, InMemoryProjectStore, CoreAuthSessionStore
+from application.store import store, auth_session_store, InMemoryProjectStore, CoreAuthSessionStore
 from config import AGENT_LOOP_MAX_ITERATIONS
 ```
 
 ## 模块依赖关系
 
 ```
-config.py ← schemas.py ← helpers.py ← agent.py ← store.py ← server.py
+config.py ← schemas.py ← helpers.py ← agent.py ← store.py ← main.py
                                           ↑              ↓ (lazy import)
                                           └──────────────┘
 routers/*.py → store.py, schemas.py, config.py
-server.py → routers, store.py, schemas.py, config.py
+main.py → routers, store.py, schemas.py, config.py
 ```
 
-**循环依赖处理**：`store.py` ↔ `agent.py`
-- `store.py` 在 `_run_chat()` 方法内使用延迟导入：`from agent import _run_chat_agent_loop`
-- `agent.py` 在顶层导入：`from store import store`（store.py 先于 agent.py 加载）
+**循环依赖处理**：`application/store.py` ↔ `agent_runtime/agent.py`
+- `application/store.py` 在 `_run_chat()` 方法内使用延迟导入：`from agent_runtime.agent import _run_chat_agent_loop`
+- `agent_runtime/agent.py` 在顶层导入：`from application.store import store`（store.py 先于 agent.py 加载）
 
 ## 加载顺序保证
 
-1. `server.py` 启动 → 导入 `store.py` → store.py 加载完成，创建全局实例
-2. `server.py` → 导入 `routers/` → routers 导入 store（已加载）✓
-3. 运行时 `store._run_chat()` → 延迟导入 `agent.py` → agent.py 导入 store（已加载）✓
+1. `main.py` 启动 → 导入 `application/store.py` → store.py 加载完成，创建全局实例
+2. `main.py` → 导入 `routers/` → routers 导入 store（已加载）✓
+3. 运行时 `store._run_chat()` → 延迟导入 `agent_runtime/agent.py` → agent.py 导入 store（已加载）✓
 
 ## 测试兼容性
 
-测试文件 `test_server_toolchain_integration.py` 通过 importlib 动态加载 server.py，并引用：
-- `core_server.app` → server.py 中的 app ✓
-- `core_server.store` → server.py re-export from store.py ✓
-- `core_server.auth_session_store` → server.py re-export ✓
-- `core_server.InMemoryProjectStore` → server.py re-export ✓
-- `core_server.CoreAuthSessionStore` → server.py re-export ✓
-- `core_server.AGENT_LOOP_MAX_ITERATIONS` → server.py re-export ✓
+测试文件 `test_server_toolchain_integration.py` 通过 importlib 动态加载 main.py，并引用：
+- `core_server.app` → main.py 中的 app ✓
+- `core_server.store` → main.py re-export from store.py ✓
+- `core_server.auth_session_store` → main.py re-export ✓
+- `core_server.InMemoryProjectStore` → main.py re-export ✓
+- `core_server.CoreAuthSessionStore` → main.py re-export ✓
+- `core_server.AGENT_LOOP_MAX_ITERATIONS` → main.py re-export ✓
 
 测试文件**无需修改**。
 
 ## 执行步骤
 
 1. 创建 `core/config.py`，写入配置常量
-2. 创建 `core/schemas.py`，写入所有模型和类型定义
-3. 创建 `core/helpers.py`，写入所有工具函数
-4. 创建 `core/agent.py`，写入 Agent 循环相关函数
-5. 创建 `core/store.py`，写入 Store 类和全局实例（使用延迟导入解决循环依赖）
-6. 创建 `core/routers/` 目录及 `__init__.py`, `projects.py`, `auth.py`, `system.py`
-7. 重写 `core/server.py` 为精简入口文件
+2. 创建 `core/contracts/__init__.py`，写入所有模型和类型定义
+3. 创建 `core/runtime/helpers.py`，写入所有工具函数
+4. 创建 `core/agent_runtime/agent.py`，写入 Agent 循环相关函数
+5. 创建 `core/application/store.py`，写入 Store 类和全局实例（使用延迟导入解决循环依赖）
+6. 创建 `core/api/routers/` 目录及 `__init__.py`, `projects.py`, `auth.py`, `system.py`
+7. 重写 `core/main.py` 为精简入口文件
 8. 运行测试验证：`cd core && python -m pytest tests/ -v`
 
 ## 验证方式
 
-1. 启动服务：`cd core && uvicorn server:app --port 8000` 确认无 import 错误
+1. 启动服务：`cd core && uvicorn main:app --port 8000` 确认无 import 错误
 2. 运行集成测试：`cd core && python -m pytest tests/test_server_toolchain_integration.py -v`
 3. 检查 `/health` 端点响应正常

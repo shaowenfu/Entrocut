@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
-from schemas import CoreAuthSessionRequest, CoreAuthSessionResponse
-from store import auth_session_store
+from application.store import auth_session_store
+from contracts import CoreAuthSessionRequest, CoreAuthSessionResponse
 
 router = APIRouter()
 

@@ -35,7 +35,7 @@
 仍保留的兼容层：
 
 1. `SQLite` 物理表中仍保留 `workflow_state` 列
-2. `core/state.py` 仍通过 `_legacy_workflow_state` 做内部兼容持久化
+2. `core/persistence/state.py` 仍通过 `_legacy_workflow_state` 做内部兼容持久化
 3. `WorkspaceSnapshot.active_task` 仍保留为便利兼容字段
 
 ---
@@ -51,7 +51,7 @@
 5. 是否正在导出
 6. 是否发生过失败
 
-当前枚举见 [core/schemas.py](/home/sherwen/MyProjects/Entrocut/core/schemas.py)：
+当前枚举见 [core/contracts/__init__.py](/home/sherwen/MyProjects/Entrocut/core/contracts/__init__.py)：
 
 1. `prompt_input_required`
 2. `awaiting_media`
