@@ -1,5 +1,7 @@
 # EntroCut
 
+[English](README_EN.md) | [简体中文](README.md)
+
 `EntroCut` 是一个早期阶段的 `Chat-to-Cut（对话到剪辑）` 开源探索项目。它尝试把视频剪辑从“手动操作时间线”推进到“用自然语言持续收敛剪辑草案”：
 
 ```text
