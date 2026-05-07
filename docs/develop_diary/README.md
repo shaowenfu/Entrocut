@@ -36,6 +36,7 @@
 22. [2026-05-02 Client Renderer 边界收口记录](./2026-05-02_client_renderer_boundary_cleanup_journal.md)
 23. [2026-05-05 Client Workspace 契约修复与能力补齐日志](./2026-05-05_client_workspace_contract_improvements_journal.md)
 24. [2026-05-06 Inspect Describe Mode 落地日记](./2026-05-06_inspect_describe_mode_journal.md)
+25. [2026-05-07 Agent Chat UI 集成验收与收尾日记](./2026-05-07_agent_chat_ui_integration_cleanup_journal.md)
 
 ## 当前这组日记主要覆盖的主题
 
@@ -53,6 +54,7 @@
 12. `client` 端 Renderer/Main/Core 职责边界收口，删除前端 agent prototype 与 mock 数据
 13. Workspace 上传、素材 lifecycle、quota、runtime model registry 与 BYOK 请求配置的跨层契约修复
 14. `Inspect describe mode`，让文本 `Agent` 能把 `Inspect` 当作视觉理解工具调用
+15. `Agent Chat UI` 生产集成、执行步骤折叠流、真实 artifact 绑定与沙盒脚手架清理
 
 ## 命名约定
 

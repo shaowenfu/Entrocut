@@ -1,9 +1,18 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import {
   AlertCircle,
   ArrowLeft,
   Check,
   ChevronRight,
+  ChevronDown,
   Download,
   Film,
   FolderUp,
@@ -18,7 +27,10 @@ import {
   Play,
   RefreshCw,
   Scissors,
+  Search,
+  ScanSearch,
   Send,
+  Settings,
   Settings2,
   Sparkles,
   Tag,
@@ -27,6 +39,7 @@ import {
   Upload,
   Wand2,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import AccountMenu from "../components/account/AccountMenu";
 import { BrandIcon } from "../components/icons/BrandIcon";
@@ -35,6 +48,7 @@ import {
   toDesktopMediaFileReferences,
   type MediaPickMode,
 } from "../services/electronBridge";
+import type { CoreAgentStepItem } from "../services/coreClient";
 import {
   createThumbnailFromMediaUrl,
   getProjectMediaSource,
@@ -69,10 +83,6 @@ const SUGGESTION_CHIPS = [
   "Make pacing slightly slower",
 ];
 
-
-function isDecisionTurn(turn: ChatTurn): turn is AssistantDecisionTurn {
-  return turn.role === "assistant";
-}
 
 interface EmptyMediaGuidanceProps {
   onUploadClick: (mode?: MediaPickMode) => void;
@@ -137,6 +147,269 @@ function formatOperation(op: AssistantDecisionTurn["ops"][number]): string {
     parts.push(`summary=${op.summary}`);
   }
   return parts.join(" | ");
+}
+
+function getIconForPhase(phase: string) {
+  const p = phase.toLowerCase();
+  if (p.includes("retriev") || p.includes("search")) return Search;
+  if (p.includes("inspect")) return ScanSearch;
+  if (p.includes("patch") || p.includes("edit") || p.includes("cut")) return Scissors;
+  return Settings;
+}
+
+type AgentStepStatus = "loading" | "success" | "error";
+
+function getStringDetail(details: Record<string, unknown>, key: string): string | null {
+  const value = details[key];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function getBooleanDetail(details: Record<string, unknown>, key: string): boolean | null {
+  const value = details[key];
+  return typeof value === "boolean" ? value : null;
+}
+
+function getToolNameForStep(step: CoreAgentStepItem): string | null {
+  const fromDetails = getStringDetail(step.details, "tool_name");
+  if (fromDetails) {
+    return fromDetails;
+  }
+  const phase = step.phase.toLowerCase();
+  if (phase.includes("retriev")) return "retrieve";
+  if (phase.includes("inspect")) return "inspect";
+  if (phase.includes("patch") || phase.includes("edit")) return "patch";
+  if (phase.includes("preview")) return "preview";
+  return null;
+}
+
+function getAgentStepStatus(step: CoreAgentStepItem, isLastStep: boolean, isThinking: boolean): AgentStepStatus {
+  const rawStatus = typeof step.status === "string" ? step.status.toLowerCase() : "";
+  const successDetail = getBooleanDetail(step.details, "success");
+  if (rawStatus === "failed" || rawStatus === "error" || successDetail === false) {
+    return "error";
+  }
+  if (rawStatus === "success" || rawStatus === "succeeded" || rawStatus === "complete" || successDetail === true) {
+    return "success";
+  }
+  if (rawStatus === "running" || rawStatus === "pending" || rawStatus === "queued") {
+    return "loading";
+  }
+  return isThinking && isLastStep ? "loading" : "success";
+}
+
+function getAgentStepTitle(step: CoreAgentStepItem): string {
+  const toolName = getToolNameForStep(step);
+  const toolInputSummary = getStringDetail(step.details, "tool_input_summary");
+  if (toolInputSummary && toolName) {
+    return `${toolName}: ${toolInputSummary}`;
+  }
+  return step.summary || step.phase;
+}
+
+function getAgentStepSummary(step: CoreAgentStepItem, status: AgentStepStatus): string {
+  const prefix = status === "error" ? "Failed" : status === "loading" ? "Running" : "Done";
+  return `${prefix}: ${step.summary || step.phase}`;
+}
+
+function getAgentStepKey(step: CoreAgentStepItem, index: number): string {
+  return `${getAgentStepSignature(step)}:${index}`;
+}
+
+function getAgentStepSignature(step: CoreAgentStepItem): string {
+  const toolName = getToolNameForStep(step) ?? "step";
+  const details = formatAgentDetailValue(step.details);
+  return [
+    step.emitted_at,
+    step.iteration,
+    step.phase,
+    toolName,
+    step.summary,
+    details,
+  ].filter((part) => part !== undefined && part !== null && String(part).length > 0).join(":");
+}
+
+function formatAgentDetailValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function UserMessageView({ text }: { text: string }) {
+  return (
+    <div className="chat-row chat-row-user">
+      <div className="chat-bubble">{text}</div>
+    </div>
+  );
+}
+
+function AgentFinalMessageView({ turn }: { turn: AssistantDecisionTurn }) {
+  return (
+    <article className="decision-card">
+      <header>
+        <Sparkles size={14} />
+        <span>AI DECISION</span>
+      </header>
+      <div className="decision-content">
+        <p>{turn.reasoning_summary}</p>
+        {turn.ops.length > 0 ? (
+          <div className="decision-ops">
+            {turn.ops.map((op) => (
+              <div key={op.id || `${op.action}_${op.target}_${op.summary}`} className="decision-op">
+                <span />
+                <code>{formatOperation(op)}</code>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
+function AgentStepItem({
+  status,
+  title,
+  summary,
+  icon: Icon,
+  children,
+}: {
+  status: AgentStepStatus;
+  title: string;
+  summary: string;
+  icon: LucideIcon;
+  children?: ReactNode;
+}) {
+  const [isExpanded, setIsExpanded] = useState(status === "loading" || status === "error");
+  const [manualOverride, setManualOverride] = useState(false);
+
+  useEffect(() => {
+    if (manualOverride) {
+      return;
+    }
+    if (status === "loading" || status === "error") {
+      setIsExpanded(true);
+      return;
+    }
+    const timer = window.setTimeout(() => setIsExpanded(false), 1200);
+    return () => window.clearTimeout(timer);
+  }, [manualOverride, status]);
+
+  const StatusIcon = status === "loading" ? Loader2 : status === "error" ? AlertCircle : Icon;
+
+  return (
+    <section className={`agent-step agent-step-${status} ${isExpanded ? "expanded" : "collapsed"}`}>
+      <button
+        type="button"
+        className="agent-step-header"
+        onClick={() => {
+          setManualOverride(true);
+          setIsExpanded((current) => !current);
+        }}
+        aria-expanded={isExpanded}
+      >
+        <span className={`agent-step-icon ${status}`}>
+          <StatusIcon size={14} />
+        </span>
+        <span className="step-title">{isExpanded ? title : summary}</span>
+        <ChevronDown size={14} className="step-chevron" />
+      </button>
+
+      <div className={`agent-step-content-wrapper ${isExpanded ? "expanded" : "collapsed"}`}>
+        <div className="agent-step-content-inner">
+          <div className="agent-step-content">{children}</div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function AgentStepArtifact({
+  step,
+  clips,
+  onClipSelect,
+}: {
+  step: CoreAgentStepItem;
+  clips: ReturnType<typeof useWorkspaceStore.getState>["clips"];
+  onClipSelect: (clipId: string) => void;
+}) {
+  const toolName = getToolNameForStep(step);
+  const details = step.details ?? {};
+  const candidateClipIds = Array.isArray(details.candidate_clip_ids)
+    ? details.candidate_clip_ids.filter((item): item is string => typeof item === "string")
+    : [];
+  const matchedClips = candidateClipIds
+    .map((clipId) => clips.find((clip) => clip.id === clipId))
+    .filter((clip): clip is (typeof clips)[number] => Boolean(clip));
+
+  if (toolName === "retrieve" && matchedClips.length > 0) {
+    return (
+      <div className="agent-artifact agent-retrieve-artifact">
+        {matchedClips.slice(0, 4).map((clip) => (
+          <button key={clip.id} type="button" className="agent-clip-match" onClick={() => onClipSelect(clip.id)}>
+            <span className={`agent-clip-thumb ${clip.thumbClass}`} />
+            <span className="agent-clip-copy">
+              <strong>{clip.parent}</strong>
+              <small>{clip.start} - {clip.end} · Match {clip.score}</small>
+            </span>
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  if (toolName === "inspect") {
+    const inspectionSummary = getStringDetail(details, "inspection_summary") ?? getStringDetail(details, "summary");
+    return inspectionSummary ? (
+      <div className="agent-artifact agent-inspect-artifact">
+        <ScanSearch size={13} />
+        <span>{inspectionSummary}</span>
+      </div>
+    ) : null;
+  }
+
+  if (toolName === "patch") {
+    const draftVersion = details.draft_version;
+    const clipId = getStringDetail(details, "clip_id");
+    return clipId || draftVersion ? (
+      <div className="agent-artifact agent-patch-artifact">
+        <Scissors size={13} />
+        <span>
+          {clipId ? `clip=${clipId}` : "draft patched"}
+          {draftVersion ? ` · draft_version=${formatAgentDetailValue(draftVersion)}` : ""}
+        </span>
+      </div>
+    ) : null;
+  }
+
+  const visibleDetails = Object.entries(details)
+    .filter(([key]) => key !== "candidate_clip_ids")
+    .slice(0, 4);
+
+  if (visibleDetails.length === 0) {
+    return null;
+  }
+
+  return (
+    <dl className="agent-artifact agent-detail-list">
+      {visibleDetails.map(([key, value]) => (
+        <div key={key}>
+          <dt>{key}</dt>
+          <dd>{formatAgentDetailValue(value)}</dd>
+        </div>
+      ))}
+    </dl>
+  );
 }
 
 function extractDroppedFiles(event: DragEvent<HTMLDivElement>): File[] {
@@ -335,6 +608,20 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const selectedAssetSourceMissing = Boolean(
     selectedAsset?.sourcePath && missingMediaAssetIds.has(selectedAsset.id)
   );
+  const visibleAgentSteps = useMemo(() => {
+    const seen = new Set<string>();
+    return agentSteps.filter((step) => {
+      const signature = getAgentStepSignature(step);
+      if (seen.has(signature)) {
+        return false;
+      }
+      seen.add(signature);
+      return true;
+    });
+  }, [agentSteps]);
+  const latestChatTurn = chatTurns[chatTurns.length - 1] ?? null;
+  const shouldShowAgentSteps =
+    visibleAgentSteps.length > 0 && (isThinking || latestChatTurn?.role !== "assistant");
 
   const previewDurationSec = useMemo(() => {
     if (selectedClip) {
@@ -694,6 +981,16 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     setHighlightItem(sceneId);
     void index;
     setPreviewSelection({ kind: "scene", sceneId });
+    setCurrentTimeSec(0);
+    setIsPlaying(true);
+  }
+
+  function handleAgentClipSelect(clipId: string) {
+    const clip = clips.find((item) => item.id === clipId);
+    if (!clip) {
+      return;
+    }
+    setPreviewSelection({ kind: "clip", clipId });
     setCurrentTimeSec(0);
     setIsPlaying(true);
   }
@@ -1276,46 +1573,39 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
           </div>
 
           <div className="chat-thread">
-            
-              <div className="agent-timeline">
-                <h4>Agent Timeline</h4>
-                {agentSteps.length === 0 ? <p className="timeline-empty">等待执行步骤...</p> : null}
-                {agentSteps.map((step, idx) => (
-                  <div key={`${step.phase}-${idx}`} className="timeline-item">
-                    <strong>{step.phase}</strong> · {step.summary}
-                  </div>
-                ))}
-              </div>
-{chatTurns.map((turn) => (
-              <div key={turn.id} className={turn.role === "user" ? "chat-row chat-row-user" : "chat-row"}>
+            {/* 1. Historical Turns */}
+            {chatTurns.map((turn) => (
+              <div key={turn.id} className={turn.role === "user" ? "chat-turn-user" : "chat-turn-assistant"}>
                 {turn.role === "user" ? (
-                  <div className="chat-bubble">{turn.content}</div>
+                  <UserMessageView text={turn.content} />
                 ) : (
-                  <article className="decision-card">
-                    <header>
-                      <Sparkles size={14} />
-                      <span>AI DECISION</span>
-                    </header>
-                    {isDecisionTurn(turn) ? (
-                      <div className="decision-content">
-                        <p>{turn.reasoning_summary}</p>
-                        <div className="decision-ops">
-                          {turn.ops.map((op) => (
-                            <div
-                              key={`${op.action}_${op.target}_${op.summary}`}
-                              className="decision-op"
-                            >
-                              <span />
-                              <code>{formatOperation(op)}</code>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                  </article>
+                  <AgentFinalMessageView turn={turn as AssistantDecisionTurn} />
                 )}
               </div>
             ))}
+
+            {/* 2. Active Execution Block */}
+            {shouldShowAgentSteps ? (
+              <div className="agent-execution-block">
+                {visibleAgentSteps.map((step, idx) => {
+                  const isLastStep = idx === visibleAgentSteps.length - 1;
+                  const status = getAgentStepStatus(step, isLastStep, isThinking);
+                  const Icon = getIconForPhase(getToolNameForStep(step) ?? step.phase);
+
+                  return (
+                    <AgentStepItem
+                      key={getAgentStepKey(step, idx)}
+                      status={status}
+                      title={getAgentStepTitle(step)}
+                      summary={getAgentStepSummary(step, status)}
+                      icon={Icon}
+                    >
+                      <AgentStepArtifact step={step} clips={clips} onClipSelect={handleAgentClipSelect} />
+                    </AgentStepItem>
+                  );
+                })}
+              </div>
+            ) : null}
 
             {isMediaProcessing ? (
               <div className="thinking-box">
@@ -1324,7 +1614,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
               </div>
             ) : null}
 
-            {isThinking ? (
+            {isThinking && (!shouldShowAgentSteps || visibleAgentSteps.length === 0) ? (
               <div className="thinking-box">
                 <Loader2 size={16} />
                 <span>Analyzing footage and generating edit...</span>

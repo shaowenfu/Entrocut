@@ -1038,6 +1038,234 @@ textarea {
   font-size: 11px;
 }
 
+/* 当前 Agent 执行步骤。 */
+.agent-execution-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-step {
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+}
+
+.agent-step-header {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.agent-step-header:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.agent-step-header:focus-visible {
+  outline: 2px solid rgba(120, 132, 255, 0.72);
+  outline-offset: -2px;
+}
+
+.agent-step-icon {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.agent-step-icon.loading {
+  color: #96a3ff;
+}
+
+.agent-step-icon.loading svg {
+  animation: spin 1.1s linear infinite;
+}
+
+.agent-step-icon.success {
+  color: #44de8a;
+}
+
+.agent-step-icon.error {
+  color: #f87171;
+}
+
+.agent-step .step-title {
+  flex: 1;
+  min-width: 0;
+  color: #d8def7;
+  font-size: 12.5px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-step.collapsed .step-title {
+  color: var(--text-muted);
+}
+
+.agent-step .step-chevron {
+  color: #747b91;
+  flex-shrink: 0;
+  transition: transform 0.22s ease;
+}
+
+.agent-step.expanded .step-chevron {
+  transform: rotate(180deg);
+}
+
+.agent-step-content-wrapper {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.28s ease;
+}
+
+.agent-step-content-wrapper.expanded {
+  grid-template-rows: 1fr;
+}
+
+.agent-step-content-inner {
+  overflow: hidden;
+}
+
+.agent-step-content {
+  padding: 0 10px 10px 36px;
+  color: #aeb6d3;
+  font-size: 12px;
+  line-height: 1.45;
+  opacity: 0;
+  transform: translateY(-3px);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.agent-step-content-wrapper.expanded .agent-step-content {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.agent-artifact {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.agent-retrieve-artifact {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  border: 0;
+  background: transparent;
+}
+
+.agent-clip-match {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  color: #dce1f4;
+  padding: 6px;
+  display: flex;
+  gap: 7px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.agent-clip-match:hover {
+  border-color: rgba(117, 131, 255, 0.42);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.agent-clip-match:focus-visible {
+  outline: 2px solid rgba(120, 132, 255, 0.72);
+  outline-offset: 2px;
+}
+
+.agent-clip-thumb {
+  width: 34px;
+  height: 28px;
+  border-radius: 5px;
+  flex-shrink: 0;
+}
+
+.agent-clip-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-clip-copy strong,
+.agent-clip-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-clip-copy strong {
+  font-size: 11px;
+  color: #e0e5fb;
+}
+
+.agent-clip-copy small {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.agent-inspect-artifact,
+.agent-patch-artifact {
+  padding: 8px 9px;
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.agent-inspect-artifact svg,
+.agent-patch-artifact svg {
+  margin-top: 1px;
+  color: #8ca8f7;
+  flex-shrink: 0;
+}
+
+.agent-detail-list {
+  margin: 0;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.agent-detail-list div {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.agent-detail-list dt {
+  color: #8f95ab;
+  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+  font-size: 10px;
+}
+
+.agent-detail-list dd {
+  margin: 0;
+  min-width: 0;
+  color: #dce1f4;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Agent 思考中提示。 */
 .thinking-box {
   border: 1px dashed rgba(132, 142, 198, 0.46);
@@ -1133,6 +1361,19 @@ textarea {
 .composer-wrap button:disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-step-icon.loading svg,
+  .thinking-box svg {
+    animation: none;
+  }
+
+  .agent-step .step-chevron,
+  .agent-step-content-wrapper,
+  .agent-step-content {
+    transition: none;
+  }
 }
 
 /* 右侧预览和 storyboard 主列。 */
