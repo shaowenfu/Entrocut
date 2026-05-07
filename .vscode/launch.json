@@ -9,7 +9,7 @@
       "module": "uvicorn",
       "cwd": "${workspaceFolder}/core",
       "args": [
-        "server:app",
+        "main:app",
         "--host",
         "127.0.0.1",
         "--port",

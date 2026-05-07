@@ -581,19 +581,23 @@ textarea {
   color: #d5dcf7;
 }
 
-/* 媒体资产卡片网格。 */
-.asset-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+/* 媒体资产语义列表。 */
+.asset-list {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
 }
 
 /* 单个媒体资产卡片。 */
 .asset-card {
   border: 1px solid var(--line-subtle);
-  border-radius: 10px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.03);
-  padding: 6px;
+  padding: 7px;
+  min-height: 82px;
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 9px;
   cursor: pointer;
   transition: background 0.2s ease, border-color 0.2s ease;
 }
@@ -615,9 +619,10 @@ textarea {
 
 .asset-card-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 5px;
-  margin: -2px 0 5px;
+  margin: 0;
 }
 
 .asset-card-action {
@@ -646,13 +651,14 @@ textarea {
 /* 媒体缩略图容器。 */
 .asset-thumb {
   aspect-ratio: 16 / 9;
-  border-radius: 8px;
+  width: 104px;
+  border-radius: 7px;
   background: rgba(0, 0, 0, 0.42);
   color: rgba(255, 255, 255, 0.26);
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 7px;
+  margin-bottom: 0;
   position: relative;
   overflow: hidden;
 }
@@ -707,13 +713,118 @@ textarea {
   font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
 }
 
+.asset-alias-badge {
+  position: absolute;
+  left: 5px;
+  top: 5px;
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: rgba(8, 12, 22, 0.84);
+  color: #dce6ff;
+  border: 1px solid rgba(147, 173, 255, 0.46);
+  font-size: 10px;
+  line-height: 1;
+  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+  letter-spacing: 0;
+  z-index: 2;
+}
+
+.asset-card-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.asset-card-title-row {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+}
+
 .asset-card p {
   margin: 0;
-  font-size: 11px;
-  color: #9da4bc;
+  min-width: 0;
+  font-size: 12px;
+  color: #d4daed;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.asset-state-badge {
+  flex-shrink: 0;
+  border-radius: 999px;
+  padding: 2px 6px;
+  font-size: 9px;
+  color: #9ba3bd;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  text-transform: capitalize;
+}
+
+.asset-state-badge.ready {
+  color: #7ce1b2;
+  border-color: rgba(124, 225, 178, 0.24);
+  background: rgba(124, 225, 178, 0.1);
+}
+
+.asset-state-badge.failed {
+  color: #f2a7a7;
+  border-color: rgba(242, 167, 167, 0.28);
+  background: rgba(242, 167, 167, 0.1);
+}
+
+.asset-state-badge.processing {
+  color: #8fc0ff;
+  border-color: rgba(143, 192, 255, 0.24);
+  background: rgba(143, 192, 255, 0.1);
+}
+
+.asset-card-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  color: #858ea8;
+  font-size: 10px;
+  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+}
+
+.asset-card-stats span {
+  border-radius: 5px;
+  padding: 2px 5px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.asset-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.asset-inline-action {
+  border: 1px solid rgba(113, 216, 245, 0.22);
+  border-radius: 7px;
+  background: rgba(113, 216, 245, 0.08);
+  color: #92d8ef;
+  height: 24px;
+  padding: 0 7px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.asset-inline-action:hover:not(:disabled) {
+  border-color: rgba(113, 216, 245, 0.42);
+  background: rgba(113, 216, 245, 0.14);
+}
+
+.asset-inline-action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* 空资产提示卡片占满整行。 */
@@ -726,22 +837,66 @@ textarea {
   line-height: 1.45;
 }
 
-/* 片段列表容器。 */
-.clip-list {
+/* 片段浏览器。 */
+.clip-browser {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+}
+
+.clip-filter-bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 2px;
+  background: rgba(12, 13, 18, 0.9);
+  backdrop-filter: blur(10px);
+}
+
+.clip-filter-bar button {
+  border: 1px solid var(--line-subtle);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #9ba3ba;
+  height: 24px;
+  padding: 0 8px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.clip-filter-bar button.is-active,
+.clip-filter-bar button:hover {
+  color: #dce4fb;
+  border-color: rgba(113, 216, 245, 0.34);
+  background: rgba(113, 216, 245, 0.11);
+}
+
+.clip-filter-context {
+  min-width: 0;
+  flex: 1;
+  color: #858fa8;
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.clip-masonry {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+  gap: 7px;
 }
 
 /* 单个片段卡片。 */
 .clip-card {
   border: 1px solid var(--line-subtle);
-  border-radius: 10px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.03);
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  padding: 3px;
+  min-width: 0;
   cursor: pointer;
   transition: border-color 0.2s ease, background 0.2s ease;
 }
@@ -751,57 +906,21 @@ textarea {
   background: rgba(255, 255, 255, 0.05);
 }
 
+.clip-card:focus-visible {
+  outline: 2px solid rgba(120, 132, 255, 0.72);
+  outline-offset: 2px;
+}
+
 .clip-card.is-active {
   border-color: rgba(104, 180, 255, 0.54);
   background: rgba(53, 94, 201, 0.14);
 }
 
-/* 片段头部：父素材和分数。 */
-.clip-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-/* 片段来源素材标识。 */
-.clip-parent {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: #8f95ab;
-  font-size: 10px;
-  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
-}
-
-/* 片段评分徽标。 */
-.clip-score {
-  padding: 2px 7px;
-  border-radius: 999px;
-  font-size: 10px;
-  color: #71d8f5;
-  border: 1px solid rgba(113, 216, 245, 0.28);
-  background: rgba(113, 216, 245, 0.12);
-  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
-}
-
-/* 片段时间范围。 */
-.clip-range {
-  font-size: 10px;
-  color: var(--text-muted);
-  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
-}
-
-/* 片段主体：缩略图和描述。 */
-.clip-body {
-  display: flex;
-  gap: 8px;
-}
-
 /* 片段缩略图容器。 */
 .clip-thumb {
-  width: 56px;
+  width: 100%;
   aspect-ratio: 16 / 9;
-  border-radius: 7px;
+  border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   position: relative;
   flex-shrink: 0;
@@ -820,12 +939,28 @@ textarea {
 
 .clip-thumb span {
   position: absolute;
-  inset-inline: 0;
-  bottom: 0;
-  text-align: center;
+  left: 3px;
+  bottom: 3px;
   font-size: 8px;
-  padding: 2px 0;
-  background: rgba(0, 0, 0, 0.6);
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.62);
+  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+}
+
+.clip-thumb strong {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  max-width: calc(100% - 6px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-radius: 999px;
+  padding: 1px 5px;
+  background: rgba(7, 13, 20, 0.72);
+  border: 1px solid rgba(113, 216, 245, 0.24);
+  color: #8ee6ff;
+  font-size: 8px;
   font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
 }
 
@@ -846,7 +981,15 @@ textarea {
   background: rgba(17, 84, 98, 0.8);
 }
 
-.clip-body p {
+.clip-empty-state {
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-height: 120px;
+  color: #8e96ad;
+}
+
+.clip-empty-state p {
   margin: 0;
   color: #9ba2bc;
   font-size: 11px;
@@ -913,22 +1056,20 @@ textarea {
   color: #7a6aff;
 }
 
+.cutroom-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  object-fit: cover;
+  border: 1px solid rgba(186, 197, 255, 0.22);
+  box-shadow: 0 6px 16px rgba(91, 98, 226, 0.22);
+}
+
 .copilot-header h2 span {
   background: linear-gradient(110deg, #8290ff, #67dbf5);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-}
-
-/* 当前 session 标识。 */
-.session-badge {
-  font-size: 10px;
-  color: var(--text-faint);
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid var(--line-subtle);
-  border-radius: 999px;
-  padding: 3px 8px;
-  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
 }
 
 /* 聊天消息滚动区。 */
@@ -1038,11 +1179,21 @@ textarea {
   font-size: 11px;
 }
 
+.chat-turn-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 /* 当前 Agent 执行步骤。 */
 .agent-execution-block {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.agent-execution-block-finalized {
+  opacity: 0.92;
 }
 
 .agent-step {
@@ -1153,6 +1304,44 @@ textarea {
   transform: translateY(0);
 }
 
+.agent-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.agent-step-body p {
+  margin: 0;
+  color: #b8c0da;
+}
+
+.agent-tool-line {
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid rgba(132, 142, 198, 0.22);
+  border-radius: 999px;
+  background: rgba(132, 142, 198, 0.08);
+  padding: 3px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #cfd6f4;
+  font-size: 10.5px;
+}
+
+.agent-tool-line span {
+  color: #8f95ab;
+  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+  text-transform: uppercase;
+}
+
+.agent-tool-line strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .agent-artifact {
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 9px;
@@ -1221,51 +1410,6 @@ textarea {
   color: var(--text-muted);
 }
 
-.agent-inspect-artifact,
-.agent-patch-artifact {
-  padding: 8px 9px;
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
-}
-
-.agent-inspect-artifact svg,
-.agent-patch-artifact svg {
-  margin-top: 1px;
-  color: #8ca8f7;
-  flex-shrink: 0;
-}
-
-.agent-detail-list {
-  margin: 0;
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.agent-detail-list div {
-  display: grid;
-  grid-template-columns: 92px minmax(0, 1fr);
-  gap: 8px;
-}
-
-.agent-detail-list dt {
-  color: #8f95ab;
-  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
-  font-size: 10px;
-}
-
-.agent-detail-list dd {
-  margin: 0;
-  min-width: 0;
-  color: #dce1f4;
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* Agent 思考中提示。 */
 .thinking-box {
   border: 1px dashed rgba(132, 142, 198, 0.46);
@@ -1290,6 +1434,26 @@ textarea {
   display: flex;
   gap: 8px;
   overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(130, 141, 182, 0.26) transparent;
+}
+
+.suggestion-row::-webkit-scrollbar {
+  height: 7px;
+}
+
+.suggestion-row::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.suggestion-row::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(130, 141, 182, 0.22);
+  border: 2px solid rgba(10, 10, 14, 0.9);
+}
+
+.suggestion-row::-webkit-scrollbar-thumb:hover {
+  background: rgba(154, 166, 214, 0.36);
 }
 
 .suggestion-row button {
@@ -1318,6 +1482,101 @@ textarea {
   border-top: 1px solid var(--line-subtle);
   padding: 10px;
   position: relative;
+}
+
+.mention-menu {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: calc(100% - 2px);
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid rgba(142, 154, 216, 0.22);
+  border-radius: 10px;
+  padding: 6px;
+  background: rgba(14, 15, 22, 0.98);
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.34);
+}
+
+.mention-menu button {
+  position: static;
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #dce2f5;
+  padding: 5px;
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 8px;
+  text-align: left;
+}
+
+.mention-menu button:hover,
+.mention-menu button.is-active {
+  border-color: rgba(113, 216, 245, 0.28);
+  background: rgba(113, 216, 245, 0.1);
+}
+
+.mention-thumb {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  min-width: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.46);
+  color: #8892ad;
+}
+
+.mention-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.mention-thumb strong {
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  border-radius: 4px;
+  padding: 1px 4px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #e1e7ff;
+  font-size: 9px;
+  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+}
+
+.mention-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+}
+
+.mention-meta span,
+.mention-meta small {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.mention-meta span {
+  font-size: 12px;
+  color: #dce2f4;
+}
+
+.mention-meta small {
+  font-size: 10px;
+  color: #858fa8;
 }
 
 .composer-wrap textarea {
@@ -1361,6 +1620,31 @@ textarea {
 .composer-wrap button:disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+
+.composer-wrap .mention-menu button {
+  position: static;
+  right: auto;
+  bottom: auto;
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #dce2f5;
+  padding: 5px;
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 8px;
+  text-align: left;
+  opacity: 1;
+}
+
+.composer-wrap .mention-menu button:hover,
+.composer-wrap .mention-menu button.is-active {
+  border-color: rgba(113, 216, 245, 0.28);
+  background: rgba(113, 216, 245, 0.1);
+  color: #f2f6ff;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1788,6 +2072,25 @@ textarea {
   font-size: 10px;
   font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
   background: rgba(255, 255, 255, 0.02);
+}
+
+.storyboard-empty-state {
+  flex: 1 0 100%;
+  min-width: 100%;
+  min-height: 138px;
+  border-radius: 10px;
+  background:
+    linear-gradient(135deg, rgba(113, 216, 245, 0.08), rgba(130, 144, 255, 0.05)),
+    rgba(255, 255, 255, 0.025);
+}
+
+.storyboard-empty-state small {
+  max-width: 220px;
+  color: rgba(216, 224, 246, 0.48);
+  font-family: "Sora", "MiSans", sans-serif;
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: center;
 }
 
 /* 场景背景色变体。 */
@@ -2229,6 +2532,14 @@ textarea {
   pointer-events: none;
 }
 
+.recent-cover-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 /* Launchpad 缩略图背景变体。 */
 .launch-thumb-cyan {
   background: linear-gradient(145deg, #085277, #11295f);
@@ -2275,7 +2586,15 @@ textarea {
 }
 
 /* 最近项目卡片右上角操作按钮。 */
-.recent-thumb button {
+.recent-thumb-actions {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.recent-thumb button,
+.recent-thumb-actions label {
   border: 0;
   width: 28px;
   height: 28px;
@@ -2290,7 +2609,12 @@ textarea {
   transition: opacity 0.2s ease;
 }
 
-.recent-card:hover .recent-thumb button {
+.recent-thumb-actions label input {
+  display: none;
+}
+
+.recent-card:hover .recent-thumb button,
+.recent-card:hover .recent-thumb-actions label {
   opacity: 1;
 }
 

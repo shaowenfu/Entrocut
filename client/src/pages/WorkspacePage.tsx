@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type DragEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
@@ -21,7 +22,6 @@ import {
   Layers,
   ListVideo,
   Loader2,
-  MessageSquare,
   Pause,
   Pencil,
   Play,
@@ -33,7 +33,6 @@ import {
   Settings,
   Settings2,
   Sparkles,
-  Tag,
   Trash2,
   Undo2,
   Upload,
@@ -54,11 +53,12 @@ import {
   getProjectMediaSource,
   registerProjectPersistedMediaSources,
 } from "../services/localMediaRegistry";
-import { getOrCreateSessionId } from "../utils/session";
 import {
   useWorkspaceStore,
   type AssistantDecisionTurn,
   type ChatTurn,
+  type WorkspaceAssetItem,
+  type WorkspaceClipItem,
 } from "../store/useWorkspaceStore";
 import { useAuthStore } from "../store/useAuthStore";
 
@@ -75,6 +75,21 @@ type PreviewSelection =
   | { kind: "clip"; clipId: string }
   | { kind: "scene"; sceneId: string }
   | null;
+type ClipCardRefs = Record<string, HTMLElement | null>;
+type AssetAliasMap = Map<string, string>;
+
+interface AssetMentionOption {
+  asset: WorkspaceAssetItem;
+  alias: string;
+  thumbnailUrl?: string;
+}
+
+interface MentionQuery {
+  trigger: "@" | "#";
+  query: string;
+  start: number;
+  end: number;
+}
 
 const SUGGESTION_CHIPS = [
   "Generate rough cut",
@@ -82,6 +97,8 @@ const SUGGESTION_CHIPS = [
   "Replace scene 2 with a cleaner close-up",
   "Make pacing slightly slower",
 ];
+
+const CUTROOM_ICON_SRC = "/entrocut-cutroom-icon.png";
 
 
 interface EmptyMediaGuidanceProps {
@@ -138,19 +155,9 @@ function formatTimecode(seconds: number): string {
     .padStart(2, "0")}:${secs.toString().padStart(2, "0")}:00`;
 }
 
-function formatOperation(op: AssistantDecisionTurn["ops"][number]): string {
-  const parts = [op.action];
-  if (op.target) {
-    parts.push(`target=${op.target}`);
-  }
-  if (op.summary) {
-    parts.push(`summary=${op.summary}`);
-  }
-  return parts.join(" | ");
-}
-
 function getIconForPhase(phase: string) {
   const p = phase.toLowerCase();
+  if (p.includes("decision")) return Sparkles;
   if (p.includes("retriev") || p.includes("search")) return Search;
   if (p.includes("inspect")) return ScanSearch;
   if (p.includes("patch") || p.includes("edit") || p.includes("cut")) return Scissors;
@@ -158,6 +165,19 @@ function getIconForPhase(phase: string) {
 }
 
 type AgentStepStatus = "loading" | "success" | "error";
+type AgentDisplayKind = "decision" | "tool_call" | "tool_result";
+type ToolName = "retrieve" | "inspect" | "patch" | "preview" | "read" | string;
+
+interface AgentDisplayStep {
+  id: string;
+  kind: AgentDisplayKind;
+  status: AgentStepStatus;
+  title: string;
+  summary: string;
+  body?: string;
+  toolName?: ToolName;
+  clipIds: string[];
+}
 
 function getStringDetail(details: Record<string, unknown>, key: string): string | null {
   const value = details[key];
@@ -182,6 +202,83 @@ function getToolNameForStep(step: CoreAgentStepItem): string | null {
   return null;
 }
 
+function getToolLabel(toolName?: string | null): string {
+  switch (toolName) {
+    case "retrieve":
+      return "Retrieve";
+    case "inspect":
+      return "Inspect";
+    case "patch":
+      return "Patch";
+    case "preview":
+      return "Preview";
+    case "read":
+      return "Read";
+    default:
+      return toolName ? toolName : "Tool";
+  }
+}
+
+function getToolActionLabel(toolName?: string | null): string {
+  switch (toolName) {
+    case "retrieve":
+      return "检索候选片段";
+    case "inspect":
+      return "检查候选片段";
+    case "patch":
+      return "写入剪辑草案";
+    case "preview":
+      return "生成草案预览";
+    case "read":
+      return "读取当前草案";
+    default:
+      return "执行工具";
+  }
+}
+
+function getToolDecisionText(
+  toolName?: string | null,
+  context: { assetCount?: number; clipCount?: number } = {}
+): string {
+  switch (toolName) {
+    case "retrieve":
+      if ((context.assetCount ?? 0) > 0 || (context.clipCount ?? 0) > 0) {
+        return `我看到当前项目里有 ${context.assetCount ?? 0} 个素材、${context.clipCount ?? 0} 个可检索片段，会先从这些内容里找候选镜头。`;
+      }
+      return "我会先从素材库里检索和这次剪辑目标相关的候选片段。";
+    case "inspect":
+      return "我会检查候选片段的画面质量，确认它是否适合当前剪辑意图。";
+    case "patch":
+      return "我已经有了可用候选片段，接下来会把它写入当前剪辑草案。";
+    case "preview":
+      return "我会生成一版草案预览，方便你直接查看当前结果。";
+    case "read":
+      return "我会先读取当前草案状态，确认已有结构和可修改范围。";
+    default:
+      return "我已经确定下一步操作，会调用合适的工具继续推进。";
+  }
+}
+
+function getToolResultText(toolName?: string | null, clipCount = 0, success = true): string {
+  if (!success) {
+    return `${getToolLabel(toolName)} 没有成功完成，我会保留这一步供你查看。`;
+  }
+  switch (toolName) {
+    case "retrieve":
+      return clipCount > 0 ? `Retrieve 找到了 ${clipCount} 个候选片段。` : "Retrieve 已完成候选片段检索。";
+    case "inspect":
+      return "Inspect 已完成候选片段检查。";
+    case "patch":
+      return "Patch 已把选定内容写入剪辑草案。";
+    case "preview":
+      return "Preview 已生成草案预览。";
+    case "read":
+      return "Read 已读取当前草案状态。";
+    default:
+      return `${getToolLabel(toolName)} 已完成。`;
+  }
+}
+
 function getAgentStepStatus(step: CoreAgentStepItem, isLastStep: boolean, isThinking: boolean): AgentStepStatus {
   const rawStatus = typeof step.status === "string" ? step.status.toLowerCase() : "";
   const successDetail = getBooleanDetail(step.details, "success");
@@ -195,20 +292,6 @@ function getAgentStepStatus(step: CoreAgentStepItem, isLastStep: boolean, isThin
     return "loading";
   }
   return isThinking && isLastStep ? "loading" : "success";
-}
-
-function getAgentStepTitle(step: CoreAgentStepItem): string {
-  const toolName = getToolNameForStep(step);
-  const toolInputSummary = getStringDetail(step.details, "tool_input_summary");
-  if (toolInputSummary && toolName) {
-    return `${toolName}: ${toolInputSummary}`;
-  }
-  return step.summary || step.phase;
-}
-
-function getAgentStepSummary(step: CoreAgentStepItem, status: AgentStepStatus): string {
-  const prefix = status === "error" ? "Failed" : status === "loading" ? "Running" : "Done";
-  return `${prefix}: ${step.summary || step.phase}`;
 }
 
 function getAgentStepKey(step: CoreAgentStepItem, index: number): string {
@@ -245,6 +328,140 @@ function formatAgentDetailValue(value: unknown): string {
   }
 }
 
+function collectClipIdsFromValue(value: unknown, ids: Set<string>, keyHint = "") {
+  if (typeof value === "string") {
+    const key = keyHint.toLowerCase();
+    if (
+      key === "clip_id" ||
+      key === "selected_candidate_id" ||
+      key.endsWith("_clip_id") ||
+      key.endsWith("clip_id")
+    ) {
+      ids.add(value);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectClipIdsFromValue(item, ids, keyHint);
+    }
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      const normalized = key.toLowerCase();
+      if (
+        Array.isArray(nested) &&
+        (normalized === "clip_ids" ||
+          normalized === "candidate_clip_ids" ||
+          normalized === "matched_clip_ids" ||
+          normalized.endsWith("_clip_ids"))
+      ) {
+        for (const item of nested) {
+          if (typeof item === "string") {
+            ids.add(item);
+          } else {
+            collectClipIdsFromValue(item, ids, key);
+          }
+        }
+        continue;
+      }
+      collectClipIdsFromValue(nested, ids, key);
+    }
+  }
+}
+
+function extractClipIdsFromStep(step: CoreAgentStepItem, fallbackClipIds: string[], allowFallback: boolean): string[] {
+  const ids = new Set<string>();
+  collectClipIdsFromValue(step.details, ids);
+  const toolName = getToolNameForStep(step);
+  if (allowFallback && (toolName === "retrieve" || toolName === "inspect") && ids.size === 0) {
+    for (const clipId of fallbackClipIds) {
+      ids.add(clipId);
+    }
+  }
+  return Array.from(ids);
+}
+
+function buildAgentDisplaySteps({
+  steps,
+  isThinking,
+  fallbackClipIds,
+  assetCount,
+  clipCount,
+}: {
+  steps: CoreAgentStepItem[];
+  isThinking: boolean;
+  fallbackClipIds: string[];
+  assetCount: number;
+  clipCount: number;
+}): AgentDisplayStep[] {
+  const seen = new Set<string>();
+  const deduped = steps.filter((step) => {
+    const signature = getAgentStepSignature(step);
+    if (seen.has(signature)) {
+      return false;
+    }
+    seen.add(signature);
+    return true;
+  });
+  const displaySteps: AgentDisplayStep[] = [];
+
+  deduped.forEach((step, index) => {
+    const phase = step.phase.toLowerCase();
+    const toolName = getToolNameForStep(step);
+    const isLastStep = index === deduped.length - 1;
+    const status = getAgentStepStatus(step, isLastStep, isThinking);
+    const success = status !== "error";
+    const clipIds = extractClipIdsFromStep(step, fallbackClipIds, phase === "tool_observation_recorded");
+    const toolInputSummary = getStringDetail(step.details, "tool_input_summary");
+    const id = getAgentStepKey(step, index);
+
+    if (phase === "planner_decision_received" && toolName) {
+      displaySteps.push({
+        id,
+        kind: "decision",
+        status,
+        title: `决定${getToolActionLabel(toolName)}`,
+        summary: `决定${getToolActionLabel(toolName)}`,
+        body: getToolDecisionText(toolName, { assetCount, clipCount }),
+        toolName,
+        clipIds,
+      });
+      return;
+    }
+
+    if (phase === "tool_execution_requested" && toolName) {
+      displaySteps.push({
+        id,
+        kind: "tool_call",
+        status,
+        title: `调用 ${getToolLabel(toolName)}：${getToolActionLabel(toolName)}`,
+        summary: `调用 ${getToolLabel(toolName)}`,
+        body: toolInputSummary ?? getToolDecisionText(toolName, { assetCount, clipCount }),
+        toolName,
+        clipIds,
+      });
+      return;
+    }
+
+    if (phase === "tool_observation_recorded" && toolName) {
+      displaySteps.push({
+        id,
+        kind: "tool_result",
+        status,
+        title: `${getToolLabel(toolName)} 返回结果`,
+        summary: `${getToolLabel(toolName)} 返回结果`,
+        body: getToolResultText(toolName, clipIds.length, success),
+        toolName,
+        clipIds,
+      });
+    }
+  });
+
+  return displaySteps;
+}
+
 function UserMessageView({ text }: { text: string }) {
   return (
     <div className="chat-row chat-row-user">
@@ -253,25 +470,29 @@ function UserMessageView({ text }: { text: string }) {
   );
 }
 
+function sanitizeFinalAssistantMessage(summary: string): string {
+  return summary
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => {
+      if (!line) {
+        return false;
+      }
+      if (line === "AI DECISION") {
+        return false;
+      }
+      return !/^(planner_|agent_tool_|no_edit_draft_|tool_|draft_)/i.test(line);
+    })
+    .join("\n");
+}
+
 function AgentFinalMessageView({ turn }: { turn: AssistantDecisionTurn }) {
+  const finalMessage = sanitizeFinalAssistantMessage(turn.reasoning_summary);
+
   return (
     <article className="decision-card">
-      <header>
-        <Sparkles size={14} />
-        <span>AI DECISION</span>
-      </header>
       <div className="decision-content">
-        <p>{turn.reasoning_summary}</p>
-        {turn.ops.length > 0 ? (
-          <div className="decision-ops">
-            {turn.ops.map((op) => (
-              <div key={op.id || `${op.action}_${op.target}_${op.summary}`} className="decision-op">
-                <span />
-                <code>{formatOperation(op)}</code>
-              </div>
-            ))}
-          </div>
-        ) : null}
+        <p>{finalMessage || "我已经完成这轮分析，等待你的下一步指令。"}</p>
       </div>
     </article>
   );
@@ -282,12 +503,14 @@ function AgentStepItem({
   title,
   summary,
   icon: Icon,
+  finalized,
   children,
 }: {
   status: AgentStepStatus;
   title: string;
   summary: string;
   icon: LucideIcon;
+  finalized: boolean;
   children?: ReactNode;
 }) {
   const [isExpanded, setIsExpanded] = useState(status === "loading" || status === "error");
@@ -297,13 +520,17 @@ function AgentStepItem({
     if (manualOverride) {
       return;
     }
+    if (finalized) {
+      setIsExpanded(false);
+      return;
+    }
     if (status === "loading" || status === "error") {
       setIsExpanded(true);
       return;
     }
     const timer = window.setTimeout(() => setIsExpanded(false), 1200);
     return () => window.clearTimeout(timer);
-  }, [manualOverride, status]);
+  }, [finalized, manualOverride, status]);
 
   const StatusIcon = status === "loading" ? Loader2 : status === "error" ? AlertCircle : Icon;
 
@@ -335,80 +562,41 @@ function AgentStepItem({
 }
 
 function AgentStepArtifact({
-  step,
+  displayStep,
   clips,
   onClipSelect,
 }: {
-  step: CoreAgentStepItem;
-  clips: ReturnType<typeof useWorkspaceStore.getState>["clips"];
+  displayStep: AgentDisplayStep;
+  clips: WorkspaceClipItem[];
   onClipSelect: (clipId: string) => void;
 }) {
-  const toolName = getToolNameForStep(step);
-  const details = step.details ?? {};
-  const candidateClipIds = Array.isArray(details.candidate_clip_ids)
-    ? details.candidate_clip_ids.filter((item): item is string => typeof item === "string")
-    : [];
-  const matchedClips = candidateClipIds
+  const matchedClips = displayStep.clipIds
     .map((clipId) => clips.find((clip) => clip.id === clipId))
     .filter((clip): clip is (typeof clips)[number] => Boolean(clip));
 
-  if (toolName === "retrieve" && matchedClips.length > 0) {
-    return (
-      <div className="agent-artifact agent-retrieve-artifact">
-        {matchedClips.slice(0, 4).map((clip) => (
-          <button key={clip.id} type="button" className="agent-clip-match" onClick={() => onClipSelect(clip.id)}>
-            <span className={`agent-clip-thumb ${clip.thumbClass}`} />
-            <span className="agent-clip-copy">
-              <strong>{clip.parent}</strong>
-              <small>{clip.start} - {clip.end} · Match {clip.score}</small>
-            </span>
-          </button>
-        ))}
-      </div>
-    );
-  }
-
-  if (toolName === "inspect") {
-    const inspectionSummary = getStringDetail(details, "inspection_summary") ?? getStringDetail(details, "summary");
-    return inspectionSummary ? (
-      <div className="agent-artifact agent-inspect-artifact">
-        <ScanSearch size={13} />
-        <span>{inspectionSummary}</span>
-      </div>
-    ) : null;
-  }
-
-  if (toolName === "patch") {
-    const draftVersion = details.draft_version;
-    const clipId = getStringDetail(details, "clip_id");
-    return clipId || draftVersion ? (
-      <div className="agent-artifact agent-patch-artifact">
-        <Scissors size={13} />
-        <span>
-          {clipId ? `clip=${clipId}` : "draft patched"}
-          {draftVersion ? ` · draft_version=${formatAgentDetailValue(draftVersion)}` : ""}
-        </span>
-      </div>
-    ) : null;
-  }
-
-  const visibleDetails = Object.entries(details)
-    .filter(([key]) => key !== "candidate_clip_ids")
-    .slice(0, 4);
-
-  if (visibleDetails.length === 0) {
-    return null;
-  }
-
   return (
-    <dl className="agent-artifact agent-detail-list">
-      {visibleDetails.map(([key, value]) => (
-        <div key={key}>
-          <dt>{key}</dt>
-          <dd>{formatAgentDetailValue(value)}</dd>
+    <div className="agent-step-body">
+      {displayStep.body ? <p>{displayStep.body}</p> : null}
+      {displayStep.toolName ? (
+        <div className="agent-tool-line">
+          <span>Tool</span>
+          <strong>{getToolLabel(displayStep.toolName)}</strong>
         </div>
-      ))}
-    </dl>
+      ) : null}
+      {matchedClips.length > 0 ? (
+        <div className="agent-artifact agent-retrieve-artifact">
+          {matchedClips.slice(0, 4).map((clip) => (
+            <button key={clip.id} type="button" className="agent-clip-match" onClick={() => onClipSelect(clip.id)}>
+              <span className={`agent-clip-thumb ${clip.thumbClass}`} />
+              <span className="agent-clip-copy">
+                <strong>{clip.parent}</strong>
+                <small>{clip.start} - {clip.end} · {formatClipScore(clip.score)}</small>
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -431,10 +619,101 @@ function parseClipTimeSeconds(time: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function buildAssetAliases(assets: WorkspaceAssetItem[]): AssetAliasMap {
+  return new Map(assets.map((asset, index) => [asset.id, `#A${index + 1}`]));
+}
+
+function getAssetAlias(assetAliases: AssetAliasMap, assetId: string): string {
+  return assetAliases.get(assetId) ?? "#A?";
+}
+
+function getMentionQuery(text: string, caretIndex: number): MentionQuery | null {
+  const prefix = text.slice(0, caretIndex);
+  const match = prefix.match(/(^|\s)([@#][\w.\-\u4e00-\u9fa5]*)$/u);
+  if (!match) {
+    return null;
+  }
+  const token = match[2];
+  if (!token) {
+    return null;
+  }
+  const start = caretIndex - token.length;
+  return {
+    trigger: token[0] as "@" | "#",
+    query: token.slice(1).toLowerCase(),
+    start,
+    end: caretIndex,
+  };
+}
+
+function replaceMentionQuery(text: string, mentionQuery: MentionQuery, alias: string): string {
+  const suffix = text.slice(mentionQuery.end);
+  const needsSpace = suffix.length === 0 || !/^\s/.test(suffix);
+  return `${text.slice(0, mentionQuery.start)}${alias}${needsSpace ? " " : ""}${suffix}`;
+}
+
+function buildMentionOptions(
+  assets: WorkspaceAssetItem[],
+  assetAliases: AssetAliasMap,
+  thumbnailUrls: Record<string, string>,
+  mentionQuery: MentionQuery | null
+): AssetMentionOption[] {
+  if (!mentionQuery) {
+    return [];
+  }
+  const query = mentionQuery.query.trim().toLowerCase();
+  return assets
+    .filter((asset) => asset.lifecycleState !== "deleted")
+    .map((asset) => ({
+      asset,
+      alias: getAssetAlias(assetAliases, asset.id),
+      thumbnailUrl: thumbnailUrls[asset.id],
+    }))
+    .filter((option) => {
+      if (!query) {
+        return true;
+      }
+      const alias = option.alias.toLowerCase().replace("#", "");
+      const name = option.asset.name.toLowerCase();
+      return mentionQuery.trigger === "#"
+        ? alias.includes(query) || option.alias.toLowerCase().includes(query)
+        : name.includes(query) || alias.includes(query);
+    })
+    .slice(0, 8);
+}
+
+function enhancePromptWithAssetReferences(
+  prompt: string,
+  assets: WorkspaceAssetItem[],
+  assetAliases: AssetAliasMap
+): string {
+  const references = assets
+    .map((asset) => ({ asset, alias: getAssetAlias(assetAliases, asset.id) }))
+    .filter(({ alias }) => prompt.includes(alias));
+  if (references.length === 0) {
+    return prompt;
+  }
+  const referenceLines = references.map(
+    ({ asset, alias }) =>
+      `${alias} = ${asset.name} (asset_id=${asset.id}, duration=${asset.duration}, clips=${asset.clipCount}, indexed=${asset.indexedClipCount})`
+  );
+  return `${prompt}\n\nReferenced assets:\n${referenceLines.join("\n")}`;
+}
+
+function formatClipScore(score: string): string {
+  if (!score || score === "n/a") {
+    return "Indexed";
+  }
+  return `${score}%`;
+}
+
 function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: WorkspacePageProps) {
-  const [sessionId] = useState(() => getOrCreateSessionId(workspaceId));
   const [promptText, setPromptText] = useState("");
+  const [composerCaretIndex, setComposerCaretIndex] = useState(0);
+  const [isMentionMenuDismissed, setIsMentionMenuDismissed] = useState(false);
   const [mediaTab, setMediaTab] = useState<MediaTab>("clips");
+  const [clipAssetFilterId, setClipAssetFilterId] = useState<string | null>(null);
+  const [mentionActiveIndex, setMentionActiveIndex] = useState(0);
   const [highlightItem, setHighlightItem] = useState("");
   const [leftWidth, setLeftWidth] = useState(280);
   const [midWidth, setMidWidth] = useState(400);
@@ -451,6 +730,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const [isAssetDropHovering, setIsAssetDropHovering] = useState(false);
   const [isAssetPickerOpen, setIsAssetPickerOpen] = useState(false);
   const [showDeletedAssets, setShowDeletedAssets] = useState(false);
+  const [agentStepHistoryByAssistantId, setAgentStepHistoryByAssistantId] = useState<Record<string, AgentDisplayStep[]>>({});
 
   const assets = useWorkspaceStore((state) => state.assets);
   const clips = useWorkspaceStore((state) => state.clips);
@@ -492,8 +772,10 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
 
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const latestAssistantIdRef = useRef<string | null>(null);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const scrubberTrackRef = useRef<HTMLDivElement | null>(null);
+  const clipCardRefs = useRef<ClipCardRefs>({});
   const [platformCustomModelSelected, setPlatformCustomModelSelected] = useState(false);
   const [byokCustomModelSelected, setByokCustomModelSelected] = useState(false);
   const [isRenamingProject, setIsRenamingProject] = useState(false);
@@ -519,7 +801,6 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
         (platformCustomModelActive ? modelPrefs.platformCustomModel.trim() : selectedPlatformModel?.available)
     );
   const safeTotalDurationSec = Math.max(1, totalDurationSec);
-  const sessionLabel = `Session #${sessionId.slice(-8).toUpperCase()}`;
   const projectTitle = typeof currentProject?.title === "string" ? currentProject.title : workspaceName;
   const isElectron = useMemo(() => isElectronEnvironment(), []);
   const mediaTask = activeTasks.find((task) => task.slot === "media") ?? null;
@@ -569,6 +850,24 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     () => assets.filter((asset) => (showDeletedAssets ? asset.lifecycleState === "deleted" : asset.lifecycleState !== "deleted")),
     [assets, showDeletedAssets]
   );
+  const assetAliases = useMemo(() => buildAssetAliases(assets), [assets]);
+  const activeClipFilterAsset = useMemo(
+    () => (clipAssetFilterId ? assets.find((asset) => asset.id === clipAssetFilterId) ?? null : null),
+    [assets, clipAssetFilterId]
+  );
+  const filteredClips = useMemo(
+    () => (clipAssetFilterId ? clips.filter((clip) => clip.assetId === clipAssetFilterId) : clips),
+    [clipAssetFilterId, clips]
+  );
+  const mentionQuery = useMemo(
+    () => getMentionQuery(promptText, composerCaretIndex),
+    [composerCaretIndex, promptText]
+  );
+  const mentionOptions = useMemo(
+    () => buildMentionOptions(visibleAssets, assetAliases, thumbnailUrls, mentionQuery),
+    [assetAliases, mentionQuery, thumbnailUrls, visibleAssets]
+  );
+  const visibleMentionOptions = isMentionMenuDismissed ? [] : mentionOptions;
 
   const selectedClip = useMemo(() => {
     if (previewSelection?.kind === "clip") {
@@ -608,20 +907,31 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const selectedAssetSourceMissing = Boolean(
     selectedAsset?.sourcePath && missingMediaAssetIds.has(selectedAsset.id)
   );
-  const visibleAgentSteps = useMemo(() => {
-    const seen = new Set<string>();
-    return agentSteps.filter((step) => {
-      const signature = getAgentStepSignature(step);
-      if (seen.has(signature)) {
-        return false;
-      }
-      seen.add(signature);
-      return true;
-    });
-  }, [agentSteps]);
   const latestChatTurn = chatTurns[chatTurns.length - 1] ?? null;
-  const shouldShowAgentSteps =
-    visibleAgentSteps.length > 0 && (isThinking || latestChatTurn?.role !== "assistant");
+  const isAgentRunFinalized = latestChatTurn?.role === "assistant" && agentSteps.length > 0 && !isThinking;
+  const fallbackAgentClipIds = useMemo(() => {
+    const ids = new Set<string>();
+    const retrievalState = coreRuntimeState?.retrieval_state;
+    for (const clipId of retrievalState?.candidate_clip_ids ?? []) {
+      ids.add(clipId);
+    }
+    if (retrievalState?.selected_candidate_id) {
+      ids.add(retrievalState.selected_candidate_id);
+    }
+    return Array.from(ids);
+  }, [coreRuntimeState]);
+  const visibleAgentSteps = useMemo(
+    () =>
+      buildAgentDisplaySteps({
+        steps: agentSteps,
+        isThinking,
+        fallbackClipIds: fallbackAgentClipIds,
+        assetCount: assets.length,
+        clipCount: clips.length,
+      }),
+    [agentSteps, assets.length, clips.length, fallbackAgentClipIds, isThinking]
+  );
+  const activeAgentSteps = latestChatTurn?.role === "assistant" ? [] : visibleAgentSteps;
 
   const previewDurationSec = useMemo(() => {
     if (selectedClip) {
@@ -667,6 +977,10 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   }, [initializeWorkspace, workspaceId, workspaceName]);
 
   useEffect(() => {
+    setAgentStepHistoryByAssistantId({});
+  }, [workspaceId]);
+
+  useEffect(() => {
     if (!isRenamingProject) {
       setProjectTitleDraft(projectTitle);
     }
@@ -694,8 +1008,36 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   }, [modelCatalogState, refreshModelCatalog]);
 
   useEffect(() => {
+    if (latestChatTurn?.role !== "assistant" || isThinking || visibleAgentSteps.length === 0) {
+      return;
+    }
+    setAgentStepHistoryByAssistantId((current) => {
+      if (current[latestChatTurn.id]) {
+        return current;
+      }
+      return {
+        ...current,
+        [latestChatTurn.id]: visibleAgentSteps,
+      };
+    });
+  }, [isThinking, latestChatTurn, visibleAgentSteps]);
+
+  useEffect(() => {
+    setMentionActiveIndex(0);
+  }, [mentionQuery?.query, mentionQuery?.trigger, visibleMentionOptions.length]);
+
+  useEffect(() => {
+    if (!clipAssetFilterId) {
+      return;
+    }
+    if (!assets.some((asset) => asset.id === clipAssetFilterId && asset.lifecycleState !== "deleted")) {
+      setClipAssetFilterId(null);
+    }
+  }, [assets, clipAssetFilterId]);
+
+  useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatTurns, isThinking, isMediaProcessing]);
+  }, [activeAgentSteps, chatTurns, isThinking, isMediaProcessing]);
 
   useEffect(() => {
     if (storyboard.length === 0) {
@@ -910,6 +1252,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
       return;
     }
     setPromptText(suggestion);
+    setComposerCaretIndex(suggestion.length);
   }
 
   async function handleSendChat() {
@@ -918,8 +1261,58 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
       return;
     }
     setPromptText("");
+    setComposerCaretIndex(0);
     setIsPlaying(false);
-    await sendChat(trimmed);
+    await sendChat(enhancePromptWithAssetReferences(trimmed, assets, assetAliases));
+  }
+
+  function insertMentionOption(option: AssetMentionOption) {
+    if (!mentionQuery) {
+      return;
+    }
+    const nextPrompt = replaceMentionQuery(promptText, mentionQuery, option.alias);
+    const nextCaret = mentionQuery.start + option.alias.length + 1;
+    setPromptText(nextPrompt);
+    setComposerCaretIndex(nextCaret);
+    setIsMentionMenuDismissed(false);
+    window.setTimeout(() => {
+      composerRef.current?.focus();
+      composerRef.current?.setSelectionRange(nextCaret, nextCaret);
+    }, 0);
+  }
+
+  function handleComposerKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
+    if (visibleMentionOptions.length > 0 && mentionQuery) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setMentionActiveIndex((current) => (current + 1) % visibleMentionOptions.length);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setMentionActiveIndex((current) => (current - 1 + visibleMentionOptions.length) % visibleMentionOptions.length);
+        return;
+      }
+      if (event.key === "Tab") {
+        event.preventDefault();
+        insertMentionOption(visibleMentionOptions[mentionActiveIndex] ?? visibleMentionOptions[0]!);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setIsMentionMenuDismissed(true);
+        return;
+      }
+    }
+
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      if (visibleMentionOptions.length > 0 && mentionQuery) {
+        insertMentionOption(visibleMentionOptions[mentionActiveIndex] ?? visibleMentionOptions[0]!);
+        return;
+      }
+      void handleSendChat();
+    }
   }
 
   function handleTogglePlay() {
@@ -990,9 +1383,32 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     if (!clip) {
       return;
     }
+    setMediaTab("clips");
+    setClipAssetFilterId(clip.assetId);
     setPreviewSelection({ kind: "clip", clipId });
     setCurrentTimeSec(0);
     setIsPlaying(true);
+    window.setTimeout(() => {
+      const clipCard = clipCardRefs.current[clipId];
+      clipCard?.scrollIntoView({ block: "center", behavior: "smooth" });
+      clipCard?.focus({ preventScroll: true });
+    }, 0);
+  }
+
+  function handleAssetFocus(asset: WorkspaceAssetItem, options: { viewClips?: boolean } = {}) {
+    const isReady = asset.processingStage === "ready";
+    const isDeleted = asset.lifecycleState === "deleted";
+    const sourceMissing = !isDeleted && missingMediaAssetIds.has(asset.id);
+    if (!isReady || isDeleted) {
+      return;
+    }
+    setPreviewSelection({ kind: "asset", assetId: asset.id });
+    setCurrentTimeSec(0);
+    setIsPlaying(!sourceMissing);
+    if (options.viewClips) {
+      setClipAssetFilterId(asset.id);
+      setMediaTab("clips");
+    }
   }
 
   async function handleAssetBrowse(mode?: MediaPickMode) {
@@ -1377,15 +1793,15 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                     isElectron={isElectron}
                   />
                 ) : (
-                  <div className="asset-grid">
+                  <div className="asset-list">
                     {visibleAssets.map((asset) => {
                       const isReady = asset.processingStage === "ready";
                       const isFailed = asset.processingStage === "failed";
                       const isDeleted = asset.lifecycleState === "deleted";
-                      const isLoading = !isReady && !isFailed;
                       const sourceMissing = !isDeleted && missingMediaAssetIds.has(asset.id);
                       const progress = asset.processingProgress ?? 0;
                       const assetErrorTitle = sourceMissing ? "SOURCE_MISSING: local source file is unavailable" : formatAssetError(asset.lastError);
+                      const assetAlias = getAssetAlias(assetAliases, asset.id);
                       
                       return (
                         <article
@@ -1394,13 +1810,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                             previewSelection?.kind === "asset" && previewSelection.assetId === asset.id ? "is-active" : ""
                           } ${!isReady ? "is-processing" : ""} ${isDeleted ? "is-deleted" : ""}`}
                           title={assetErrorTitle || asset.name}
-                          onClick={() => {
-                            if (isReady && !isDeleted) {
-                              setPreviewSelection({ kind: "asset", assetId: asset.id });
-                              setCurrentTimeSec(0);
-                              setIsPlaying(!sourceMissing);
-                            }
-                          }}
+                          onClick={() => handleAssetFocus(asset)}
                         >
                           <div className="asset-thumb">
                             {isReady ? (
@@ -1427,72 +1837,98 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                                 </span>
                               </div>
                             )}
+                            <strong className="asset-alias-badge">{assetAlias}</strong>
                             {isReady && <span>{asset.duration}</span>}
                           </div>
-                          {isFailed || isReady || isDeleted ? (
-                            <div className="asset-card-actions">
-                              {sourceMissing ? (
-                                <button
-                                  type="button"
-                                  className="asset-card-action"
-                                  title="Re-upload source file"
-                                  aria-label={`re-upload ${asset.name}`}
-                                  disabled={!canUploadAssets}
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    void handleAssetBrowse(isElectron ? "electron-files" : "browser-files");
-                                  }}
-                                >
-                                  <Upload size={13} />
-                                </button>
-                              ) : null}
-                              {isFailed && !isDeleted ? (
-                                <button
-                                  type="button"
-                                  className="asset-card-action"
-                                  title={assetErrorTitle ? `Retry: ${assetErrorTitle}` : "Retry asset"}
-                                  aria-label={`retry ${asset.name}`}
-                                  disabled={!canUploadAssets}
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    void retryAsset(asset.id);
-                                  }}
-                                >
-                                  <RefreshCw size={13} />
-                                </button>
-                              ) : null}
-                              {isDeleted ? (
-                                <button
-                                  type="button"
-                                  className="asset-card-action"
-                                  title="Restore asset"
-                                  aria-label={`restore ${asset.name}`}
-                                  disabled={!canUploadAssets}
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    void restoreAsset(asset.id);
-                                  }}
-                                >
-                                  <Undo2 size={13} />
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  className="asset-card-action"
-                                  title="Delete asset"
-                                  aria-label={`delete ${asset.name}`}
-                                  disabled={!canUploadAssets}
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    void deleteAsset(asset.id);
-                                  }}
-                                >
-                                  <Trash2 size={13} />
-                                </button>
-                              )}
+                          <div className="asset-card-main">
+                            <div className="asset-card-title-row">
+                              <p title={asset.name}>{asset.name}</p>
+                              <span className={`asset-state-badge ${isReady ? "ready" : isFailed ? "failed" : "processing"}`}>
+                                {isDeleted ? "Deleted" : isReady ? "Ready" : isFailed ? "Failed" : asset.processingStage}
+                              </span>
                             </div>
-                          ) : null}
-                          <p title={asset.name}>{asset.name}</p>
+                            <div className="asset-card-stats">
+                              <span>{asset.duration}</span>
+                              <span>{asset.clipCount} clips</span>
+                              <span>{asset.indexedClipCount} indexed</span>
+                            </div>
+                            <div className="asset-card-footer">
+                              <button
+                                type="button"
+                                className="asset-inline-action"
+                                disabled={!isReady || isDeleted}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleAssetFocus(asset, { viewClips: true });
+                                }}
+                              >
+                                View clips
+                              </button>
+                              {isFailed || isReady || isDeleted ? (
+                                <div className="asset-card-actions">
+                                  {sourceMissing ? (
+                                    <button
+                                      type="button"
+                                      className="asset-card-action"
+                                      title="Re-upload source file"
+                                      aria-label={`re-upload ${asset.name}`}
+                                      disabled={!canUploadAssets}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        void handleAssetBrowse(isElectron ? "electron-files" : "browser-files");
+                                      }}
+                                    >
+                                      <Upload size={13} />
+                                    </button>
+                                  ) : null}
+                                  {isFailed && !isDeleted ? (
+                                    <button
+                                      type="button"
+                                      className="asset-card-action"
+                                      title={assetErrorTitle ? `Retry: ${assetErrorTitle}` : "Retry asset"}
+                                      aria-label={`retry ${asset.name}`}
+                                      disabled={!canUploadAssets}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        void retryAsset(asset.id);
+                                      }}
+                                    >
+                                      <RefreshCw size={13} />
+                                    </button>
+                                  ) : null}
+                                  {isDeleted ? (
+                                    <button
+                                      type="button"
+                                      className="asset-card-action"
+                                      title="Restore asset"
+                                      aria-label={`restore ${asset.name}`}
+                                      disabled={!canUploadAssets}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        void restoreAsset(asset.id);
+                                      }}
+                                    >
+                                      <Undo2 size={13} />
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      className="asset-card-action"
+                                      title="Delete asset"
+                                      aria-label={`delete ${asset.name}`}
+                                      disabled={!canUploadAssets}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        void deleteAsset(asset.id);
+                                      }}
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
+                                  )}
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
                         </article>
                       );
                     })}
@@ -1500,45 +1936,68 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                 )}
               </>
             ) : (
-              <div className="clip-list">
-                {clips.map((clip) => (
-                  <article
-                    key={clip.id}
-                    className={`clip-card ${
-                      previewSelection?.kind === "clip" && previewSelection.clipId === clip.id ? "is-active" : ""
-                    }`}
-                    onClick={() => {
-                      setPreviewSelection({ kind: "clip", clipId: clip.id });
-                      setCurrentTimeSec(0);
-                      setIsPlaying(true);
-                    }}
+              <div className="clip-browser">
+                <div className="clip-filter-bar">
+                  <button
+                    type="button"
+                    className={!clipAssetFilterId ? "is-active" : ""}
+                    onClick={() => setClipAssetFilterId(null)}
                   >
-                    <div className="clip-head">
-                      <span className="clip-parent">
-                        <Tag size={10} />
-                        {clip.parent}
-                      </span>
-                      <span className="clip-score">Match {clip.score}</span>
-                    </div>
-                    <div className="clip-range">
-                      <span>
-                        {clip.start} - {clip.end}
-                      </span>
-                    </div>
-                    <div className="clip-body">
+                    All Clips
+                  </button>
+                  {activeClipFilterAsset ? (
+                    <span className="clip-filter-context">
+                      {getAssetAlias(assetAliases, activeClipFilterAsset.id)} {activeClipFilterAsset.name}
+                    </span>
+                  ) : null}
+                  {clipAssetFilterId ? (
+                    <button type="button" onClick={() => setClipAssetFilterId(null)}>
+                      Show all
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="clip-masonry">
+                  {filteredClips.map((clip) => (
+                    <article
+                      key={clip.id}
+                      ref={(node) => {
+                        clipCardRefs.current[clip.id] = node;
+                      }}
+                      tabIndex={0}
+                      className={`clip-card ${
+                        previewSelection?.kind === "clip" && previewSelection.clipId === clip.id ? "is-active" : ""
+                      }`}
+                      aria-label={`preview clip ${clip.parent} from ${clip.start} to ${clip.end}`}
+                      title={`${getAssetAlias(assetAliases, clip.assetId)} ${clip.parent}\n${clip.start} - ${clip.end}\n${clip.desc}`}
+                      onClick={() => {
+                        setPreviewSelection({ kind: "clip", clipId: clip.id });
+                        setCurrentTimeSec(0);
+                        setIsPlaying(true);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setPreviewSelection({ kind: "clip", clipId: clip.id });
+                          setCurrentTimeSec(0);
+                          setIsPlaying(true);
+                        }
+                      }}
+                    >
                       <div className={`clip-thumb ${clip.thumbClass}`}>
                         {thumbnailUrls[clip.assetId] ? (
                           <img src={thumbnailUrls[clip.assetId]} alt={clip.parent} className="clip-thumb-image" />
                         ) : null}
                         <span>{clip.start}</span>
+                        <strong>{formatClipScore(clip.score)}</strong>
                       </div>
-                      <p title={clip.desc}>“{clip.desc}”</p>
-                    </div>
-                  </article>
-                ))}
-                {clips.length === 0 ? (
-                  <article className="clip-card">
-                    <p>No clips yet. Ingest will generate semantic clips here.</p>
+                    </article>
+                  ))}
+                </div>
+                {filteredClips.length === 0 ? (
+                  <article className="clip-card clip-empty-state">
+                    <Scissors size={18} />
+                    <p>{clipAssetFilterId ? "This asset has no indexed clips yet." : "No clips yet. Ingest will generate semantic clips here."}</p>
                   </article>
                 ) : null}
               </div>
@@ -1564,43 +2023,69 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
         <section className="copilot-column panel" style={{ width: midWidth }}>
           <div className="copilot-header">
             <h2>
-              <MessageSquare size={16} />
-              <span>AI Copilot</span>
+              <img src={CUTROOM_ICON_SRC} alt="" className="cutroom-icon" />
+              <span>Cutroom</span>
             </h2>
-            <div className="topbar-actions">
-              <span className="session-badge">{sessionLabel}</span>
-            </div>
           </div>
 
           <div className="chat-thread">
             {/* 1. Historical Turns */}
-            {chatTurns.map((turn) => (
-              <div key={turn.id} className={turn.role === "user" ? "chat-turn-user" : "chat-turn-assistant"}>
-                {turn.role === "user" ? (
-                  <UserMessageView text={turn.content} />
-                ) : (
-                  <AgentFinalMessageView turn={turn as AssistantDecisionTurn} />
-                )}
-              </div>
-            ))}
+            {chatTurns.map((turn, index) => {
+              const finalizedSteps =
+                turn.role === "assistant"
+                  ? agentStepHistoryByAssistantId[turn.id] ??
+                    (index === chatTurns.length - 1 && isAgentRunFinalized ? visibleAgentSteps : [])
+                  : [];
+
+              return (
+                <div key={turn.id} className="chat-turn-group">
+                  {finalizedSteps.length > 0 ? (
+                    <div className="agent-execution-block agent-execution-block-finalized">
+                      {finalizedSteps.map((step) => {
+                        const Icon = getIconForPhase(step.toolName ?? step.kind);
+
+                        return (
+                          <AgentStepItem
+                            key={step.id}
+                            status={step.status}
+                            title={step.title}
+                            summary={step.summary}
+                            icon={Icon}
+                            finalized={true}
+                          >
+                            <AgentStepArtifact displayStep={step} clips={clips} onClipSelect={handleAgentClipSelect} />
+                          </AgentStepItem>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                  <div className={turn.role === "user" ? "chat-turn-user" : "chat-turn-assistant"}>
+                    {turn.role === "user" ? (
+                      <UserMessageView text={turn.content} />
+                    ) : (
+                      <AgentFinalMessageView turn={turn as AssistantDecisionTurn} />
+                    )}
+                  </div>
+                </div>
+              );
+            })}
 
             {/* 2. Active Execution Block */}
-            {shouldShowAgentSteps ? (
+            {activeAgentSteps.length > 0 ? (
               <div className="agent-execution-block">
-                {visibleAgentSteps.map((step, idx) => {
-                  const isLastStep = idx === visibleAgentSteps.length - 1;
-                  const status = getAgentStepStatus(step, isLastStep, isThinking);
-                  const Icon = getIconForPhase(getToolNameForStep(step) ?? step.phase);
+                {activeAgentSteps.map((step) => {
+                  const Icon = getIconForPhase(step.toolName ?? step.kind);
 
                   return (
                     <AgentStepItem
-                      key={getAgentStepKey(step, idx)}
-                      status={status}
-                      title={getAgentStepTitle(step)}
-                      summary={getAgentStepSummary(step, status)}
+                      key={step.id}
+                      status={step.status}
+                      title={step.title}
+                      summary={step.summary}
                       icon={Icon}
+                      finalized={false}
                     >
-                      <AgentStepArtifact step={step} clips={clips} onClipSelect={handleAgentClipSelect} />
+                      <AgentStepArtifact displayStep={step} clips={clips} onClipSelect={handleAgentClipSelect} />
                     </AgentStepItem>
                   );
                 })}
@@ -1614,7 +2099,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
               </div>
             ) : null}
 
-            {isThinking && (!shouldShowAgentSteps || visibleAgentSteps.length === 0) ? (
+            {isThinking && activeAgentSteps.length === 0 ? (
               <div className="thinking-box">
                 <Loader2 size={16} />
                 <span>Analyzing footage and generating edit...</span>
@@ -1664,15 +2149,54 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
           </div>
 
           <div className="composer-wrap">
+            {visibleMentionOptions.length > 0 && mentionQuery ? (
+              <div className="mention-menu" role="listbox" aria-label="asset references">
+                {visibleMentionOptions.map((option, index) => (
+                  <button
+                    key={option.asset.id}
+                    type="button"
+                    className={index === mentionActiveIndex ? "is-active" : ""}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      insertMentionOption(option);
+                    }}
+                    role="option"
+                    aria-selected={index === mentionActiveIndex}
+                  >
+                    <span className="mention-thumb">
+                      {option.thumbnailUrl ? <img src={option.thumbnailUrl} alt="" /> : <Film size={14} />}
+                      <strong>{option.alias}</strong>
+                    </span>
+                    <span className="mention-meta">
+                      <span>{option.asset.name}</span>
+                      <small>
+                        {option.asset.duration} · {option.asset.indexedClipCount}/{option.asset.clipCount} indexed
+                      </small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <textarea
+              ref={composerRef}
               value={promptText}
-              onChange={(event) => setPromptText(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void handleSendChat();
-                }
+              onChange={(event) => {
+                setPromptText(event.target.value);
+                setComposerCaretIndex(event.target.selectionStart);
+                setIsMentionMenuDismissed(false);
               }}
+              onClick={(event) => {
+                setComposerCaretIndex(event.currentTarget.selectionStart);
+                setIsMentionMenuDismissed(false);
+              }}
+              onKeyUp={(event) => {
+                if (event.key === "Escape") {
+                  return;
+                }
+                setComposerCaretIndex(event.currentTarget.selectionStart);
+                setIsMentionMenuDismissed(false);
+              }}
+              onKeyDown={handleComposerKeyDown}
               disabled={!canSendChat}
               placeholder={
                 coreCapabilities?.chat_mode === "planning_only"
@@ -1820,9 +2344,10 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
               ))}
 
               {storyboard.length === 0 ? (
-                <div className="story-end">
+                <div className="story-end storyboard-empty-state">
                   <ListVideo size={20} />
                   <span>No Storyboard Yet</span>
+                  <small>Ask Cutroom to draft a sequence.</small>
                 </div>
               ) : (
                 <div className="story-end">

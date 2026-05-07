@@ -514,6 +514,14 @@
   pointer-events: none;
 }
 
+.recent-cover-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 /* Thumbnail backgrounds */
 .launch-thumb-cyan {
   background: linear-gradient(145deg, #085277, #11295f);
@@ -556,7 +564,15 @@
   font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
 }
 
-.recent-thumb button {
+.recent-thumb-actions {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  gap: var(--space-2);
+}
+
+.recent-thumb button,
+.recent-thumb-actions label {
   border: 0;
   width: 28px;
   height: 28px;
@@ -571,11 +587,17 @@
   transition: opacity var(--transition-normal), background var(--transition-normal);
 }
 
-.recent-card:hover .recent-thumb button {
+.recent-thumb-actions label input {
+  display: none;
+}
+
+.recent-card:hover .recent-thumb button,
+.recent-card:hover .recent-thumb-actions label {
   opacity: 1;
 }
 
-.recent-thumb button:hover {
+.recent-thumb button:hover,
+.recent-thumb-actions label:hover {
   background: rgba(0, 0, 0, 0.48);
 }
 

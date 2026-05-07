@@ -8,6 +8,7 @@ import {
   FileVideo,
   FolderUp,
   HardDrive,
+  ImagePlus,
   Pencil,
   Plus,
   Search,
@@ -30,6 +31,29 @@ const PROMPT_HINTS = [
   "生成旅行 vlog 的第一版粗剪",
 ];
 
+const COVER_STORAGE_KEY = "entrocut.launchpad.workspaceCovers";
+
+function readStoredCovers(): Record<string, string> {
+  try {
+    const raw = window.localStorage.getItem(COVER_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistStoredCovers(covers: Record<string, string>) {
+  try {
+    window.localStorage.setItem(COVER_STORAGE_KEY, JSON.stringify(covers));
+  } catch {
+    // 封面是纯 UI 增强，localStorage 写入失败时不阻塞打开 Workspace。
+  }
+}
+
 function LaunchpadPage() {
   const [prompt, setPrompt] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -38,6 +62,7 @@ function LaunchpadPage() {
   const [isDropHovering, setIsDropHovering] = useState(false);
   const [isMediaPickerOpen, setIsMediaPickerOpen] = useState(false);
   const [hintIndex, setHintIndex] = useState(0);
+  const [workspaceCovers, setWorkspaceCovers] = useState<Record<string, string>>(() => readStoredCovers());
   const recentProjects = useLaunchpadStore((state) => state.recentProjects);
   const projectsLoadState = useLaunchpadStore((state) => state.projectsLoadState);
   const createState = useLaunchpadStore((state) => state.createState);
@@ -157,6 +182,27 @@ function LaunchpadPage() {
     setRenameDraft("");
   }
 
+  function handleCoverUpload(workspaceId: string, file?: File) {
+    if (!file || !file.type.startsWith("image/")) {
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        return;
+      }
+      setWorkspaceCovers((current) => {
+        const next = {
+          ...current,
+          [workspaceId]: reader.result as string,
+        };
+        persistStoredCovers(next);
+        return next;
+      });
+    };
+    reader.readAsDataURL(file);
+  }
+
   return (
     <div className="launchpad-root">
       <header className="launchpad-topbar">
@@ -171,7 +217,7 @@ function LaunchpadPage() {
             type="text"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder="Search projects..."
+            placeholder="Search workspaces..."
           />
           <kbd>Ctrl+K</kbd>
         </label>
@@ -182,8 +228,8 @@ function LaunchpadPage() {
       <main className="launchpad-main">
         <section className="intent-zone">
           <div className="intent-heading">
-            <h1>创建你的视频项目</h1>
-            <p>描述你的想法，或直接拖入素材文件夹/视频文件来唤醒 AI Copilot 进行智能剪辑。</p>
+            <h1>创建你的视频工作台</h1>
+            <p>描述你的想法，或直接拖入素材文件夹/视频文件来唤醒 Cutroom 进行智能剪辑。</p>
           </div>
 
           <div className={`intent-drop-shell ${isDropHovering ? "is-hovering" : ""}`}>
@@ -306,23 +352,52 @@ function LaunchpadPage() {
                 }}
               >
                 <div className={`recent-thumb ${project.thumbnailClassName}`}>
+                  {workspaceCovers[project.id] ? (
+                    <img src={workspaceCovers[project.id]} alt="" className="recent-cover-image" />
+                  ) : null}
                   <div className="recent-thumb-top">
                     <span className="storage-pill">
                       {project.storageType === "cloud" ? <Cloud size={10} /> : <HardDrive size={10} />}
                       {project.storageType === "cloud" ? "Cloud Synced" : "Local Draft"}
                     </span>
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setRenamingProjectId(project.id);
-                        setRenameDraft(project.title);
-                      }}
-                      aria-label="rename project"
-                      title="Rename project"
-                    >
-                      <Pencil size={13} />
-                    </button>
+                    <div className="recent-thumb-actions">
+                      <label
+                        title="Upload cover"
+                        aria-label="upload workspace cover"
+                        role="button"
+                        tabIndex={0}
+                        onClick={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" && event.key !== " ") {
+                            return;
+                          }
+                          event.preventDefault();
+                          event.currentTarget.querySelector("input")?.click();
+                        }}
+                      >
+                        <ImagePlus size={13} />
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={(event) => {
+                            handleCoverUpload(project.id, event.target.files?.[0]);
+                            event.target.value = "";
+                          }}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setRenamingProjectId(project.id);
+                          setRenameDraft(project.title);
+                        }}
+                        aria-label="rename workspace"
+                        title="Rename workspace"
+                      >
+                        <Pencil size={13} />
+                      </button>
+                    </div>
                   </div>
                   {renamingProjectId === project.id ? (
                     <form
@@ -344,12 +419,12 @@ function LaunchpadPage() {
                         }}
                         autoFocus
                       />
-                      <button type="submit" aria-label="save project title">
+                      <button type="submit" aria-label="save workspace title">
                         <Check size={12} />
                       </button>
                       <button
                         type="button"
-                        aria-label="cancel project title edit"
+                        aria-label="cancel workspace title edit"
                         onClick={() => {
                           setRenamingProjectId(null);
                           setRenameDraft("");
@@ -383,14 +458,14 @@ function LaunchpadPage() {
             ))}
 
             {isLoadingProjects ? (
-              <article className="archive-card" aria-label="loading projects">
-                <span>Loading projects...</span>
+              <article className="archive-card" aria-label="loading workspaces">
+                <span>Loading workspaces...</span>
               </article>
             ) : null}
 
             {!isLoadingProjects && displayProjects.length === 0 ? (
-              <article className="archive-card" aria-label="empty projects">
-                <span>No projects</span>
+              <article className="archive-card" aria-label="empty workspaces">
+                <span>No workspaces</span>
               </article>
             ) : null}
 
