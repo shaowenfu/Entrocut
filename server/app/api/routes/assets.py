@@ -32,7 +32,6 @@ async def vectorize_asset(
             env=settings.app_env,
             request_id=getattr(request.state, "request_id", None),
             user_id=current["user"]["_id"],
-            collection_name=payload.collection_name,
             doc_count=len(payload.docs),
         )
         result = vector_service.vectorize(payload)
@@ -44,9 +43,7 @@ async def vectorize_asset(
             env=settings.app_env,
             request_id=getattr(request.state, "request_id", None),
             user_id=current["user"]["_id"],
-            collection_name=payload.collection_name,
             inserted_count=result["inserted_count"],
-            dimension=result["dimension"],
         )
         log_audit_event(
             "audit_vectorize_succeeded",
@@ -55,9 +52,9 @@ async def vectorize_asset(
             actor_user_id=current["user"]["_id"],
             action="assets.vectorize",
             result="success",
-            target_type="collection",
-            target_id=payload.collection_name,
-            details={"dimension": result["dimension"], "inserted_count": result["inserted_count"]},
+            target_type="asset_vectors",
+            target_id="configured_vector_store",
+            details={"inserted_count": result["inserted_count"]},
         )
         return VectorizeResponse(**result)
     except ServerApiError:
@@ -85,8 +82,6 @@ async def assets_retrieval(
         env=settings.app_env,
         request_id=getattr(request.state, "request_id", None),
         user_id=current["user"]["_id"],
-        collection_name=payload.collection_name,
-        topk=payload.topk,
     )
     result = vector_service.retrieve(payload)
     metrics.inc("server_vector_retrieval_requests_total", status="success")
@@ -97,7 +92,6 @@ async def assets_retrieval(
         env=settings.app_env,
         request_id=getattr(request.state, "request_id", None),
         user_id=current["user"]["_id"],
-        collection_name=payload.collection_name,
         match_count=len(result.get("matches", [])),
     )
     log_audit_event(
@@ -107,9 +101,9 @@ async def assets_retrieval(
         actor_user_id=current["user"]["_id"],
         action="assets.retrieval",
         result="success",
-        target_type="collection",
-        target_id=payload.collection_name,
-        details={"match_count": len(result.get("matches", [])), "topk": payload.topk},
+        target_type="asset_vectors",
+        target_id="configured_vector_store",
+        details={"match_count": len(result.get("matches", [])), "topk": result["query"]["topk"]},
     )
     return AssetRetrievalResponse(**result)
 

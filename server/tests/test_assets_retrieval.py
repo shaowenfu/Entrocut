@@ -62,7 +62,7 @@ def test_retrieval_validates_query_text(monkeypatch) -> None:
     response = client.post(
         "/v1/assets/retrieval",
         headers={"Authorization": f"Bearer {bundle['access_token']}"},
-        json={"query_text": "", "topk": 8},
+        json={"query_text": ""},
     )
 
     assert response.status_code == 422
@@ -77,8 +77,6 @@ def test_retrieval_success(monkeypatch) -> None:
 
     with patch("app.main.vector_service.retrieve") as mock_retrieve:
         mock_retrieve.return_value = {
-            "collection_name": "test_collection",
-            "partition": "default",
             "query": {
                 "query_text": "滑雪跃起的动作",
                 "topk": 8,
@@ -98,20 +96,42 @@ def test_retrieval_success(monkeypatch) -> None:
             "/v1/assets/retrieval",
             headers={"Authorization": f"Bearer {bundle['access_token']}"},
             json={
-                "collection_name": "test_collection",
                 "query_text": "滑雪跃起的动作",
-                "topk": 8,
                 "filter": "media_type = 'video'",
             },
         )
 
     assert response.status_code == 200
     body = response.json()
-    assert body["collection_name"] == "test_collection"
+    assert "collection_name" not in body
     assert body["query"]["query_text"] == "滑雪跃起的动作"
     assert body["query"]["filter"] == "media_type = 'video'"
     assert body["matches"][0]["id"] == "asset_001"
     assert body["usage"]["dashvector_read_units"] == 1
+
+
+def test_retrieval_rejects_redundant_vector_fields(monkeypatch) -> None:
+    _configure_local_runtime(monkeypatch)
+    user = _create_user()
+    bundle = token_service.issue_session_bundle(user)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/assets/retrieval",
+        headers={"Authorization": f"Bearer {bundle['access_token']}"},
+        json={
+            "query_text": "滑雪跃起的动作",
+            "collection_name": "test_collection",
+            "partition": "default",
+            "model": "qwen3-vl-embedding",
+            "dimension": 1024,
+            "topk": 8,
+            "include_vector": False,
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "INVALID_RETRIEVAL_REQUEST"
 
 
 def test_retrieval_embedding_error(monkeypatch) -> None:

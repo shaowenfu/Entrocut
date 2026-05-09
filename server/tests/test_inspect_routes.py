@@ -105,88 +105,16 @@ def _create_user() -> dict[str, Any]:
 
 def _make_request_payload() -> dict[str, Any]:
     return {
-        "mode": "choose",
-        "task_summary": "为旅行视频开头选择更有出发感的镜头。",
-        "hypothesis_summary": "优先找明显处于旅程开始状态的镜头。",
-        "question": "这几个候选里哪个最适合作为旅行视频开头？",
-        "criteria": [
-            {"name": "departure_feel", "description": "是否有明显的出发前或旅程刚开始的感觉。"}
-        ],
-        "candidates": [
-            {
-                "clip_id": "clip_001",
-                "asset_id": "asset_001",
-                "clip_duration_ms": 5000,
-                "summary": "人在卧室整理行李。",
-                "frames": [
-                    {
-                        "frame_index": 0,
-                        "timestamp_ms": 0,
-                        "timestamp_label": "00:00",
-                        "image_base64": "QUFBQUFBQUFBQUFBQUFBQQ==",
-                    },
-                    {
-                        "frame_index": 1,
-                        "timestamp_ms": 2000,
-                        "timestamp_label": "00:02",
-                        "image_base64": "QkJCQkJCQkJCQkJCQkJCQg==",
-                    },
-                ],
-            },
-            {
-                "clip_id": "clip_002",
-                "asset_id": "asset_002",
-                "clip_duration_ms": 4200,
-                "summary": "人在站台拖着行李前进。",
-                "frames": [
-                    {
-                        "frame_index": 0,
-                        "timestamp_ms": 300,
-                        "timestamp_label": "00:00",
-                        "image_base64": "Q0NDQ0NDQ0NDQ0NDQ0NDQw==",
-                    }
-                ],
-            },
-            {
-                "clip_id": "clip_003",
-                "asset_id": "asset_003",
-                "clip_duration_ms": 4800,
-                "summary": "旅途中窗外移动风景。",
-                "frames": [
-                    {
-                        "frame_index": 0,
-                        "timestamp_ms": 1000,
-                        "timestamp_label": "00:01",
-                        "image_base64": "RERERERERERERERERERERA==",
-                    }
-                ],
-            },
-        ],
+        "clip_id": "clip_001",
+        "prompt": "Describe the visible subjects, actions, scene, camera movement, and editing value.",
+        "image_base64": "QUFBQUFBQUFBQUFBQUFBQQ==",
     }
 
 
-def _make_describe_payload() -> dict[str, Any]:
-    return {
-        "mode": "describe",
-        "task_summary": "Agent needs to understand this clip before deciding whether to use it.",
-        "question": "Describe the visible subjects, actions, scene, camera movement, and editing value.",
-        "candidates": [
-            {
-                "clip_id": "clip_001",
-                "asset_id": "asset_001",
-                "clip_duration_ms": 5000,
-                "summary": "人在卧室整理行李。",
-                "frames": [
-                    {
-                        "frame_index": 0,
-                        "timestamp_ms": 0,
-                        "timestamp_label": "00:00",
-                        "image_base64": "QUFBQUFBQUFBQUFBQUFBQQ==",
-                    }
-                ],
-            }
-        ],
-    }
+def _auth_headers() -> dict[str, str]:
+    user = _create_user()
+    bundle = token_service.issue_session_bundle(user)
+    return {"Authorization": f"Bearer {bundle['access_token']}"}
 
 
 def test_inspect_requires_bearer_token() -> None:
@@ -200,37 +128,39 @@ def test_inspect_requires_bearer_token() -> None:
 
 def test_inspect_rejects_invalid_request(monkeypatch) -> None:
     _configure_local_runtime(monkeypatch)
-    user = _create_user()
-    bundle = token_service.issue_session_bundle(user)
     client = TestClient(app)
-
     payload = _make_request_payload()
-    del payload["question"]
+    del payload["prompt"]
 
-    response = client.post(
-        "/v1/tools/inspect",
-        headers={"Authorization": f"Bearer {bundle['access_token']}"},
-        json=payload,
-    )
+    response = client.post("/v1/tools/inspect", headers=_auth_headers(), json=payload)
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "INVALID_INSPECT_REQUEST"
 
 
-def test_inspect_rejects_missing_evidence(monkeypatch) -> None:
+def test_inspect_rejects_redundant_legacy_fields(monkeypatch) -> None:
     _configure_local_runtime(monkeypatch)
-    user = _create_user()
-    bundle = token_service.issue_session_bundle(user)
     client = TestClient(app)
+    payload = {
+        **_make_request_payload(),
+        "mode": "choose",
+        "candidates": [],
+        "criteria": [],
+    }
 
+    response = client.post("/v1/tools/inspect", headers=_auth_headers(), json=payload)
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "INVALID_INSPECT_REQUEST"
+
+
+def test_inspect_rejects_invalid_image_base64(monkeypatch) -> None:
+    _configure_local_runtime(monkeypatch)
+    client = TestClient(app)
     payload = _make_request_payload()
-    payload["candidates"][0]["frames"] = []
+    payload["image_base64"] = "not-base64"
 
-    response = client.post(
-        "/v1/tools/inspect",
-        headers={"Authorization": f"Bearer {bundle['access_token']}"},
-        json=payload,
-    )
+    response = client.post("/v1/tools/inspect", headers=_auth_headers(), json=payload)
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "INSPECT_EVIDENCE_MISSING"
@@ -240,15 +170,9 @@ def test_inspect_reports_provider_unavailable(monkeypatch) -> None:
     _configure_local_runtime(monkeypatch)
     monkeypatch.setattr(settings, "google_api_key", None)
     monkeypatch.setattr(settings, "gemini_api_key", None)
-    user = _create_user()
-    bundle = token_service.issue_session_bundle(user)
     client = TestClient(app)
 
-    response = client.post(
-        "/v1/tools/inspect",
-        headers={"Authorization": f"Bearer {bundle['access_token']}"},
-        json=_make_request_payload(),
-    )
+    response = client.post("/v1/tools/inspect", headers=_auth_headers(), json=_make_request_payload())
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "INSPECT_PROVIDER_UNAVAILABLE"
@@ -257,194 +181,39 @@ def test_inspect_reports_provider_unavailable(monkeypatch) -> None:
 def test_inspect_rejects_invalid_provider_response(monkeypatch) -> None:
     _install_fake_inspect_sdk(monkeypatch, text="not a json object")
     _configure_local_runtime(monkeypatch)
-    user = _create_user()
-    bundle = token_service.issue_session_bundle(user)
     client = TestClient(app)
 
-    response = client.post(
-        "/v1/tools/inspect",
-        headers={"Authorization": f"Bearer {bundle['access_token']}"},
-        json=_make_request_payload(),
-    )
+    response = client.post("/v1/tools/inspect", headers=_auth_headers(), json=_make_request_payload())
 
     assert response.status_code == 502
     assert response.json()["error"]["code"] == "INSPECT_PROVIDER_INVALID_RESPONSE"
 
 
-def test_inspect_successfully_normalizes_selected_clip_from_ranking(monkeypatch) -> None:
+def test_inspect_returns_single_clip_description(monkeypatch) -> None:
     calls = _install_fake_inspect_sdk(
         monkeypatch,
         text="""
 ```json
 {
-  "question_type": "choose",
-  "ranking": ["clip_002", "clip_001", "clip_003"],
-  "candidate_judgments": [
-    {"clip_id": "clip_001", "verdict": "partial_match", "confidence": 0.61, "short_reason": "有出发前准备感，但场景更静。"},
-    {"clip_id": "clip_002", "verdict": "match", "confidence": 0.88, "short_reason": "站台与行李共同强化出发感。"},
-    {"clip_id": "clip_003", "verdict": "mismatch", "confidence": 0.52, "short_reason": "更像旅途中的过渡镜头。"}
-  ]
+  "description": "A person appears to be preparing luggage in an indoor room.",
+  "uncertainty": "Only stitched keyframes were provided."
 }
 ```""",
     )
     _configure_local_runtime(monkeypatch)
-    user = _create_user()
-    bundle = token_service.issue_session_bundle(user)
     client = TestClient(app)
 
-    response = client.post(
-        "/v1/tools/inspect",
-        headers={"Authorization": f"Bearer {bundle['access_token']}"},
-        json=_make_request_payload(),
-    )
+    response = client.post("/v1/tools/inspect", headers=_auth_headers(), json=_make_request_payload())
 
     assert response.status_code == 200
     assert calls[0]["model"] == "gemini-3.1-flash-lite-preview"
     assert calls[0]["contents"][0].role == "user"
     assert calls[0]["contents"][0].parts[0]["type"] == "text"
+    assert calls[0]["contents"][0].parts[1]["type"] == "bytes"
     assert calls[0]["config"].kwargs["response_mime_type"] == "application/json"
+    assert "Do not compare, rank, choose" in calls[0]["config"].kwargs["system_instruction"]
     body = response.json()
-    assert body["question_type"] == "choose"
-    assert body["selected_clip_id"] == "clip_002"
-    assert body["ranking"] == ["clip_002", "clip_001", "clip_003"]
-    assert body["candidate_judgments"][1]["clip_id"] == "clip_002"
-
-
-def test_inspect_describe_normalizes_description_response(monkeypatch) -> None:
-    calls = _install_fake_inspect_sdk(
-        monkeypatch,
-        text="""
-{
-  "question_type": "describe",
-  "descriptions": [
-    {
-      "clip_id": "clip_001",
-      "description": "A person appears to be preparing luggage in an indoor room.",
-      "observations": ["A suitcase-like object is visible.", "The scene appears indoors."],
-      "actions": ["packing"],
-      "subjects": ["person"],
-      "scene": "indoor room",
-      "camera": "static or minimally moving",
-      "editing_value": "Useful as a preparation beat before travel.",
-      "uncertainty": "Only one frame was provided."
-    }
-  ],
-  "uncertainty": "Limited temporal evidence."
-}
-""",
-    )
-    _configure_local_runtime(monkeypatch)
-    user = _create_user()
-    bundle = token_service.issue_session_bundle(user)
-    client = TestClient(app)
-
-    response = client.post(
-        "/v1/tools/inspect",
-        headers={"Authorization": f"Bearer {bundle['access_token']}"},
-        json=_make_describe_payload(),
-    )
-
-    assert response.status_code == 200
-    prompt_text = calls[0]["contents"][0].parts[0]["text"]
-    assert "mode: describe" in prompt_text
-    assert "Describe the visible subjects" in prompt_text
-    assert "visual perception tool" in calls[0]["config"].kwargs["system_instruction"]
-    body = response.json()
-    assert body["question_type"] == "describe"
-    assert body["selected_clip_id"] == "clip_001"
-    assert body["descriptions"][0]["clip_id"] == "clip_001"
-    assert body["candidate_judgments"] == []
-
-
-def test_inspect_describe_uses_default_question_when_missing(monkeypatch) -> None:
-    calls = _install_fake_inspect_sdk(
-        monkeypatch,
-        text="""
-{
-  "descriptions": [
-    {
-      "clip_id": "clip_001",
-      "description": "Indoor preparation scene.",
-      "observations": ["A person is visible."],
-      "actions": [],
-      "subjects": ["person"],
-      "scene": "indoor",
-      "camera": null,
-      "editing_value": "Can introduce preparation.",
-      "uncertainty": null
-    }
-  ]
-}
-""",
-    )
-    _configure_local_runtime(monkeypatch)
-    user = _create_user()
-    bundle = token_service.issue_session_bundle(user)
-    client = TestClient(app)
-    payload = _make_describe_payload()
-    del payload["question"]
-
-    response = client.post(
-        "/v1/tools/inspect",
-        headers={"Authorization": f"Bearer {bundle['access_token']}"},
-        json=payload,
-    )
-
-    assert response.status_code == 200
-    prompt_text = calls[0]["contents"][0].parts[0]["text"]
-    assert "Describe this clip for a text-only video editing agent" in prompt_text
-    assert response.json()["question_type"] == "describe"
-
-
-def test_inspect_describe_rejects_multiple_candidates(monkeypatch) -> None:
-    _configure_local_runtime(monkeypatch)
-    user = _create_user()
-    bundle = token_service.issue_session_bundle(user)
-    client = TestClient(app)
-    payload = _make_describe_payload()
-    payload["candidates"].append(_make_request_payload()["candidates"][1])
-
-    response = client.post(
-        "/v1/tools/inspect",
-        headers={"Authorization": f"Bearer {bundle['access_token']}"},
-        json=payload,
-    )
-
-    assert response.status_code == 422
-    assert response.json()["error"]["code"] == "INVALID_INSPECT_REQUEST"
-
-
-def test_inspect_describe_rejects_unknown_description_clip_id(monkeypatch) -> None:
-    _install_fake_inspect_sdk(
-        monkeypatch,
-        text="""
-{
-  "descriptions": [
-    {
-      "clip_id": "clip_unknown",
-      "description": "Unknown.",
-      "observations": ["Unknown."],
-      "actions": [],
-      "subjects": [],
-      "scene": null,
-      "camera": null,
-      "editing_value": null,
-      "uncertainty": null
-    }
-  ]
-}
-""",
-    )
-    _configure_local_runtime(monkeypatch)
-    user = _create_user()
-    bundle = token_service.issue_session_bundle(user)
-    client = TestClient(app)
-
-    response = client.post(
-        "/v1/tools/inspect",
-        headers={"Authorization": f"Bearer {bundle['access_token']}"},
-        json=_make_describe_payload(),
-    )
-
-    assert response.status_code == 502
-    assert response.json()["error"]["code"] == "INSPECT_PROVIDER_INVALID_RESPONSE"
+    assert body["clip_id"] == "clip_001"
+    assert body["description"].startswith("A person appears")
+    assert body["uncertainty"] == "Only stitched keyframes were provided."
+    assert body["model"] == "gemini-3.1-flash-lite-preview"

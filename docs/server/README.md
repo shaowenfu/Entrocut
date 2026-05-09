@@ -16,7 +16,7 @@
 3. `credits / BYOK` 的字段、前端入口和部分调用链已经合回主线
 4. 后续仍需要继续做真实上游能力验证、计费回归和端到端测试
 5. `core` 侧已开始在 `agent loop` 中真实调用 `POST /v1/assets/retrieval`，检索契约进入实装联调阶段
-6. `POST /v1/tools/inspect` 已支持 `describe` 模式，可作为文本 `Agent` 理解已知 `clip` 的视觉工具
+6. `POST /v1/tools/inspect` 已收敛为单一图片描述工具，可作为文本 `Agent` 理解已知 `clip` 的视觉工具
 
 ## 当前代码目录现实
 

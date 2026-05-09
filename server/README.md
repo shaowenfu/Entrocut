@@ -166,19 +166,20 @@ server/
 - `source_start_ms` 必须小于 `source_end_ms`。
 - `image_base64` 会先做 base64 合法性校验。
 - collection 不存在时，当前代码会尝试创建 DashVector collection。
-- retrieval 支持 `filter`、`topk`、`output_fields` 和 `include_vector`。
+- `collection / partition / model / dimension / topk / output_fields / include_vector` 由 server config 控制，不暴露给请求方。
+- retrieval 只接受 `query_text` 和业务 `filter`。
 
 ### Inspect
 
-`POST /v1/tools/inspect` 位于 `app/api/routes/inspect.py`，用于让云端视觉模型理解已知片段，或对候选片段做精判。
+`POST /v1/tools/inspect` 位于 `app/api/routes/inspect.py`，用于让云端视觉模型描述一个已知片段。
 
-当前支持的 `mode（模式）`：
+当前请求体只接受：
 
-- `verify`：只允许 1 个候选。
-- `compare`：只允许 2 个候选。
-- `choose`：允许 3 到 5 个候选。
-- `rank`：允许 2 到 5 个候选。
-- `describe`：只允许 1 个候选，用于描述已知 `clip` 的可见主体、动作、场景、镜头运动、剪辑价值和不确定性。
+- `clip_id`
+- `prompt`
+- `image_base64`
+
+`Inspect` 不再负责候选比较、排序或选择；这些决策由主 `Agent` 基于描述自行完成。
 
 每个候选必须提供：
 

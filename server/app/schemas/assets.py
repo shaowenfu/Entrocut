@@ -37,35 +37,22 @@ class VectorizeUsage(BaseModel):
 
 
 class VectorizeRequest(BaseModel):
-    collection_name: str = "entrocut_assets"
-    partition: str = "default"
-    model: str = "qwen3-vl-embedding"
-    dimension: int = 1024
     docs: list[VectorizeDoc] = Field(..., min_length=1)
+
+    model_config = {"extra": "forbid"}
 
 
 class VectorizeResponse(BaseModel):
-    collection_name: str
-    partition: str
-    model: str
-    dimension: int
     inserted_count: int
     results: list[VectorizeResultItem]
     usage: VectorizeUsage | None = None
 
 
 class AssetRetrievalRequest(BaseModel):
-    collection_name: str = "entrocut_assets"
-    partition: str = "default"
-    model: str = "qwen3-vl-embedding"
-    dimension: int = 1024
     query_text: str = Field(..., min_length=1, max_length=2000)
-    topk: int = Field(default=8, ge=1, le=100)
     filter: str | None = Field(default=None, alias="filter")
-    include_vector: bool = False
-    output_fields: list[str] = Field(default_factory=list)
 
-    model_config = {"populate_by_name": True}
+    model_config = {"populate_by_name": True, "extra": "forbid"}
 
 
 class RetrievalMatch(BaseModel):
@@ -84,25 +71,21 @@ class RetrievalQuery(BaseModel):
 
 
 class AssetRetrievalResponse(BaseModel):
-    collection_name: str
-    partition: str
     query: RetrievalQuery
     matches: list[RetrievalMatch]
     usage: dict[str, int]
 
 
 class AssetVectorIndexStateRequest(BaseModel):
-    collection_name: str = "entrocut_assets"
-    partition: str = "default"
     project_id: str = Field(..., min_length=1, max_length=128)
     asset_id: str = Field(..., min_length=1, max_length=128)
     active: bool
     clip_ids: list[str] = Field(default_factory=list)
 
+    model_config = {"extra": "forbid"}
+
 
 class AssetVectorIndexStateResponse(BaseModel):
-    collection_name: str
-    partition: str
     project_id: str
     asset_id: str
     active: bool

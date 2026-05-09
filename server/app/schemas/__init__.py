@@ -26,11 +26,6 @@ from .auth import (
 from .chat import ChatCompletionsRequest, ChatMessage
 from .common import AssetReference, AssetVector
 from .inspect import (
-    CandidateJudgment,
-    InspectCandidate,
-    InspectCriterion,
-    InspectDescription,
-    InspectFrame,
     InspectRequest,
     InspectResponse,
 )
@@ -44,13 +39,8 @@ __all__ = [
     "AssetVectorIndexStateRequest",
     "AssetVectorIndexStateResponse",
     "AssetVector",
-    "CandidateJudgment",
     "ChatCompletionsRequest",
     "ChatMessage",
-    "InspectCandidate",
-    "InspectCriterion",
-    "InspectDescription",
-    "InspectFrame",
     "InspectRequest",
     "InspectResponse",
     "LoginSessionCreateRequest",

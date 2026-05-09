@@ -1,30 +1,28 @@
 # Server Inspect Contract
 
-本文档定义 `POST /v1/tools/inspect` 的字段级契约草案。
+本文档定义 `POST /v1/tools/inspect` 的字段级契约。
 
 当前阶段，它只服务一件事：
 
-`把已知 clip 或少量候选 clip 的关键帧序列、时间锚点和片段总时长交给图像多模态模型，返回结构化视觉理解或视觉判定结果。`
+`接收一个 clip 的提示词和图片，调用 VLM（多模态大模型）返回图片描述。`
 
 ---
 
 ## 1. 设计边界
 
-当前阶段：
+当前做：
 
-1. 输入对象固定为小规模候选 `clip`
-2. 每个候选用多张关键帧图表达
-3. 每张关键帧必须带时间位置
-4. 同时必须带片段总时长
-5. 输出固定为结构化 `InspectResponse`
-6. `describe` 模式只描述一个已知 `clip`，不负责候选比较
+1. 输入固定为一个 `clip_id`
+2. 输入固定为 `prompt + image_base64`
+3. 输出固定为该 `clip` 的视觉描述
+4. 比较、排序、选择、剪辑决策全部交给调用方 `Agent`
 
 当前不做：
 
-1. 不上传原始视频
-2. 不做长视频理解
-3. 不做开放式聊天
-4. 不直接生成 `EditDraftPatch`
+1. 不接收候选列表
+2. 不接收 `mode / criteria / ranking`
+3. 不直接生成 `EditDraftPatch`
+4. 不暴露 provider model 选择参数
 
 ---
 
@@ -41,97 +39,39 @@ Content-Type: application/json
 ## 3. Request Schema
 
 ```ts
-type InspectMode = "verify" | "compare" | "choose" | "rank" | "describe";
-
-interface InspectFrame {
-  frame_index: number;
-  timestamp_ms: number;
-  timestamp_label: string;
-  image_base64: string;
-}
-
-interface InspectCandidate {
-  clip_id: string;
-  asset_id: string;
-  clip_duration_ms: number;
-  summary?: string | null;
-  frames: InspectFrame[];
-}
-
 interface InspectRequest {
-  mode: InspectMode;
-  task_summary: string;
-  hypothesis_summary?: string | null;
-  question?: string | null;
-  criteria?: Array<{
-    name: string;
-    description: string;
-  }>;
-  candidates: InspectCandidate[];
+  clip_id: string;
+  prompt: string;
+  image_base64: string;
 }
 ```
 
-### 3.1 字段约束
+字段约束：
 
-1. `mode` 必填
-2. `verify / compare / choose / rank` 的 `question` 必填
-3. `describe` 的 `question` 可选，缺省时由 server 使用默认视觉描述问题
-4. `candidates` 非空
-5. 每个候选必须有 `clip_duration_ms`
-6. 每个候选必须至少有一张关键帧
-7. `frames` 必须按时间顺序排列
-8. `timestamp_ms <= clip_duration_ms`
-
-### 3.2 候选预算建议
-
-1. `verify`: 1 个候选
-2. `compare`: 2 个候选
-3. `choose`: 3~5 个候选
-4. `rank`: 最多 5 个候选
-5. `describe`: 1 个候选
+1. `clip_id` 必填，用于把结果绑定回调用方的 `clip`
+2. `prompt` 必填，由主 `Agent` 根据当前任务自行组织
+3. `image_base64` 必填，当前按 `JPEG` 证据处理
+4. 冗余字段必须拒绝，例如 `mode / candidates / collection_name / model`
 
 ---
 
 ## 4. Response Schema
 
 ```ts
-interface CandidateJudgment {
-  clip_id: string;
-  verdict: "match" | "partial_match" | "mismatch";
-  confidence?: number | null;
-  short_reason: string;
-}
-
-interface InspectDescription {
+interface InspectResponse {
   clip_id: string;
   description: string;
-  observations: string[];
-  actions?: string[];
-  subjects?: string[];
-  scene?: string | null;
-  camera?: string | null;
-  editing_value?: string | null;
   uncertainty?: string | null;
-}
-
-interface InspectResponse {
-  question_type: InspectMode;
-  selected_clip_id?: string | null;
-  ranking?: string[];
-  candidate_judgments?: CandidateJudgment[];
-  descriptions?: InspectDescription[];
-  uncertainty?: string | null;
+  model?: string | null;
 }
 ```
 
 响应约束：
 
-1. `verify / compare / choose / rank` 必须返回非空 `candidate_judgments`
-2. `rank` 必须返回 `ranking`
-3. `compare / choose` 没有 `selected_clip_id` 时，server 会尝试用 `ranking[0]` 归一化
-4. `describe` 必须返回非空 `descriptions`
-5. `describe.descriptions[].clip_id` 必须属于请求候选
-6. `describe` 不强制返回 `candidate_judgments`
+1. `clip_id` 必须等于请求中的 `clip_id`
+2. `description` 必须是非空字符串
+3. `uncertainty` 只表达视觉证据不足，不做剪辑决策
+4. `model` 只用于可观测性，不由请求方指定
 
 ---
 
@@ -142,25 +82,11 @@ type InspectErrorCode =
   | "INVALID_INSPECT_REQUEST"
   | "INSPECT_EVIDENCE_MISSING"
   | "INSPECT_PROVIDER_UNAVAILABLE"
-  | "INSPECT_PROVIDER_INVALID_RESPONSE"
-  | "DECISION_INCONCLUSIVE";
+  | "INSPECT_PROVIDER_INVALID_RESPONSE";
 ```
-
-推荐语义：
-
-1. `INVALID_INSPECT_REQUEST`
-   - 输入字段非法或候选数与 `mode` 不匹配
-2. `INSPECT_EVIDENCE_MISSING`
-   - 缺关键帧、缺时间锚点或缺总时长
-3. `INSPECT_PROVIDER_UNAVAILABLE`
-   - `Gemini` 或其它图像模型不可用
-4. `INSPECT_PROVIDER_INVALID_RESPONSE`
-   - 上游返回无法解析为结构化结果
-5. `DECISION_INCONCLUSIVE`
-   - 模型无法给出足够稳定的判断
 
 ---
 
 ## 6. 一句话结论
 
-`/v1/tools/inspect` 的当前契约，本质上是“把已知 clip 或候选 clip 的关键帧序列和时间锚点交给图像多模态模型，换回结构化视觉理解或候选判断结果”的专用网关。
+`/v1/tools/inspect` 是“图片描述网关”，不是“候选决策网关”。

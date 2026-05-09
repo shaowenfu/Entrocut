@@ -631,7 +631,6 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self._set_auth_session()
         inspect_tool_input = core_server.json.dumps(
             {
-                "mode": "inspect",
                 "clip_id": clip_ids[0],
                 "question": "Describe visible actions and editing value for a travel opener.",
             },
@@ -663,10 +662,9 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
                 captured_inspect_payload.update(json)
                 self.assertEqual(headers["Authorization"], "Bearer tok_test_access_token_value_12345")
                 self.assertEqual(headers["Content-Type"], "application/json")
-                self.assertEqual(json["mode"], "describe")
-                self.assertEqual(json["candidates"][0]["clip_id"], clip_ids[0])
-                self.assertEqual(json["candidates"][0]["frames"][0]["image_base64"], _valid_jpeg_base64())
-                self.assertEqual(json["question"], "Describe visible actions and editing value for a travel opener.")
+                self.assertEqual(json["clip_id"], clip_ids[0])
+                self.assertEqual(json["image_base64"], _valid_jpeg_base64())
+                self.assertIn("Describe visible actions and editing value for a travel opener.", json["prompt"])
 
                 class _InspectResponse:
                     status_code = 200
@@ -675,22 +673,10 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
                     @staticmethod
                     def json() -> dict[str, Any]:
                         return {
-                            "question_type": "describe",
-                            "selected_clip_id": clip_ids[0],
-                            "descriptions": [
-                                {
-                                    "clip_id": clip_ids[0],
-                                    "description": "A preparation shot with travel-opener value.",
-                                    "observations": ["A subject and travel context are visible."],
-                                    "actions": ["preparing"],
-                                    "subjects": ["person"],
-                                    "scene": "indoor",
-                                    "camera": "static",
-                                    "editing_value": "Can establish departure preparation.",
-                                    "uncertainty": None,
-                                }
-                            ],
+                            "clip_id": clip_ids[0],
+                            "description": "A preparation shot with travel-opener value.",
                             "uncertainty": None,
+                            "model": "gemini-3.1-flash-lite-preview",
                         }
 
                 return _InspectResponse()
@@ -720,12 +706,14 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             )
             workspace = self._poll_workspace(project_id)
 
-        self.assertEqual(captured_inspect_payload["mode"], "describe")
+        self.assertEqual(captured_inspect_payload["clip_id"], clip_ids[0])
         self.assertEqual(workspace["runtime_state"]["retrieval_state"]["selected_candidate_id"], clip_ids[0])
         self.assertEqual(
             workspace["runtime_state"]["retrieval_state"]["inspection_summary"],
             "A preparation shot with travel-opener value.",
         )
+        inspected_clip = next(clip for clip in workspace["edit_draft"]["clips"] if clip["id"] == clip_ids[0])
+        self.assertIn("A preparation shot with travel-opener value.", inspected_clip["visual_description"])
         self.assertEqual(workspace["runtime_state"]["execution_state"]["last_tool_name"], "inspect")
         decision_event = next(item for item in captured_agent_events if item["phase"] == "planner_decision_received")
         self.assertEqual(decision_event["details"]["assistant_reply"], "我先仔细看这个 clip。")
@@ -736,7 +724,6 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         result_display = result_event["details"]["tool_result_display"]
         self.assertEqual(result_display["clip_ids"], [clip_ids[0]])
         self.assertIn("A preparation shot with travel-opener value.", result_display["body"])
-        self.assertIn("剪辑价值：Can establish departure preparation.", result_display["body"])
 
     def test_create_project_initializes_local_persistence_and_workspace_dir(self) -> None:
         response = self.client.post(
@@ -1259,7 +1246,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         record["active_task"] = running_task
         store._repository.upsert_record(record)
 
-        reloaded_store = InMemoryProjectStore(app_data_root=CORE_TEST_APPDATA_DIR.name)
+        reloaded_store = InMemoryProjectStore(app_data_root=store.app_data_root)
         workspace = reloaded_store.workspace_snapshot(project_id).model_dump()
         self.assertEqual(workspace["active_tasks"], [])
         self.assertIsNone(workspace["active_task"])

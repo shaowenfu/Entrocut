@@ -171,6 +171,18 @@ class VectorService:
                 )
             self._validate_image_base64(doc.content.image_base64, doc_id=doc.id)
 
+    def _collection_name(self) -> str:
+        return self.settings.dashvector_collection_name.strip() or "entrocut_assets"
+
+    def _partition(self) -> str:
+        return self.settings.dashvector_partition.strip() or "default"
+
+    def _embedding_model(self) -> str:
+        return self.settings.dashscope_multimodal_embedding_model.strip() or "qwen3-vl-embedding"
+
+    def _embedding_dimension(self) -> int:
+        return int(self.settings.dashscope_multimodal_dimension or 1024)
+
     def _build_image_embedding_input(self, image_base64: str, *, doc_id: str) -> list[dict[str, Any]]:
         return [{"image": self._validate_image_base64(image_base64, doc_id=doc_id)}]
 
@@ -291,13 +303,17 @@ class VectorService:
     def vectorize(self, payload: VectorizeRequest) -> dict[str, Any]:
         self._validate_vectorize_request(payload)
 
+        collection_name = self._collection_name()
+        partition = self._partition()
+        model = self._embedding_model()
+        dimension = self._embedding_dimension()
         vector_docs: list[dict[str, Any]] = []
         for doc in payload.docs:
             vector = self._compute_embedding_from_image(
                 doc.content.image_base64,
                 doc_id=doc.id,
-                model=payload.model,
-                dimension=payload.dimension,
+                model=model,
+                dimension=dimension,
             )
             vector_docs.append(
                 {
@@ -308,17 +324,13 @@ class VectorService:
             )
 
         self._insert_docs(
-            collection_name=payload.collection_name,
-            partition=payload.partition,
-            dimension=payload.dimension,
+            collection_name=collection_name,
+            partition=partition,
+            dimension=dimension,
             vector_docs=vector_docs,
         )
 
         return {
-            "collection_name": payload.collection_name,
-            "partition": payload.partition,
-            "model": payload.model,
-            "dimension": payload.dimension,
             "inserted_count": len(payload.docs),
             "results": [{"id": doc.id, "status": "inserted"} for doc in payload.docs],
             "usage": {
@@ -331,8 +343,6 @@ class VectorService:
         state = "active" if payload.active else "deleted"
         if not payload.clip_ids:
             return {
-                "collection_name": payload.collection_name,
-                "partition": payload.partition,
                 "project_id": payload.project_id,
                 "asset_id": payload.asset_id,
                 "active": payload.active,
@@ -342,7 +352,9 @@ class VectorService:
         try:
             from dashvector import Doc
 
-            collection = self._get_collection(payload.collection_name)
+            collection_name = self._collection_name()
+            partition = self._partition()
+            collection = self._get_collection(collection_name)
             docs = [
                 Doc(
                     id=clip_id,
@@ -356,13 +368,13 @@ class VectorService:
                 )
                 for clip_id in payload.clip_ids
             ]
-            result = collection.update(docs, partition=payload.partition)
+            result = collection.update(docs, partition=partition)
             result_code = getattr(result, "code", getattr(result, "status_code", None))
             if result_code not in {0, "0"}:
                 raise vectorize_write_failed(
                     "DashVector update failed.",
                     details={
-                        "collection_name": payload.collection_name,
+                        "collection_name": collection_name,
                         "status_code": result_code,
                         "message": getattr(result, "message", None),
                     },
@@ -373,11 +385,9 @@ class VectorService:
             logger.exception("DashVector asset state update failed")
             raise vector_store_unavailable(
                 f"DashVector asset state update failed: {exc}",
-                details={"collection_name": payload.collection_name, "error_type": type(exc).__name__},
+                details={"collection_name": self._collection_name(), "error_type": type(exc).__name__},
             ) from exc
         return {
-            "collection_name": payload.collection_name,
-            "partition": payload.partition,
             "project_id": payload.project_id,
             "asset_id": payload.asset_id,
             "active": payload.active,
@@ -389,27 +399,32 @@ class VectorService:
         if not payload.query_text or not payload.query_text.strip():
             raise invalid_retrieval_request("query_text is required and cannot be empty.")
 
+        collection_name = self._collection_name()
+        partition = self._partition()
+        model = self._embedding_model()
+        dimension = self._embedding_dimension()
+        topk = max(1, min(int(self.settings.dashvector_retrieval_topk or 8), 50))
         query_vector = self._compute_query_embedding(
             payload.query_text,
-            model=payload.model,
-            dimension=payload.dimension,
+            model=model,
+            dimension=dimension,
         )
         try:
-            collection = self._get_collection(payload.collection_name)
+            collection = self._get_collection(collection_name)
             result = collection.query(
                 vector=query_vector,
-                topk=payload.topk,
+                topk=topk,
                 filter=payload.filter,
-                include_vector=payload.include_vector,
-                partition=payload.partition,
-                output_fields=payload.output_fields,
+                include_vector=False,
+                partition=partition,
+                output_fields=self.settings.retrieval_output_fields,
             )
             result_code = getattr(result, "code", getattr(result, "status_code", None))
             if result_code not in {0, "0"}:
                 raise retrieval_failed(
                     "DashVector query failed.",
                     details={
-                        "collection_name": payload.collection_name,
+                        "collection_name": collection_name,
                         "status_code": result_code,
                         "message": getattr(result, "message", None),
                     },
@@ -422,16 +437,12 @@ class VectorService:
                     "score": doc.score,
                     "fields": doc.fields or {},
                 }
-                if payload.include_vector and hasattr(doc, "vector"):
-                    match["vector"] = doc.vector
                 matches.append(match)
 
             return {
-                "collection_name": payload.collection_name,
-                "partition": payload.partition,
                 "query": {
                     "query_text": payload.query_text,
-                    "topk": payload.topk,
+                    "topk": topk,
                     "filter": payload.filter,
                 },
                 "matches": matches,
@@ -446,5 +457,5 @@ class VectorService:
             logger.exception("DashVector query failed")
             raise vector_store_unavailable(
                 f"DashVector query failed: {exc}",
-                details={"collection_name": payload.collection_name, "error_type": type(exc).__name__},
+                details={"collection_name": collection_name, "error_type": type(exc).__name__},
             ) from exc

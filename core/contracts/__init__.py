@@ -144,6 +144,8 @@ class ClipModel(BaseModel):
     source_start_ms: int
     source_end_ms: int
     visual_desc: str
+    visual_description: str | None = None
+    visual_description_updated_at: str | None = None
     semantic_tags: list[str]
     confidence: float | None = None
     thumbnail_ref: str | None = None

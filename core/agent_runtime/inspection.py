@@ -16,18 +16,6 @@ DEFAULT_DESCRIBE_QUESTION = (
 )
 
 
-def inspect_candidate(*, clip: ClipModel, retrieval_score: float | None = None) -> dict[str, Any]:
-    score = 0.0 if retrieval_score is None else float(retrieval_score)
-    return {
-        "clip": clip.model_dump(),
-        "retrieval_score": round(score, 4),
-        "thumbnail_ref": clip.thumbnail_ref,
-        "source_range": {"start_ms": clip.source_start_ms, "end_ms": clip.source_end_ms},
-        "summary": f"{clip.visual_desc} ({clip.source_start_ms}-{clip.source_end_ms}ms)",
-        "why_selected": "semantic_match_and_retrieval_score",
-    }
-
-
 def pick_clip_for_inspect(*, clip_id: str | None, candidate_clip_ids: list[str], clips: list[ClipModel]) -> ClipModel:
     clips_by_id = {clip.id: clip for clip in clips}
     if clip_id and clip_id in clips_by_id:
@@ -69,25 +57,9 @@ async def describe_clip_with_server(
         clip.source_end_ms,
     )
     payload = {
-        "mode": "describe",
-        "task_summary": (task_summary or "Agent needs visual understanding before making an editing decision.").strip(),
-        "question": (question or DEFAULT_DESCRIBE_QUESTION).strip(),
-        "candidates": [
-            {
-                "clip_id": clip.id,
-                "asset_id": clip.asset_id,
-                "clip_duration_ms": max(1, int(clip.source_end_ms) - int(clip.source_start_ms)),
-                "summary": clip.visual_desc,
-                "frames": [
-                    {
-                        "frame_index": 0,
-                        "timestamp_ms": 0,
-                        "timestamp_label": "stitched_keyframes",
-                        "image_base64": image_base64,
-                    }
-                ],
-            }
-        ],
+        "clip_id": clip.id,
+        "prompt": _build_inspect_prompt(question=question, task_summary=task_summary),
+        "image_base64": image_base64,
     }
     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
 
@@ -124,22 +96,23 @@ async def describe_clip_with_server(
             details={"project_id": project_id, "clip_id": clip.id},
         )
     return {
-        "mode": "describe",
         "clip": clip.model_dump(),
         "source_range": {"start_ms": clip.source_start_ms, "end_ms": clip.source_end_ms},
         "thumbnail_ref": clip.thumbnail_ref,
-        "question": payload["question"],
+        "prompt": payload["prompt"],
         "server_response": body,
         "summary": _summarize_describe_response(body, fallback=clip.visual_desc),
     }
 
 
 def _summarize_describe_response(body: dict[str, Any], *, fallback: str) -> str:
-    descriptions = body.get("descriptions")
-    if isinstance(descriptions, list) and descriptions:
-        first = descriptions[0]
-        if isinstance(first, dict):
-            description = str(first.get("description") or "").strip()
-            if description:
-                return description
+    description = str(body.get("description") or "").strip()
+    if description:
+        return description
     return fallback
+
+
+def _build_inspect_prompt(*, question: str | None, task_summary: str | None) -> str:
+    task_text = (task_summary or "Agent needs visual understanding before making an editing decision.").strip()
+    question_text = (question or DEFAULT_DESCRIBE_QUESTION).strip()
+    return f"{task_text}\n\n{question_text}".strip()

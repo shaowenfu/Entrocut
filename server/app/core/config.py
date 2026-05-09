@@ -78,6 +78,10 @@ class Settings(BaseSettings):
     dashvector_endpoint: str | None = None
     dashvector_collection_name: str = "entrocut_assets"
     dashvector_partition: str = "default"
+    dashvector_retrieval_topk: int = 8
+    dashvector_retrieval_output_fields: str = (
+        "clip_id,asset_id,project_id,asset_state,source_start_ms,source_end_ms,frame_count"
+    )
     dashvector_timeout_seconds: int = 10
     dashvector_protocol: str = "grpc"
 
@@ -100,6 +104,10 @@ class Settings(BaseSettings):
     @property
     def requires_strict_runtime(self) -> bool:
         return self.is_production or self.is_staging
+
+    @property
+    def retrieval_output_fields(self) -> list[str]:
+        return [item.strip() for item in self.dashvector_retrieval_output_fields.split(",") if item.strip()]
 
 
 @lru_cache(maxsize=1)

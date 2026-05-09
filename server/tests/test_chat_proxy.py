@@ -268,6 +268,26 @@ def test_deepseek_custom_model_is_forwarded_to_upstream(monkeypatch) -> None:
     assert response.json()["model"] == "deepseek-v4-flash-2026"
 
 
+def test_chat_completions_rejects_redundant_stream_options(monkeypatch) -> None:
+    _configure_local_runtime(monkeypatch)
+    user = _create_user()
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers=_auth_headers(user),
+        json={
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "stream_options": {"include_usage": True},
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "INVALID_CHAT_REQUEST"
+
+
 def test_gemini_adapter_normalizes_native_response(monkeypatch) -> None:
     calls = _install_fake_gemini_sdk(
         monkeypatch,
@@ -285,8 +305,6 @@ def test_gemini_adapter_normalizes_native_response(monkeypatch) -> None:
         json={
             "provider": "google_gemini",
             "model": "gemini-3.1-flash-lite-preview",
-            "temperature": 0.2,
-            "max_tokens": 120,
             "messages": [
                 {"role": "system", "content": "You are concise."},
                 {"role": "user", "content": "Suggest a tighter opening."},

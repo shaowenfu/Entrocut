@@ -193,6 +193,7 @@ def _draft_summary(draft: EditDraftModel) -> dict[str, Any]:
                 "clip_id": clip.id,
                 "asset_id": clip.asset_id,
                 "visual_desc": clip.visual_desc,
+                "visual_description": clip.visual_description,
                 "semantic_tags": clip.semantic_tags,
             }
             for clip in active_clips[:6]

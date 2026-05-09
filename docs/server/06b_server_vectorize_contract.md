@@ -54,10 +54,6 @@ interface VectorizeDoc {
 }
 
 interface VectorizeRequest {
-  collection_name?: string;
-  partition?: string;
-  model?: string; // default: qwen3-vl-embedding
-  dimension?: number; // default: 1024
   docs: VectorizeDoc[];
 }
 ```
@@ -69,12 +65,13 @@ interface VectorizeRequest {
 3. `content.image_base64` 必须是可解析图像
 4. `source_start_ms < source_end_ms`
 5. 同一请求内不允许重复 `id`
+6. 不接受 `collection_name / partition / model / dimension`，这些来自 server config
 
 ### 3.2 当前阶段建议
 
 1. 单次请求走小批量
 2. 图像统一低清 `JPEG`
-3. `dimension` 对齐当前索引配置
+3. `dimension` 对齐 server 当前索引配置，但不暴露给请求方
 
 ---
 
@@ -87,10 +84,6 @@ interface VectorizeResultItem {
 }
 
 interface VectorizeResponse {
-  collection_name: string;
-  partition: string;
-  model: string;
-  dimension: number;
   inserted_count: number;
   results: VectorizeResultItem[];
   usage?: {

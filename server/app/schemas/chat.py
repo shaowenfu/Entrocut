@@ -9,7 +9,7 @@ class ChatMessage(BaseModel):
     role: str = Field(..., min_length=1)
     content: Any
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
 
 class ChatCompletionsRequest(BaseModel):
@@ -18,6 +18,5 @@ class ChatCompletionsRequest(BaseModel):
     custom_model: str | None = None
     provider: str | None = None
     stream: bool = False
-    stream_options: dict[str, Any] | None = None
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")

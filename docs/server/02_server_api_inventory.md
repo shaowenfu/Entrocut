@@ -30,8 +30,8 @@
 | User | `/user/usage` | `GET` | 是 | `Authorization` | Token 消耗、订阅状态、剩余额度 | current |
 | AI Proxy | `/v1/chat/completions` | `POST` | 是 | `messages`, `model`, `stream` | `OpenAI-compatible` 响应或 `SSE` | current |
 | Vector | `/v1/assets/vectorize` | `POST` | 是 | `clip contact sheets[]`, `metadata` | 向量化并入库结果 | current |
-| Retrieval | `/v1/assets/retrieval` | `POST` | 是 | `query_text`, `topk`, `filter` | 命中素材 ID、分数、元数据 | current |
-| Tool | `/v1/tools/inspect` | `POST` | 是 | `mode`, `question`, `candidates[].frames[]` | 结构化候选判定结果 | planned |
+| Retrieval | `/v1/assets/retrieval` | `POST` | 是 | `query_text`, `filter` | 命中素材 ID、分数、元数据 | current |
+| Tool | `/v1/tools/inspect` | `POST` | 是 | `clip_id`, `prompt`, `image_base64` | 单 clip 视觉描述 | current |
 
 ## 3. 模块说明
 

@@ -2,6 +2,8 @@
 
 本文档定义 `Server` 侧 `/v1/assets/vectorize` 与 `/v1/assets/retrieval` 的落地方案。目标是让 `Server` 负责：
 
+> 2026-05-09 更新：外部请求体已移除 `collection_name / partition / model / dimension / topk / include_vector / output_fields` 等底层参数。这些参数现在只来自 server config。最新字段级契约以 [06b_server_vectorize_contract.md](./06b_server_vectorize_contract.md) 和 [06c_server_retrieval_contract.md](./06c_server_retrieval_contract.md) 为准。
+
 1. 使用 `DashScope MultiModalEmbedding（百炼多模态融合向量接口）` 生成向量
 2. 使用 `DashVector Python SDK（DashVector Python SDK）` 写入和检索向量
 3. 对 `Core / Client` 暴露尽量稳定、尽量接近官方语义的 `REST API`

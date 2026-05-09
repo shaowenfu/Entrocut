@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 
 class PlannerRuntimeState(BaseModel):
+    current_user_request: dict[str, Any]
     identity: dict[str, Any]
     goal: dict[str, Any]
     scope: dict[str, Any]
@@ -143,8 +144,34 @@ def build_project_state(*, project: dict[str, Any], summary_state: str | None) -
 
 
 def build_draft_state(*, draft_summary: dict[str, Any]) -> dict[str, Any]:
+    clip_excerpt = draft_summary.get("clip_excerpt") if isinstance(draft_summary, dict) else []
+    compact_clips: list[dict[str, Any]] = []
+    if isinstance(clip_excerpt, list):
+        for index, clip in enumerate(clip_excerpt, start=1):
+            if not isinstance(clip, dict):
+                continue
+            compact_clips.append(
+                {
+                    "alias": f"clip{index}",
+                    "id": clip.get("clip_id"),
+                    "asset_id": clip.get("asset_id"),
+                    "desc": clip.get("visual_desc"),
+                    "visual_description": clip.get("visual_description"),
+                    "tags": clip.get("semantic_tags") or [],
+                }
+            )
     return {
-        "working_draft_summary": draft_summary,
+        "summary": {
+            "draft_id": draft_summary.get("draft_id"),
+            "draft_version": draft_summary.get("draft_version"),
+            "asset_count": draft_summary.get("asset_count"),
+            "clip_count": draft_summary.get("clip_count"),
+            "shot_count": draft_summary.get("shot_count"),
+            "scene_count": draft_summary.get("scene_count"),
+            "selected_scene_id": draft_summary.get("selected_scene_id"),
+            "selected_shot_id": draft_summary.get("selected_shot_id"),
+        },
+        "clips": compact_clips,
         "draft_focus": {
             "draft_version": draft_summary.get("draft_version"),
             "shot_count": draft_summary.get("shot_count"),
@@ -206,51 +233,51 @@ def build_tool_capability_state(*, capabilities: dict[str, Any], media_summary: 
             "blocking_reason": None if tool_enabled_map[name] else default_blocking_reason,
         }
 
-    return {
-        "available_tools": [
-            _tool_descriptor(
-                name="read",
-                purpose="读取当前工作事实（草案、选区、候选、约束）以避免基于过期信息决策",
-                when_to_use="在规划前需要确认当前状态、或发现上下文可能过期时",
-                when_not_to_use="仅做自然语言回复且现有上下文已足够时",
-            ),
-            _tool_descriptor(
-                name="retrieve",
-                purpose="从素材池召回与当前目标相关的候选片段",
-                when_to_use="需要寻找新素材、替换素材或补充候选时",
-                when_not_to_use="chat_mode 为 planning_only 或当前无可检索 clip 时",
-            ),
-            _tool_descriptor(
-                name="inspect",
-                purpose="深入理解已知 clip，或对少量候选进行比较、消歧与质量判断",
-                when_to_use="用户指定某个 clip、需要确认视觉细节、需要看懂某个候选、或多个候选需要进一步判优时",
-                when_not_to_use="当前没有任何可定位 clip，或只是需要从素材池寻找候选时",
-            ),
-            _tool_descriptor(
-                name="patch",
-                purpose="将结构化增量修改应用到 EditDraft",
-                when_to_use="已形成明确编辑决策并需落盘到草案时",
-                when_not_to_use="planning_only 阶段或素材候选仍不足时",
-            ),
-            _tool_descriptor(
-                name="preview",
-                purpose="生成可审阅预览以验证当前草案效果",
-                when_to_use="需要向用户展示阶段性结果或验证可视化效果时",
-                when_not_to_use="草案尚未形成可评估结构时",
-            ),
-        ],
-        "chat_mode": capabilities.get("chat_mode"),
-        "tool_policy": (
-            "planning_only 时优先澄清需求，只允许低风险操作；"
-            "editing 时按 capability 使用完整工具链。"
+    available_tools = [
+        _tool_descriptor(
+            name="read",
+            purpose="读取当前工作事实（草案、选区、候选、约束）以避免基于过期信息决策",
+            when_to_use="在规划前需要确认当前状态、或发现上下文可能过期时",
+            when_not_to_use="仅做自然语言回复且现有上下文已足够时",
         ),
+        _tool_descriptor(
+            name="retrieve",
+            purpose="从素材池召回与当前目标相关的候选片段",
+            when_to_use="需要寻找新素材、替换素材或补充候选时",
+            when_not_to_use="chat_mode 为 planning_only 或当前无可检索 clip 时",
+        ),
+        _tool_descriptor(
+            name="inspect",
+            purpose="调用视觉模型描述一个已知 clip，作为文本 Agent 的眼睛",
+            when_to_use="用户指定某个 clip、或你需要确认画面主体、动作、场景、文字、镜头细节时",
+            when_not_to_use="当前没有任何可定位 clip，或只是需要从素材池寻找候选时",
+        ),
+        _tool_descriptor(
+            name="patch",
+            purpose="将结构化增量修改应用到 EditDraft",
+            when_to_use="已形成明确编辑决策并需落盘到草案时",
+            when_not_to_use="planning_only 阶段或素材候选仍不足时",
+        ),
+        _tool_descriptor(
+            name="preview",
+            purpose="生成可审阅预览以验证当前草案效果",
+            when_to_use="需要向用户展示阶段性结果或验证可视化效果时",
+            when_not_to_use="草案尚未形成可评估结构时",
+        ),
+    ]
+    return {
+        "enabled": [tool["name"] for tool in available_tools if tool["enabled"]],
+        "disabled": {
+            tool["name"]: tool["blocking_reason"]
+            for tool in available_tools
+            if not tool["enabled"]
+        },
+        "chat_mode": capabilities.get("chat_mode"),
         "media_readiness": {
             "asset_count": media_summary.get("asset_count", 0),
             "indexed_clip_count": media_summary.get("indexed_clip_count", 0),
             "retrieval_ready": bool(media_summary.get("retrieval_ready")),
         },
-        "status": "capability-gated-tools-ready",
-        "source": "workspace_capabilities_and_media_summary",
     }
 
 
@@ -263,12 +290,12 @@ def build_working_memory_state(
     runtime_payload = runtime_state or {}
     conversation_state = runtime_payload.get("conversation_state") if isinstance(runtime_payload, dict) else {}
     retrieval_state = runtime_payload.get("retrieval_state") if isinstance(runtime_payload, dict) else {}
-    recent_decisions = [line for line in chat_history_summary if line.startswith("assistant:")][:3]
+    recent_decisions = [line for line in chat_history_summary if line.startswith("assistant:")][-3:]
     recent_observation_summary = [
         {
             "tool_name": item.get("tool_name"),
             "success": item.get("success"),
-            "summary": item.get("summary") or item.get("tool_input_summary"),
+            "summary": item.get("summary") or item.get("tool_input") or item.get("tool_input_summary"),
         }
         for item in tool_observations[-3:]
     ]
@@ -298,6 +325,14 @@ def build_runtime_state_snapshot(runtime_state: dict[str, Any] | None) -> dict[s
         "retrieval_state": payload.get("retrieval_state") or {},
         "execution_state": payload.get("execution_state") or {},
         "updated_at": payload.get("updated_at"),
+    }
+
+
+def build_current_user_request_state(*, prompt: str, target: dict[str, Any] | None) -> dict[str, Any]:
+    return {
+        "text": _normalize_text(prompt),
+        "target": target or None,
+        "priority": "must_answer_first",
     }
 
 
@@ -334,11 +369,13 @@ def build_planner_context_packet(
     tool_observations: list[dict[str, Any]],
 ) -> PlannerContextPacket:
     normalized_runtime_state = build_runtime_state_snapshot(runtime_state)
+    target_payload = target or None
     planner_runtime_state = PlannerRuntimeState(
+        current_user_request=build_current_user_request_state(prompt=prompt, target=target_payload),
         identity=build_agent_identity_state(),
         goal=build_goal_state(prompt=prompt, runtime_goal_state=normalized_runtime_state.get("goal_state")),
         scope=build_scope_state(
-            target=target,
+            target=target_payload,
             draft_summary=draft_summary,
             focus_state=normalized_runtime_state.get("focus_state"),
         ),
@@ -357,13 +394,13 @@ def build_planner_context_packet(
         trace=build_trace_state(project_id=project_id, iteration=iteration),
     )
     planner_input = {
-        "identity": planner_runtime_state.identity,
+        "current_user_request": planner_runtime_state.current_user_request,
         "goal": {
             "goal_summary": planner_runtime_state.goal["goal_summary"],
             "constraints": planner_runtime_state.goal["constraints"],
             "preferences": planner_runtime_state.goal["preferences"],
-            "success_criteria": planner_runtime_state.goal["success_criteria"],
             "open_questions": planner_runtime_state.goal["open_questions"],
+            "role": "project_background_not_current_request",
         },
         "scope": planner_runtime_state.scope,
         "project": planner_runtime_state.project,
@@ -372,9 +409,8 @@ def build_planner_context_packet(
         "capabilities": planner_runtime_state.capabilities,
         "tools": planner_runtime_state.tools,
         "memory": planner_runtime_state.memory,
-        "runtime_state": planner_runtime_state.runtime_state,
         "runtime_capabilities": planner_runtime_state.runtime_capabilities,
-        "trace": planner_runtime_state.trace,
+        "iteration": planner_runtime_state.trace["iteration"],
     }
     return PlannerContextPacket(runtime_state=planner_runtime_state, planner_input=planner_input)
 
@@ -383,14 +419,27 @@ def build_planner_system_prompt() -> str:
     return (
         "[Identity]\n"
         "You are EntroCut Core Planner, responsible for the next best editing decision.\n"
+        "[Decision Priority]\n"
+        "planner_input.current_user_request.text is the highest-priority instruction for this turn."
+        " Always answer or act on it before using goal or memory."
+        " goal is project-level background only and must not override current_user_request."
+        " memory is summarized background, not an ordered raw transcript.\n"
         "[Tool Usage Policy]\n"
-        "Use tools only when needed. Respect tools.available_tools[].enabled and capabilities.chat_mode."
+        "Use tools only when needed. Respect tools.enabled, tools.disabled, and capabilities.chat_mode."
         " Prefer read before risky operations. Use retrieve to find candidate clips."
-        " Use inspect to understand a known clip or judge a small candidate set."
-        " If the user names a specific clip or visual details are uncertain, inspect can be used without another retrieval step."
-        " When requesting inspect, provide JSON tool_input_summary with mode, clip_id when known, and a task-specific question;"
+        " Use inspect only to ask a visual model to describe one known clip."
+        " Do comparison, ranking, choice, and editing decisions yourself after reading the description."
+        " If the user names a specific clip alias from draft.clips, inspect can be used without another retrieval step."
         " for deterministic draft updates, patch; for review output, preview."
         " If chat_mode is planning_only or a tool is disabled, ask clarifying questions instead of requesting that tool.\n"
+        "[Tool Input Interfaces]\n"
+        'type ToolName = "read" | "retrieve" | "inspect" | "patch" | "preview";\n'
+        'interface ReadInput { scope?: "draft" | "conversation" | "runtime"; }\n'
+        "interface RetrieveInput { query: string; }\n"
+        "interface InspectInput { clip_id?: string; clip_alias?: string; question: string; task_summary?: string; }\n"
+        "interface PatchInput { clip_id: string; intent?: string; }\n"
+        'interface PreviewInput { reason?: string; }\n'
+        "tool_input must be a JSON object matching the selected tool. Never return stringified JSON.\n"
         "[Context Compaction Policy]\n"
         "Rely on planner_input as the single source of decision context."
         " Treat chat history as summarized memory, not raw transcript.\n"
@@ -400,7 +449,7 @@ def build_planner_system_prompt() -> str:
         "- reasoning_summary: short English planning summary\n"
         "- assistant_reply: concise Chinese reply for the user\n"
         "- tool_name: string or null\n"
-        "- tool_input_summary: string or null\n"
+        "- tool_input: object or null\n"
         '- draft_strategy: "placeholder_first_cut" | "no_change"\n'
         "Do not return markdown, code fences, or extra prose."
     )

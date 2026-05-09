@@ -37,6 +37,7 @@
 23. [2026-05-05 Client Workspace 契约修复与能力补齐日志](./2026-05-05_client_workspace_contract_improvements_journal.md)
 24. [2026-05-06 Inspect Describe Mode 落地日记](./2026-05-06_inspect_describe_mode_journal.md)
 25. [2026-05-07 Agent Chat UI 集成验收与收尾日记](./2026-05-07_agent_chat_ui_integration_cleanup_journal.md)
+26. [2026-05-09 Inspect 与工具接口契约收敛日记](./2026-05-09_inspect_and_tool_contract_simplification_journal.md)
 
 ## 当前这组日记主要覆盖的主题
 
@@ -55,6 +56,7 @@
 13. Workspace 上传、素材 lifecycle、quota、runtime model registry 与 BYOK 请求配置的跨层契约修复
 14. `Inspect describe mode`，让文本 `Agent` 能把 `Inspect` 当作视觉理解工具调用
 15. `Agent Chat UI` 生产集成、执行步骤折叠流、真实 artifact 绑定与沙盒脚手架清理
+16. `Inspect / Retrieval / Vectorize` 工具接口瘦身，隐藏实现参数，把视觉决策交回主 `Agent`
 
 ## 命名约定
 

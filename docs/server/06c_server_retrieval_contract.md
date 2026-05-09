@@ -41,30 +41,23 @@ Content-Type: application/json
 
 ```ts
 interface RetrievalRequest {
-  collection_name?: string;
-  partition?: string;
-  model?: string; // default: qwen3-vl-embedding
-  dimension?: number; // default: 1024
   query_text: string;
-  topk: number;
   filter?: string | null;
-  output_fields?: string[];
-  include_vector?: boolean; // default: false
 }
 ```
 
 ### 3.1 字段约束
 
 1. `query_text` 非空
-2. `topk > 0`
-3. `filter` 只表达搜索空间边界
-4. `include_vector` 当前建议固定为 `false`
+2. `filter` 只表达搜索空间边界
+3. 不接受 `collection_name / partition / model / dimension / topk / include_vector / output_fields`
+4. 召回数量、输出字段和向量库配置全部来自 server config
 
 ### 3.2 当前阶段建议
 
 1. `query_text` 应来自 `retrieval hypothesis` 改写
-2. `topk` 保持在 inspect 可消费范围之前的宽召回规模
-3. `output_fields` 只请求必要元数据
+2. `filter` 只用于业务域过滤，例如 project 和 asset 状态
+3. `include_vector` 固定为 false，裸向量不回传
 
 ---
 
@@ -84,8 +77,6 @@ interface RetrievalMatch {
 }
 
 interface RetrievalResponse {
-  collection_name: string;
-  partition: string;
   query: {
     query_text: string;
     topk: number;

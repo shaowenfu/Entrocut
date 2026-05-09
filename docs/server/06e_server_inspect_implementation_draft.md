@@ -2,6 +2,8 @@
 
 本文档定义 `POST /v1/tools/inspect` 在 `server` 端的实现级方案。
 
+> 2026-05-09 更新：`Inspect` 已从“候选判定网关”收敛为“单 clip 图片描述网关”。最新字段级契约以 [06d_server_inspect_contract.md](./06d_server_inspect_contract.md) 为准；本文只保留 provider、错误语义和实现背景参考，涉及 `mode / candidates / ranking / candidate_judgments` 的旧描述均视为历史方案。
+
 它不再讨论“要不要做 inspect”，而是直接回答：
 
 1. `provider mapping（提供方映射）` 怎么定

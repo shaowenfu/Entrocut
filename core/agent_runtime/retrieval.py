@@ -14,7 +14,6 @@ async def retrieve_candidates(
     project_id: str,
     query_text: str,
     draft: EditDraftModel,
-    topk: int = 8,
 ) -> list[dict[str, Any]]:
     normalized_query = (query_text or "").strip()
     if not normalized_query:
@@ -27,16 +26,6 @@ async def retrieve_candidates(
 
     payload = {
         "query_text": normalized_query,
-        "topk": max(1, min(topk, 20)),
-        "output_fields": [
-            "clip_id",
-            "asset_id",
-            "project_id",
-            "asset_state",
-            "source_start_ms",
-            "source_end_ms",
-            "frame_count",
-        ],
         "filter": f'project_id == "{project_id}" and asset_state == "active"',
     }
     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}

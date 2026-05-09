@@ -62,10 +62,6 @@ def auth_headers(test_user: dict[str, Any]) -> dict[str, str]:
 
 def _make_vectorize_payload() -> dict[str, Any]:
     return {
-        "collection_name": "entrocut_assets",
-        "partition": "default",
-        "model": "qwen3-vl-embedding",
-        "dimension": 1024,
         "docs": [
             {
                 "id": "clip_001",
@@ -103,8 +99,22 @@ class TestVectorizeValidation:
         response = client.post(
             "/v1/assets/vectorize",
             headers=auth_headers,
-            json={"collection_name": "entrocut_assets", "docs": []},
+            json={"docs": []},
         )
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "INVALID_VECTORIZE_REQUEST"
+
+    def test_rejects_redundant_vector_config_fields(self, client: TestClient, auth_headers: dict[str, str]) -> None:
+        payload = {
+            **_make_vectorize_payload(),
+            "collection_name": "entrocut_assets",
+            "partition": "default",
+            "model": "qwen3-vl-embedding",
+            "dimension": 1024,
+        }
+
+        response = client.post("/v1/assets/vectorize", headers=auth_headers, json=payload)
+
         assert response.status_code == 422
         assert response.json()["error"]["code"] == "INVALID_VECTORIZE_REQUEST"
 
@@ -122,14 +132,29 @@ class TestVectorizeValidation:
         assert response.status_code == 422
         assert response.json()["error"]["code"] == "INVALID_VECTORIZE_REQUEST"
 
+    def test_vector_index_state_rejects_redundant_vector_config_fields(
+        self, client: TestClient, auth_headers: dict[str, str]
+    ) -> None:
+        response = client.post(
+            "/v1/assets/vector-index-state",
+            headers=auth_headers,
+            json={
+                "project_id": "proj_001",
+                "asset_id": "asset_001",
+                "active": False,
+                "clip_ids": ["clip_001"],
+                "collection_name": "entrocut_assets",
+                "partition": "default",
+            },
+        )
+
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "INVALID_VECTORIZE_REQUEST"
+
 
 class TestVectorizeSuccess:
     def test_vectorize_successfully(self, client: TestClient, auth_headers: dict[str, str]) -> None:
         mock_result = {
-            "collection_name": "entrocut_assets",
-            "partition": "default",
-            "model": "qwen3-vl-embedding",
-            "dimension": 1024,
             "inserted_count": 1,
             "results": [{"id": "clip_001", "status": "inserted"}],
             "usage": {"embedding_doc_count": 1, "dashvector_write_units": 1},
@@ -144,15 +169,12 @@ class TestVectorizeSuccess:
 
         assert response.status_code == 200
         body = response.json()
-        assert body["collection_name"] == "entrocut_assets"
         assert body["inserted_count"] == 1
         assert body["results"][0]["id"] == "clip_001"
         assert body["results"][0]["status"] == "inserted"
 
     def test_vector_index_state_updates_successfully(self, client: TestClient, auth_headers: dict[str, str]) -> None:
         mock_result = {
-            "collection_name": "entrocut_assets",
-            "partition": "default",
             "project_id": "proj_001",
             "asset_id": "asset_001",
             "active": False,
@@ -232,10 +254,6 @@ class TestVectorizeErrors:
 class TestVectorizeResponseFormat:
     def test_response_includes_request_id(self, client: TestClient, auth_headers: dict[str, str]) -> None:
         mock_result = {
-            "collection_name": "entrocut_assets",
-            "partition": "default",
-            "model": "qwen3-vl-embedding",
-            "dimension": 1024,
             "inserted_count": 1,
             "results": [{"id": "clip_001", "status": "inserted"}],
             "usage": {"embedding_doc_count": 1, "dashvector_write_units": 1},
@@ -252,10 +270,6 @@ class TestVectorizeResponseFormat:
         self, client: TestClient, auth_headers: dict[str, str]
     ) -> None:
         mock_result = {
-            "collection_name": "entrocut_assets",
-            "partition": "default",
-            "model": "qwen3-vl-embedding",
-            "dimension": 1024,
             "inserted_count": 1,
             "results": [{"id": "clip_001", "status": "inserted"}],
             "usage": {"embedding_doc_count": 1, "dashvector_write_units": 1},
@@ -267,9 +281,9 @@ class TestVectorizeResponseFormat:
                 json=_make_vectorize_payload(),
             )
         body = response.json()
-        assert "collection_name" in body
-        assert "partition" in body
-        assert "model" in body
-        assert "dimension" in body
+        assert "collection_name" not in body
+        assert "partition" not in body
+        assert "model" not in body
+        assert "dimension" not in body
         assert "inserted_count" in body
         assert "results" in body

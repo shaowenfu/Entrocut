@@ -47,10 +47,6 @@ def vector_service(mock_settings: Settings) -> VectorService:
 def _make_vectorize_request() -> VectorizeRequest:
     return VectorizeRequest.model_validate(
         {
-            "collection_name": "entrocut_assets",
-            "partition": "default",
-            "model": "qwen3-vl-embedding",
-            "dimension": 1024,
             "docs": [
                 {
                     "id": "clip_001",
@@ -72,12 +68,7 @@ def _make_vectorize_request() -> VectorizeRequest:
 def _make_retrieval_request() -> AssetRetrievalRequest:
     return AssetRetrievalRequest.model_validate(
         {
-            "collection_name": "entrocut_assets",
-            "partition": "default",
-            "model": "qwen3-vl-embedding",
-            "dimension": 1024,
             "query_text": "旅行视频开头，明显带出发感的镜头",
-            "topk": 8,
             "filter": "project_id = 'proj_001'",
         }
     )

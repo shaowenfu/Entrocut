@@ -177,14 +177,13 @@ POST /v1/chat/completions
 ```ts
 interface ChatCompletionRequest {
   model: string;
+  provider?: string;
+  custom_model?: string;
   messages: Array<{
-    role: "system" | "user" | "assistant" | "tool";
+    role: "system" | "user" | "assistant";
     content: string;
-    name?: string;
   }>;
   stream?: boolean;
-  temperature?: number;
-  max_tokens?: number;
 }
 ```
 
@@ -203,9 +202,7 @@ interface ChatCompletionRequest {
       "content": "帮我剪一个高燃片段"
     }
   ],
-  "stream": true,
-  "temperature": 0.7,
-  "max_tokens": 2000
+  "stream": true
 }
 ```
 
@@ -213,6 +210,7 @@ interface ChatCompletionRequest {
 
 1. `model` 必须是 `virtual model name（虚拟模型名）`，例如 `entro-reasoning-v1`
 2. `Core` 不应传真实 `provider model name（供应商模型名）`
+3. `temperature / max_tokens / stream_options` 不对外暴露，默认策略由 server 控制
 3. `stream` 当前推荐始终为 `true`
 4. 未声明支持的参数可忽略或返回 `INVALID_REQUEST`
 

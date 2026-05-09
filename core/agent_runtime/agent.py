@@ -24,7 +24,7 @@ from runtime.helpers import (
     _request_id,
     _trimmed,
 )
-from agent_runtime.inspection import describe_clip_with_server, inspect_candidate, pick_clip_for_inspect
+from agent_runtime.inspection import describe_clip_with_server, pick_clip_for_inspect
 from agent_runtime.patching import apply_edit_draft_patch
 from agent_runtime.retrieval import retrieve_candidates
 from contracts import (
@@ -252,8 +252,6 @@ async def _request_server_planner_decision(
         "model": routing_config.get("model") or routing_config.get("effective_model") or SERVER_DEFAULT_MODEL,
         "custom_model": routing_config.get("custom_model") or None,
         "stream": False,
-        "temperature": 0.1,
-        "max_tokens": 6000,
         "messages": _build_planner_messages(
             record=record,
             project_id=project_id,
@@ -448,13 +446,6 @@ def _build_tool_call_or_raise(decision: PlannerDecisionModel) -> ToolCallModel:
         ) from exc
 
 
-def _normalize_inspect_mode(raw_mode: str) -> str:
-    normalized = _trimmed(raw_mode).lower()
-    if normalized in {"", "inspect", "describe"}:
-        return "describe"
-    return normalized
-
-
 def _active_clips(draft: EditDraftModel) -> list[ClipModel]:
     active_asset_ids = {asset.id for asset in draft.assets if asset.lifecycle_state == "active"}
     return [clip for clip in draft.clips if clip.asset_id in active_asset_ids]
@@ -586,15 +577,11 @@ def _tool_result_display(*, observation: ToolObservationModel, draft: EditDraftM
         clip_payload = output.get("clip") if isinstance(output.get("clip"), dict) else {}
         clip_id = str(clip_payload.get("id") or "")
         server_response = output.get("server_response") if isinstance(output.get("server_response"), dict) else {}
-        descriptions = server_response.get("descriptions") if isinstance(server_response.get("descriptions"), list) else []
-        first_description = descriptions[0] if descriptions and isinstance(descriptions[0], dict) else {}
-        actions = first_description.get("actions")
-        action_text = ", ".join(str(action) for action in actions) if isinstance(actions, list) else ""
+        description = str(server_response.get("description") or output.get("summary") or "").strip()
+        uncertainty = str(server_response.get("uncertainty") or "").strip()
         body_parts = [
-            str(output.get("summary") or "").strip(),
-            f"场景：{first_description.get('scene')}" if first_description.get("scene") else "",
-            f"动作：{action_text}" if action_text else "",
-            f"剪辑价值：{first_description.get('editing_value')}" if first_description.get("editing_value") else "",
+            description,
+            f"不确定性：{uncertainty}" if uncertainty else "",
         ]
         body = "\n".join(part for part in body_parts if part)
         return {
@@ -697,7 +684,6 @@ async def _execute_tool_call_todo(
                 project_id=project_id,
                 query_text=query,
                 draft=draft,
-                topk=int(tool_call.tool_input.get("topk") or 8),
             )
             matched_clip_ids = [str(item["clip_id"]) for item in matches]
             return ToolObservationModel(
@@ -722,7 +708,6 @@ async def _execute_tool_call_todo(
             )
 
         if tool_call.tool_name == "inspect":
-            mode = _normalize_inspect_mode(str(tool_call.tool_input.get("mode") or "describe"))
             clip_id = _clip_id_from_tool_input(draft, tool_call.tool_input)
             candidate_clip_ids = runtime_state.get("retrieval_state", {}).get("candidate_clip_ids") or []
             target_clip = pick_clip_for_inspect(
@@ -730,24 +715,26 @@ async def _execute_tool_call_todo(
                 candidate_clip_ids=candidate_clip_ids,
                 clips=_active_clips(draft),
             )
-            score_map = runtime_state.get("retrieval_state", {}).get("candidate_scores") or {}
-            if mode == "describe":
-                inspection = await describe_clip_with_server(
-                    access_token=access_token,
-                    project_id=project_id,
-                    draft=draft,
-                    clip=target_clip,
-                    question=_trimmed(str(tool_call.tool_input.get("question") or "")) or None,
-                    task_summary=_trimmed(str(tool_call.tool_input.get("task_summary") or decision.reasoning_summary or "")) or None,
-                )
-            else:
-                inspection = inspect_candidate(clip=target_clip, retrieval_score=score_map.get(target_clip.id))
+            inspection = await describe_clip_with_server(
+                access_token=access_token,
+                project_id=project_id,
+                draft=draft,
+                clip=target_clip,
+                question=_trimmed(str(tool_call.tool_input.get("question") or "")) or None,
+                task_summary=_trimmed(str(tool_call.tool_input.get("task_summary") or decision.reasoning_summary or "")) or None,
+            )
+            next_draft = _draft_with_clip_visual_description(
+                draft=draft,
+                clip_id=target_clip.id,
+                description=inspection["summary"],
+            )
             return ToolObservationModel(
                 tool_name="inspect",
                 success=True,
-                summary="Inspected clip visual evidence for decision making.",
+                summary="Described clip visual evidence.",
                 output=inspection,
                 state_delta={
+                    "draft_update": next_draft.model_dump(),
                     "runtime_state_update": {
                         "retrieval_state": {
                             "candidate_clip_ids": [target_clip.id],
@@ -872,6 +859,46 @@ def _apply_tool_observation_to_draft_todo(draft: EditDraftModel, observation: To
             message="Failed to apply tool state delta to draft.",
             details={"error": str(exc)},
         ) from exc
+
+
+def _draft_with_clip_visual_description(
+    *,
+    draft: EditDraftModel,
+    clip_id: str,
+    description: str,
+) -> EditDraftModel:
+    normalized_description = description.strip()
+    if not normalized_description:
+        return draft
+
+    updated_at = _now_iso()
+    next_clips: list[ClipModel] = []
+    changed = False
+    for clip in draft.clips:
+        if clip.id != clip_id:
+            next_clips.append(clip)
+            continue
+        previous = (clip.visual_description or "").strip()
+        previous_parts = [part.strip() for part in previous.split("\n\n") if part.strip()]
+        if normalized_description in previous_parts:
+            combined_description = previous
+        elif previous:
+            combined_description = f"{previous}\n\n{normalized_description}"
+        else:
+            combined_description = normalized_description
+        next_clips.append(
+            clip.model_copy(
+                update={
+                    "visual_description": combined_description,
+                    "visual_description_updated_at": updated_at,
+                }
+            )
+        )
+        changed = True
+
+    if not changed:
+        return draft
+    return _bump_draft(draft, clips=next_clips, updated_at=updated_at)
 
 
 async def _run_chat_agent_loop(
