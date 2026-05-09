@@ -63,7 +63,8 @@ async def retrieve_candidates(
                 "score": float(item.get("score") or 0.0),
                 "source_start_ms": int(fields.get("source_start_ms") or clips_by_id[clip_id].source_start_ms),
                 "source_end_ms": int(fields.get("source_end_ms") or clips_by_id[clip_id].source_end_ms),
-                "frame_count": int(fields.get("frame_count") or 0),
+                "visual_desc": clips_by_id[clip_id].visual_desc or "none",
+                "semantic_tags": clips_by_id[clip_id].semantic_tags,
             }
         )
     return normalized_matches

@@ -215,7 +215,15 @@ class LocalStateRepository:
 
         turns_by_project: dict[str, list[dict[str, Any]]] = {}
         for row in turn_rows:
-            turns_by_project.setdefault(row["project_id"], []).append(json.loads(row["payload_json"]))
+            turn_payload = json.loads(row["payload_json"])
+            if (
+                isinstance(turn_payload, dict)
+                and turn_payload.get("role") == "assistant"
+                and "assistant_reply" not in turn_payload
+            ):
+                turn_payload["assistant_reply"] = str(turn_payload.get("reasoning_summary") or "")
+                turn_payload.pop("reasoning_summary", None)
+            turns_by_project.setdefault(row["project_id"], []).append(turn_payload)
 
         assets_by_project: dict[str, dict[str, dict[str, Any]]] = {}
         for row in asset_rows:

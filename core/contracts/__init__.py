@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ProjectLifecycleState = Literal["active", "archived"]
 AssetLifecycleState = Literal["active", "deleted"]
@@ -18,8 +18,10 @@ LockedShotField = Literal["source_range", "order", "clip_id", "enabled"]
 LockedSceneField = Literal["shot_ids", "order", "enabled", "intent"]
 DecisionType = Literal["EDIT_DRAFT_PATCH"]
 PlannerDecisionStatus = Literal["final", "requires_tool"]
-PlannerDraftStrategy = Literal["placeholder_first_cut", "no_change"]
 ToolName = Literal["read", "retrieve", "inspect", "patch", "preview"]
+ReadTargetType = Literal["draft_tree", "storyline", "scene", "shot", "clip"]
+PatchOperationType = Literal["insert_shot", "replace_shot", "delete_shot"]
+FocusTargetType = Literal["project", "scene", "shot", "clip"]
 ChatMode = Literal["planning_only", "editing"]
 ProjectSummaryState = Literal["blank", "planning", "media_processing", "editing", "exporting", "attention_required"]
 ConversationFeedbackState = Literal["unknown", "clarify", "approve", "reject", "revise"]
@@ -208,7 +210,7 @@ class AssistantDecisionTurnModel(BaseModel):
     role: Literal["assistant"]
     type: Literal["decision"]
     decision_type: DecisionType
-    reasoning_summary: str
+    assistant_reply: str
     ops: list[AssistantDecisionOperationModel]
     agent_steps: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -363,14 +365,39 @@ class ChatRoutingConfig(BaseModel):
     custom_model: str | None = None
 
 
+class PlannerFocusModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_type: FocusTargetType
+    target_id: str = Field(min_length=1)
+
+
 class PlannerDecisionModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     status: PlannerDecisionStatus
-    reasoning_summary: str
-    assistant_reply: str
     tool_name: str | None = None
     tool_input: dict[str, Any] | None = None
-    tool_input_summary: str | None = None
-    draft_strategy: PlannerDraftStrategy = "placeholder_first_cut"
+    assistant_reply: str | None = None
+    current_focus: PlannerFocusModel
+
+    @model_validator(mode="after")
+    def validate_status_contract(self) -> "PlannerDecisionModel":
+        if self.status == "requires_tool":
+            if not self.tool_name:
+                raise ValueError("tool_name is required when status is requires_tool")
+            if self.tool_input is None:
+                raise ValueError("tool_input is required when status is requires_tool")
+            if self.assistant_reply is not None:
+                raise ValueError("assistant_reply must be null when status is requires_tool")
+            return self
+        if self.tool_name is not None:
+            raise ValueError("tool_name must be null when status is final")
+        if self.tool_input is not None:
+            raise ValueError("tool_input must be null when status is final")
+        if not (self.assistant_reply or "").strip():
+            raise ValueError("assistant_reply is required when status is final")
+        return self
 
 
 class ToolCallModel(BaseModel):
@@ -384,6 +411,66 @@ class ToolObservationModel(BaseModel):
     summary: str
     output: dict[str, Any] = Field(default_factory=dict)
     state_delta: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReadInputModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_type: ReadTargetType
+    target_id: str = Field(min_length=1)
+
+
+class InspectInputModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    clip_id: str = Field(min_length=1)
+    inspection_goal: str = Field(min_length=1)
+
+
+class InsertShotOperationModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    op: Literal["insert_shot"]
+    scene_id: str = Field(min_length=1)
+    index: int = Field(ge=0)
+    clip_id: str = Field(min_length=1)
+    source_in_ms: int = Field(ge=0)
+    source_out_ms: int = Field(gt=0)
+    intent: str = Field(min_length=1)
+
+
+class ReplaceShotOperationModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    op: Literal["replace_shot"]
+    shot_id: str = Field(min_length=1)
+    clip_id: str = Field(min_length=1)
+    source_in_ms: int = Field(ge=0)
+    source_out_ms: int = Field(gt=0)
+    intent: str = Field(min_length=1)
+
+
+class DeleteShotOperationModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    op: Literal["delete_shot"]
+    shot_id: str = Field(min_length=1)
+    deletion_reason: str = Field(min_length=1)
+
+
+AgentPatchOperationModel = InsertShotOperationModel | ReplaceShotOperationModel | DeleteShotOperationModel
+
+
+class PatchInputModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operations: list[AgentPatchOperationModel] = Field(min_length=1)
+
+
+class PreviewInputModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1)
 
 
 class AgentLoopResultModel(BaseModel):
@@ -430,15 +517,17 @@ class RenderPlan(BaseModel):
 
 
 class PatchOperationModel(BaseModel):
-    op: Literal["insert_shot", "replace_shot", "trim_shot", "delete_shot", "reorder_shot"]
+    op: Literal["insert_shot", "replace_shot", "delete_shot"]
+    scene_id: str | None = None
     shot_id: str | None = None
     clip_id: str | None = None
     index: int | None = None
     source_in_ms: int | None = None
     source_out_ms: int | None = None
+    intent: str | None = None
+    deletion_reason: str | None = None
 
 
 class EditDraftPatchModel(BaseModel):
     operations: list[PatchOperationModel] = Field(default_factory=list)
-    reasoning_summary: str | None = None
     scope: Literal["project", "scene", "shot"] = "project"

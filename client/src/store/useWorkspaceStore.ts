@@ -100,7 +100,7 @@ export interface AssistantDecisionTurn {
   role: "assistant";
   type: "decision";
   decision_type: string;
-  reasoning_summary: string;
+  assistant_reply: string;
   ops: AssistantDecisionOperation[];
   agent_steps?: CoreAgentStepItem[];
 }

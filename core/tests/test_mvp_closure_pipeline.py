@@ -13,7 +13,7 @@ if str(CORE_DIR) not in sys.path:
 
 from agent_runtime.patching import apply_edit_draft_patch
 from application.store import InMemoryProjectStore
-from contracts import AssetModel, ClipModel, EditDraftModel, EditDraftPatchModel, ShotModel, TaskModel
+from contracts import AssetModel, ClipModel, EditDraftModel, EditDraftPatchModel, SceneModel, ShotModel, TaskModel
 from media.rendering import build_render_plan
 from runtime.helpers import _entity_id, _now_iso
 
@@ -73,13 +73,42 @@ class MvpClosurePipelineTest(unittest.TestCase):
         self.assertEqual(plan.estimated_duration_ms, 3000)
 
     def test_apply_patch_insert_and_reorder(self) -> None:
-        draft = self._make_draft().model_copy(update={"shots": []})
+        draft = self._make_draft().model_copy(
+            update={
+                "shots": [],
+                "scenes": [
+                    SceneModel(
+                        id="scene_1",
+                        shot_ids=[],
+                        order=0,
+                        enabled=True,
+                        label="Scene 1",
+                        intent="assemble first cut",
+                    )
+                ],
+            }
+        )
         patch = EditDraftPatchModel(
             operations=[
-                {"op": "insert_shot", "clip_id": "clip_1", "index": 0},
-                {"op": "insert_shot", "clip_id": "clip_1", "index": 1},
+                {
+                    "op": "insert_shot",
+                    "scene_id": "scene_1",
+                    "clip_id": "clip_1",
+                    "index": 0,
+                    "source_in_ms": 0,
+                    "source_out_ms": 3000,
+                    "intent": "assemble first cut",
+                },
+                {
+                    "op": "insert_shot",
+                    "scene_id": "scene_1",
+                    "clip_id": "clip_1",
+                    "index": 1,
+                    "source_in_ms": 3000,
+                    "source_out_ms": 5000,
+                    "intent": "assemble first cut",
+                },
             ],
-            reasoning_summary="assemble first cut",
         )
         next_draft = apply_edit_draft_patch(draft, patch)
         self.assertEqual(len(next_draft.shots), 2)

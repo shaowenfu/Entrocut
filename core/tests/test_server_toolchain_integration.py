@@ -185,15 +185,42 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             )
         return matches
 
-    def test_chat_runs_planner_first_and_applies_placeholder_edit(self) -> None:
-        project_id, clip_ids = self._create_project()
+    def _final_decision(self, assistant_reply: str, *, focus_type: str = "project", focus_id: str = "project") -> str:
+        return core_server.json.dumps(
+            {
+                "status": "final",
+                "tool_name": None,
+                "tool_input": None,
+                "assistant_reply": assistant_reply,
+                "current_focus": {"target_type": focus_type, "target_id": focus_id},
+            },
+            ensure_ascii=False,
+        )
+
+    def _tool_decision(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        *,
+        focus_type: str = "project",
+        focus_id: str = "project",
+    ) -> str:
+        return core_server.json.dumps(
+            {
+                "status": "requires_tool",
+                "tool_name": tool_name,
+                "tool_input": tool_input,
+                "assistant_reply": None,
+                "current_focus": {"target_type": focus_type, "target_id": focus_id},
+            },
+            ensure_ascii=False,
+        )
+
+    def test_chat_runs_planner_prompt_and_final_reply_without_implicit_edit(self) -> None:
+        project_id, _ = self._create_project()
         self._set_auth_session()
 
-        planner_json = (
-            '{"status":"final","reasoning_summary":"plan first, tools later",'
-            '"assistant_reply":"我先基于当前草案给出一个占位初剪，后续再接 planner 驱动工具链。",'
-            '"tool_name":null,"tool_input_summary":null,"draft_strategy":"placeholder_first_cut"}'
-        )
+        planner_json = self._final_decision("我会先基于当前草案给出建议，不会隐式修改草稿。")
 
         async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
             self.assertTrue(url.endswith("/v1/chat/completions"))
@@ -204,7 +231,13 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             self.assertEqual(json["stream"], False)
             self.assertNotIn("stream_options", json)
             self.assertIsInstance(json["messages"], list)
-            self.assertGreaterEqual(len(json["messages"]), 2)
+            self.assertEqual(len(json["messages"]), 1)
+            prompt_text = json["messages"][0]["content"]
+            self.assertIn("=== 1. System Context & Global State", prompt_text)
+            self.assertIn("=== 4. Available Tools", prompt_text)
+            self.assertIn("什么时候调用", prompt_text)
+            self.assertNotIn("Workspace Capability", prompt_text)
+            self.assertNotIn("Tool Availability", prompt_text)
 
             class _DummyResponse:
                 status_code = 200
@@ -228,26 +261,21 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             self.assertEqual(chat_response.status_code, 200)
             workspace = self._poll_workspace(project_id)
 
-        self.assertGreaterEqual(len(workspace["edit_draft"]["shots"]), 1)
-        self.assertEqual(workspace["edit_draft"]["shots"][0]["clip_id"], clip_ids[0])
+        self.assertEqual(len(workspace["edit_draft"]["shots"]), 0)
         assistant_turn = [turn for turn in workspace["chat_turns"] if turn.get("role") == "assistant"][-1]
-        self.assertIn("占位初剪", assistant_turn["reasoning_summary"])
+        self.assertIn("不会隐式修改草稿", assistant_turn["assistant_reply"])
         op_actions = [op["action"] for op in assistant_turn["ops"]]
         self.assertIn("planner_context_assembled", op_actions)
         self.assertIn("planner_decision_finalized", op_actions)
         self.assertIn("agent_tool_execution_loop", op_actions)
-        self.assertIn("placeholder_edit_draft_applied", op_actions)
+        self.assertIn("edit_draft_state_finalized", op_actions)
         self.assertEqual(store.pending_background_task_count(project_id), 0)
 
     def test_byok_chat_uses_custom_endpoint_model_and_headers(self) -> None:
         response = self.client.post("/api/v1/projects", json={"title": "BYOK Custom"})
         self.assertEqual(response.status_code, 200)
         project_id = response.json()["project"]["id"]
-        planner_json = (
-            '{"status":"final","reasoning_summary":"byok custom route",'
-            '"assistant_reply":"已使用自定义 BYOK 路由。","tool_name":null,'
-            '"tool_input_summary":null,"draft_strategy":"no_change"}'
-        )
+        planner_json = self._final_decision("已使用自定义 BYOK 路由。")
 
         async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
             self.assertEqual(url, "https://api.deepseek.com/chat/completions")
@@ -298,16 +326,8 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self._set_auth_session()
 
         planner_sequence = [
-            (
-                '{"status":"requires_tool","reasoning_summary":"need retrieve before finalize",'
-                '"assistant_reply":"我先检索候选片段。","tool_name":"retrieve",'
-                '"tool_input_summary":"departure","draft_strategy":"no_change"}'
-            ),
-            (
-                '{"status":"final","reasoning_summary":"retrieval done, finalize",'
-                '"assistant_reply":"已检索完成并生成建议。","tool_name":null,'
-                '"tool_input_summary":null,"draft_strategy":"placeholder_first_cut"}'
-            ),
+            self._tool_decision("retrieve", {"query": "departure"}),
+            self._final_decision("已检索完成并生成建议。"),
         ]
 
         async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
@@ -336,19 +356,24 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             self.assertEqual(chat_response.status_code, 200)
             workspace = self._poll_workspace(project_id)
 
-        self.assertGreaterEqual(len(workspace["edit_draft"]["shots"]), 1)
+        self.assertEqual(len(workspace["edit_draft"]["shots"]), 0)
         assistant_turn = [turn for turn in workspace["chat_turns"] if turn.get("role") == "assistant"][-1]
-        self.assertIn("检索完成", assistant_turn["reasoning_summary"])
+        self.assertIn("检索完成", assistant_turn["assistant_reply"])
         self.assertEqual(store.pending_background_task_count(project_id), 0)
 
     def test_chat_fails_when_tool_execution_invalid(self) -> None:
         project_id, _ = self._create_project()
         self._set_auth_session()
 
-        planner_json = (
-            '{"status":"requires_tool","reasoning_summary":"invalid tool requested",'
-            '"assistant_reply":"调用不存在工具。","tool_name":"transcode",'
-            '"tool_input_summary":"{}", "draft_strategy":"no_change"}'
+        planner_json = core_server.json.dumps(
+            {
+                "status": "requires_tool",
+                "tool_name": "transcode",
+                "tool_input": {},
+                "assistant_reply": None,
+                "current_focus": {"target_type": "project", "target_id": "project"},
+            },
+            ensure_ascii=False,
         )
 
         async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
@@ -379,18 +404,26 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
     def test_chat_tool_patch_writeback_updates_draft(self) -> None:
         project_id, clip_ids = self._create_project()
         self._set_auth_session()
-        patch_tool_input = core_server.json.dumps({"clip_id": clip_ids[0]}, ensure_ascii=False)
         planner_sequence = [
-            (
-                '{"status":"requires_tool","reasoning_summary":"patch once",'
-                '"assistant_reply":"先执行一次 patch。","tool_name":"patch",'
-                f'"tool_input_summary":{core_server.json.dumps(patch_tool_input)}, "draft_strategy":"no_change"}}'
+            self._tool_decision(
+                "patch",
+                {
+                    "operations": [
+                        {
+                            "op": "insert_shot",
+                            "scene_id": "root",
+                            "index": 0,
+                            "clip_id": clip_ids[0],
+                            "source_in_ms": 0,
+                            "source_out_ms": 3000,
+                            "intent": "补一刀节奏",
+                        }
+                    ]
+                },
+                focus_type="clip",
+                focus_id=clip_ids[0],
             ),
-            (
-                '{"status":"final","reasoning_summary":"patched done",'
-                '"assistant_reply":"补丁已完成。","tool_name":null,'
-                '"tool_input_summary":null,"draft_strategy":"no_change"}'
-            ),
+            self._final_decision("补丁已完成。", focus_type="clip", focus_id=clip_ids[0]),
         ]
 
         async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
@@ -420,11 +453,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
     def test_chat_fails_when_loop_exhausts_iterations(self) -> None:
         project_id, _ = self._create_project()
         self._set_auth_session()
-        planner_json = (
-            '{"status":"requires_tool","reasoning_summary":"keep reading",'
-            '"assistant_reply":"继续读取。","tool_name":"read",'
-            '"tool_input_summary":"{}", "draft_strategy":"no_change"}'
-        )
+        planner_json = self._tool_decision("read", {"target_type": "draft_tree", "target_id": "root"})
 
         async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
             class _DummyResponse:
@@ -456,17 +485,13 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         project_id, _ = self._create_project()
         self._set_auth_session()
 
-        captured_context: dict[str, Any] = {}
-        planner_json = (
-            '{"status":"final","reasoning_summary":"context checked",'
-            '"assistant_reply":"上下文已完成结构化。","tool_name":null,'
-            '"tool_input_summary":null,"draft_strategy":"no_change"}'
-        )
+        captured_prompt: dict[str, str] = {}
+        planner_json = self._final_decision("上下文已完成结构化。", focus_type="scene", focus_id="scene_focus_1")
 
         async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
             messages = json.get("messages", [])
-            user_message = next((item for item in messages if item.get("role") == "user"), {})
-            captured_context.update(core_server.json.loads(user_message.get("content", "{}")))
+            self.assertEqual(len(messages), 1)
+            captured_prompt["content"] = str(messages[0].get("content") or "")
 
             class _DummyResponse:
                 status_code = 200
@@ -490,14 +515,13 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             self.assertEqual(chat_response.status_code, 200)
             workspace = self._poll_workspace(project_id)
 
-        self.assertEqual(captured_context["scope"]["scope_type"], "scene")
-        self.assertEqual(captured_context["project"]["summary_state"], "editing")
-        self.assertEqual(captured_context["capabilities"]["chat_mode"], "editing")
-        self.assertTrue(captured_context["media"]["retrieval_ready"])
-        self.assertEqual(captured_context["current_user_request"]["target"]["scene_id"], "scene_focus_1")
-        self.assertNotIn("runtime_state", captured_context)
-        self.assertIn("read", captured_context["tools"]["enabled"])
-        self.assertNotIn("user: 做一个旅行视频开头", captured_context["memory"]["recent_chat_summary"])
+        prompt_text = captured_prompt["content"]
+        self.assertIn("selected_scene_id: scene_focus_1", prompt_text)
+        self.assertIn("=== 4. Available Tools", prompt_text)
+        self.assertIn("什么时候调用", prompt_text)
+        self.assertNotIn("planner_input", prompt_text)
+        self.assertNotIn("Workspace Capability", prompt_text)
+        self.assertNotIn("Tool Availability", prompt_text)
         self.assertEqual(workspace["runtime_state"]["focus_state"]["scene_id"], "scene_focus_1")
 
     def test_clear_project_chat_turns_removes_history_and_conversation_state(self) -> None:
@@ -506,11 +530,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         project_id = response.json()["project"]["id"]
         self._set_auth_session()
 
-        planner_json = (
-            '{"status":"final","reasoning_summary":"answer identity",'
-            '"assistant_reply":"我是 EntroCut Core Planner。","tool_name":null,'
-            '"tool_input":null,"draft_strategy":"no_change"}'
-        )
+        planner_json = self._final_decision("我是 EntroCut Core Planner。")
 
         async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
             class _DummyResponse:
@@ -543,11 +563,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         project_id = response.json()["project"]["id"]
         self._set_auth_session()
 
-        planner_json = (
-            '{"status":"requires_tool","reasoning_summary":"try retrieve before media ready",'
-            '"assistant_reply":"先检索素材。","tool_name":"retrieve",'
-            '"tool_input_summary":"travel", "draft_strategy":"no_change"}'
-        )
+        planner_json = self._tool_decision("retrieve", {"query": "travel"})
 
         async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
             class _DummyResponse:
@@ -579,21 +595,13 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self.assertEqual(workspace["runtime_state"]["goal_state"]["brief"], "先帮我规划一个旅行片头")
         self.assertEqual(workspace["runtime_state"]["focus_state"]["scope_type"], "project")
 
-    def test_retrieve_tool_updates_runtime_retrieval_state(self) -> None:
+    def test_retrieve_tool_records_observation_without_runtime_retrieval_state_dependency(self) -> None:
         project_id, _ = self._create_project()
         self._set_auth_session()
 
         planner_sequence = [
-            (
-                '{"status":"requires_tool","reasoning_summary":"retrieve candidates first",'
-                '"assistant_reply":"我先召回候选。","tool_name":"retrieve",'
-                '"tool_input_summary":"departure", "draft_strategy":"no_change"}'
-            ),
-            (
-                '{"status":"final","reasoning_summary":"retrieval completed",'
-                '"assistant_reply":"已完成候选召回。","tool_name":null,'
-                '"tool_input_summary":null, "draft_strategy":"no_change"}'
-            ),
+            self._tool_decision("retrieve", {"query": "departure"}),
+            self._final_decision("已完成候选召回。"),
         ]
 
         async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
@@ -621,32 +629,29 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             )
             workspace = self._poll_workspace(project_id)
 
-        retrieval_state = workspace["runtime_state"]["retrieval_state"]
-        self.assertEqual(retrieval_state["last_query"], "departure")
-        self.assertGreaterEqual(len(retrieval_state["candidate_clip_ids"]), 1)
+        assistant_turn = [turn for turn in workspace["chat_turns"] if turn.get("role") == "assistant"][-1]
+        self.assertIn("候选召回", assistant_turn["assistant_reply"])
+        result_events = [
+            step
+            for step in assistant_turn["agent_steps"]
+            if step["phase"] == "tool_observation_recorded" and step["details"]["tool_name"] == "retrieve"
+        ]
+        self.assertEqual(len(result_events), 1)
+        self.assertGreaterEqual(len(result_events[0]["details"]["tool_result_display"]["clip_ids"]), 1)
         self.assertEqual(workspace["runtime_state"]["execution_state"]["last_tool_name"], "retrieve")
 
     def test_inspect_describe_tool_calls_server_with_clip_evidence(self) -> None:
         project_id, clip_ids = self._create_project()
         self._set_auth_session()
-        inspect_tool_input = core_server.json.dumps(
-            {
-                "clip_id": clip_ids[0],
-                "question": "Describe visible actions and editing value for a travel opener.",
-            },
-            ensure_ascii=False,
-        )
+        inspection_goal = "Describe visible actions and editing value for a travel opener."
         planner_responses = [
-            (
-                '{"status":"requires_tool","reasoning_summary":"need visual details",'
-                '"assistant_reply":"我先仔细看这个 clip。","tool_name":"inspect",'
-                f'"tool_input_summary":{core_server.json.dumps(inspect_tool_input)}, "draft_strategy":"no_change"}}'
+            self._tool_decision(
+                "inspect",
+                {"clip_id": clip_ids[0], "inspection_goal": inspection_goal},
+                focus_type="clip",
+                focus_id=clip_ids[0],
             ),
-            (
-                '{"status":"final","reasoning_summary":"visual description available",'
-                '"assistant_reply":"这个 clip 适合作为准备出发的开场。","tool_name":null,'
-                '"tool_input_summary":null, "draft_strategy":"no_change"}'
-            ),
+            self._final_decision("这个 clip 适合作为准备出发的开场。", focus_type="clip", focus_id=clip_ids[0]),
         ]
         captured_inspect_payload: dict[str, Any] = {}
         captured_agent_events: list[dict[str, Any]] = []
@@ -664,7 +669,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
                 self.assertEqual(headers["Content-Type"], "application/json")
                 self.assertEqual(json["clip_id"], clip_ids[0])
                 self.assertEqual(json["image_base64"], _valid_jpeg_base64())
-                self.assertIn("Describe visible actions and editing value for a travel opener.", json["prompt"])
+                self.assertIn(inspection_goal, json["prompt"])
 
                 class _InspectResponse:
                     status_code = 200
@@ -707,16 +712,11 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             workspace = self._poll_workspace(project_id)
 
         self.assertEqual(captured_inspect_payload["clip_id"], clip_ids[0])
-        self.assertEqual(workspace["runtime_state"]["retrieval_state"]["selected_candidate_id"], clip_ids[0])
-        self.assertEqual(
-            workspace["runtime_state"]["retrieval_state"]["inspection_summary"],
-            "A preparation shot with travel-opener value.",
-        )
         inspected_clip = next(clip for clip in workspace["edit_draft"]["clips"] if clip["id"] == clip_ids[0])
         self.assertIn("A preparation shot with travel-opener value.", inspected_clip["visual_description"])
         self.assertEqual(workspace["runtime_state"]["execution_state"]["last_tool_name"], "inspect")
         decision_event = next(item for item in captured_agent_events if item["phase"] == "planner_decision_received")
-        self.assertEqual(decision_event["details"]["assistant_reply"], "我先仔细看这个 clip。")
+        self.assertIsNone(decision_event["details"]["assistant_reply"])
         tool_call_event = next(item for item in captured_agent_events if item["phase"] == "tool_execution_requested")
         self.assertNotIn("tool_input_summary", tool_call_event["details"])
         self.assertEqual(tool_call_event["details"]["tool_display"]["clip_ids"], [clip_ids[0]])
@@ -784,11 +784,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         project_id = response.json()["project"]["id"]
         self._set_auth_session()
 
-        planner_json = (
-            '{"status":"final","reasoning_summary":"need more constraints",'
-            '"assistant_reply":"请先告诉我目标时长和风格。","tool_name":null,'
-            '"tool_input_summary":null,"draft_strategy":"no_change"}'
-        )
+        planner_json = self._final_decision("请先告诉我目标时长和风格。")
 
         async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
             class _DummyResponse:
@@ -814,18 +810,14 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             workspace = self._poll_workspace(project_id)
 
         assistant_turn = [turn for turn in workspace["chat_turns"] if turn.get("role") == "assistant"][-1]
-        self.assertIn("目标时长", assistant_turn["reasoning_summary"])
+        self.assertIn("目标时长", assistant_turn["assistant_reply"])
         self.assertEqual(len(workspace["edit_draft"]["shots"]), 0)
 
     def test_persistence_tables_restore_workspace_state_after_reload(self) -> None:
         project_id, _ = self._create_project()
         self._set_auth_session()
 
-        planner_json = (
-            '{"status":"final","reasoning_summary":"persist reload",'
-            '"assistant_reply":"持久化重载测试。","tool_name":null,'
-            '"tool_input_summary":null,"draft_strategy":"placeholder_first_cut"}'
-        )
+        planner_json = self._final_decision("持久化重载测试。")
 
         async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
             class _DummyResponse:
@@ -854,7 +846,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         reloaded_store = InMemoryProjectStore(app_data_root=store.app_data_root)
         persisted = reloaded_store.get_project_or_raise(project_id)
         self.assertEqual(len(persisted["chat_turns"]), 2)
-        self.assertGreaterEqual(len(persisted["edit_draft"]["shots"]), 1)
+        self.assertEqual(len(persisted["edit_draft"]["shots"]), 0)
         self.assertGreaterEqual(int(persisted["sequence"]), 1)
 
         connection = sqlite3.connect(store.db_path)
@@ -995,11 +987,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self.assertEqual(import_response.status_code, 200)
         self.assertEqual(import_response.json()["task"]["slot"], "media")
 
-        planner_json = (
-            '{"status":"final","reasoning_summary":"slot-compatible chat",'
-            '"assistant_reply":"媒体任务运行时仍允许 chat。","tool_name":null,'
-            '"tool_input_summary":null,"draft_strategy":"placeholder_first_cut"}'
-        )
+        planner_json = self._final_decision("媒体任务运行时仍允许 chat。")
 
         async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
             class _DummyResponse:
@@ -1025,7 +1013,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             self.assertEqual(chat_response.json()["task"]["slot"], "agent")
             workspace = self._poll_workspace(project_id)
 
-        self.assertGreaterEqual(len(workspace["edit_draft"]["shots"]), 1)
+        self.assertEqual(len([turn for turn in workspace["chat_turns"] if turn.get("role") == "assistant"]), 1)
 
     def test_assets_import_emits_asset_capability_and_summary_events(self) -> None:
         response = self.client.post("/api/v1/projects", json={})
@@ -1321,14 +1309,30 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self.assertTrue(all(asset["indexed_clip_count"] == 2 for asset in assets))
 
     def test_export_writes_artifact_into_project_workspace_exports_dir(self) -> None:
-        project_id, _ = self._create_project()
+        project_id, clip_ids = self._create_project()
         self._set_auth_session()
 
-        planner_json = (
-            '{"status":"final","reasoning_summary":"export setup",'
-            '"assistant_reply":"先生成一个占位初剪。","tool_name":null,'
-            '"tool_input_summary":null,"draft_strategy":"placeholder_first_cut"}'
-        )
+        planner_sequence = [
+            self._tool_decision(
+                "patch",
+                {
+                    "operations": [
+                        {
+                            "op": "insert_shot",
+                            "scene_id": "root",
+                            "index": 0,
+                            "clip_id": clip_ids[0],
+                            "source_in_ms": 0,
+                            "source_out_ms": 3000,
+                            "intent": "生成可导出的初剪片段",
+                        }
+                    ]
+                },
+                focus_type="clip",
+                focus_id=clip_ids[0],
+            ),
+            self._final_decision("已生成可导出的初剪。", focus_type="clip", focus_id=clip_ids[0]),
+        ]
 
         async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
             class _DummyResponse:
@@ -1337,11 +1341,11 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
                 @staticmethod
                 def json() -> dict[str, Any]:
                     return {
-                        "choices": [{"message": {"content": planner_json}}],
+                        "choices": [{"message": {"content": planner_sequence.pop(0)}}],
                         "usage": {"prompt_tokens": 80, "completion_tokens": 28, "total_tokens": 108},
                     }
 
-                text = planner_json
+                text = "ok"
 
             return _DummyResponse()
 

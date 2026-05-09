@@ -136,7 +136,7 @@ export interface CoreChatAssistantTurn {
   role: "assistant";
   type: "decision";
   decision_type: string;
-  reasoning_summary: string;
+  assistant_reply: string;
   ops: CoreAssistantDecisionOperation[];
   agent_steps?: CoreAgentStepItem[];
 }
@@ -266,7 +266,6 @@ export interface CoreAgentStepDisplayPayload {
 export interface CoreAgentStepDetails extends Record<string, unknown> {
   iteration?: number;
   status?: string;
-  draft_strategy?: string;
   tool_name?: string | null;
   assistant_reply?: string;
   tool_display?: CoreAgentStepDisplayPayload;

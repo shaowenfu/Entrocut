@@ -418,7 +418,7 @@ function sanitizeFinalAssistantMessage(summary: string): string {
 }
 
 function AgentFinalMessageView({ turn }: { turn: AssistantDecisionTurn }) {
-  const finalMessage = sanitizeFinalAssistantMessage(turn.reasoning_summary);
+  const finalMessage = sanitizeFinalAssistantMessage(turn.assistant_reply);
 
   return (
     <article className="decision-card">
@@ -1064,7 +1064,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     }
     latestAssistantIdRef.current = latest.id;
     const assistantTurn = latest as AssistantDecisionTurn;
-    setReasoningOverlay(assistantTurn.reasoning_summary);
+    setReasoningOverlay(assistantTurn.assistant_reply);
     window.setTimeout(() => setReasoningOverlay(null), 2200);
     if (storyboard[0]) {
       setPatchPulseId(storyboard[0].id);

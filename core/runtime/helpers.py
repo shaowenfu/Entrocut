@@ -208,7 +208,7 @@ def _chat_history_summary(record: dict[str, Any], *, max_turns: int = 6) -> list
             lines.append(f"user: {str(turn.get('content', '')).strip()[:160]}")
             continue
         if turn.get("role") == "assistant":
-            lines.append(f"assistant: {str(turn.get('reasoning_summary', '')).strip()[:160]}")
+            lines.append(f"assistant: {str(turn.get('assistant_reply', '')).strip()[:160]}")
     return lines
 
 

@@ -38,8 +38,7 @@ async def describe_clip_with_server(
     project_id: str,
     draft: EditDraftModel,
     clip: ClipModel,
-    question: str | None = None,
-    task_summary: str | None = None,
+    inspection_goal: str,
 ) -> dict[str, Any]:
     asset = next((item for item in draft.assets if item.id == clip.asset_id), None)
     if asset is None or not asset.source_path:
@@ -58,7 +57,7 @@ async def describe_clip_with_server(
     )
     payload = {
         "clip_id": clip.id,
-        "prompt": _build_inspect_prompt(question=question, task_summary=task_summary),
+        "prompt": _build_inspect_prompt(inspection_goal=inspection_goal),
         "image_base64": image_base64,
     }
     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
@@ -96,12 +95,11 @@ async def describe_clip_with_server(
             details={"project_id": project_id, "clip_id": clip.id},
         )
     return {
-        "clip": clip.model_dump(),
-        "source_range": {"start_ms": clip.source_start_ms, "end_ms": clip.source_end_ms},
-        "thumbnail_ref": clip.thumbnail_ref,
-        "prompt": payload["prompt"],
-        "server_response": body,
-        "summary": _summarize_describe_response(body, fallback=clip.visual_desc),
+        "clip_id": clip.id,
+        "inspection_goal": inspection_goal,
+        "visual_description": _summarize_describe_response(body, fallback=clip.visual_desc),
+        "uncertainty": str(body.get("uncertainty") or "none"),
+        "evidence_frame_count": 4,
     }
 
 
@@ -112,7 +110,6 @@ def _summarize_describe_response(body: dict[str, Any], *, fallback: str) -> str:
     return fallback
 
 
-def _build_inspect_prompt(*, question: str | None, task_summary: str | None) -> str:
-    task_text = (task_summary or "Agent needs visual understanding before making an editing decision.").strip()
-    question_text = (question or DEFAULT_DESCRIBE_QUESTION).strip()
-    return f"{task_text}\n\n{question_text}".strip()
+def _build_inspect_prompt(*, inspection_goal: str) -> str:
+    goal_text = inspection_goal.strip()
+    return f"{goal_text}\n\n{DEFAULT_DESCRIBE_QUESTION}".strip()

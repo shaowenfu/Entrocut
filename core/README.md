@@ -133,7 +133,7 @@ projects/{project_id}/
 主链路是：
 
 1. 写入 user turn。
-2. 从当前 workspace 派生 `planner context packet（规划上下文包）`。
+2. 由集中式 Context Assembler（上下文编排器）拼接完整 Agent Prompt（智能体提示词）。
 3. 调用 `Server /v1/chat/completions`，或在 `X-Routing-Mode: BYOK` 时按本地 provider registry（供应商注册表）调用固定的 DeepSeek OpenAI-compatible endpoint（兼容 OpenAI 接口）。
 4. 要求 planner 返回严格 JSON 决策。
 5. 根据 `capabilities` 校验 tool 是否允许执行。
@@ -142,18 +142,13 @@ projects/{project_id}/
 
 当前 tool 能力：
 
-- `read`：读取当前草案摘要，降低基于旧状态决策的风险。
+- `read`：按 `draft_tree / storyline / scene / shot / clip` 读取剪辑业务事实。
 - `retrieve`：调用 Server 向量检索，根据 project filter 召回 clip。
-- `inspect`：对候选 clip 做结构化检查与摘要。
-- `patch`：通过 `EditDraftPatch` 写入 shots/scenes。
+- `inspect`：按 `inspection_goal` 对已知 clip 做视觉观察。
+- `patch`：通过显式 `insert_shot / replace_shot / delete_shot` 写入 `EditDraft`。
 - `preview`：基于当前 `RenderPlan` 渲染预览产物并广播 `preview.completed`。
 
-当前 `draft_strategy（草案策略）` 仍只有：
-
-- `placeholder_first_cut`
-- `no_change`
-
-这说明 `agent loop` 已经是可运行闭环，但还不是最终的高质量精剪引擎。
+Planner 决策不再包含 `reasoning_summary / tool_input_summary / draft_strategy`。草稿只能由显式 tool observation（工具观测）更新，不再存在占位初剪兜底策略。
 
 ### 5. Preview 与 Export
 

@@ -10,7 +10,6 @@ from config import SERVER_BASE_URL
 from runtime.helpers import (
     _asset_clip_counts,
     _build_assets,
-    _build_edit_plan,
     _derive_title,
     _draft_from_payload,
     _entity_id,
@@ -305,6 +304,13 @@ class InMemoryProjectStore:
         record.setdefault("preview_result", None)
         record.setdefault("export_result", None)
         record["edit_draft"] = self._normalize_draft_assets(record["edit_draft"])
+        normalized_turns: list[dict[str, Any]] = []
+        for turn in record.get("chat_turns") or []:
+            if isinstance(turn, dict) and turn.get("role") == "assistant" and "assistant_reply" not in turn:
+                turn = {**turn, "assistant_reply": str(turn.get("reasoning_summary") or "")}
+                turn.pop("reasoning_summary", None)
+            normalized_turns.append(turn)
+        record["chat_turns"] = normalized_turns
         record["runtime_state"] = ProjectRuntimeState.model_validate(
             record.get("runtime_state") or self._default_project_runtime_state()
         ).model_dump()
@@ -1659,46 +1665,19 @@ class InMemoryProjectStore:
             decision = loop_result.final_decision
             next_draft = loop_result.draft
             next_runtime_state = loop_result.runtime_state.model_dump()
-            if decision.draft_strategy == "placeholder_first_cut" and not next_draft.shots:
-                active_asset_ids = {asset.id for asset in next_draft.assets if asset.lifecycle_state == "active"}
-                active_clips = [clip for clip in next_draft.clips if clip.asset_id in active_asset_ids]
-                shots, scenes = _build_edit_plan(active_clips, prompt)
-                next_draft = _bump_draft(
-                    next_draft,
-                    shots=shots,
-                    scenes=scenes,
-                    selected_scene_id=scenes[0].id if scenes else next_draft.selected_scene_id,
-                    selected_shot_id=shots[0].id if shots else next_draft.selected_shot_id,
-                    status="ready",
-                )
-                next_runtime_state["focus_state"].update(
-                    {
-                        "scope_type": "shot" if shots else next_runtime_state["focus_state"].get("scope_type", "project"),
-                        "scene_id": scenes[0].id if scenes else next_runtime_state["focus_state"].get("scene_id"),
-                        "shot_id": shots[0].id if shots else next_runtime_state["focus_state"].get("shot_id"),
-                        "updated_at": next_draft.updated_at,
-                    }
-                )
-                next_runtime_state["conversation_state"].update(
-                    {
-                        "pending_questions": [],
-                        "updated_at": next_draft.updated_at,
-                    }
-                )
-                next_runtime_state["updated_at"] = next_draft.updated_at
-            reply_text = decision.assistant_reply.strip() or decision.reasoning_summary.strip()
+            reply_text = (decision.assistant_reply or "").strip()
             ops = [
                 AssistantDecisionOperationModel(
                     id=_entity_id("op"),
                     action="planner_context_assembled",
                     target="core.agent.loop",
-                    summary="Built planner context from workspace snapshot, chat summary, target scope, and user input.",
+                    summary="Built agent prompt from edit draft skeleton, chat history, tool observations, and user input.",
                 ),
                 AssistantDecisionOperationModel(
                     id=_entity_id("op"),
                     action="planner_decision_finalized",
                     target="server.v1.chat.completions",
-                    summary=f"Planner returned a final decision with draft strategy {decision.draft_strategy}.",
+                    summary="Planner returned a final decision.",
                 ),
                 AssistantDecisionOperationModel(
                     id=_entity_id("op"),
@@ -1706,31 +1685,19 @@ class InMemoryProjectStore:
                     target="core.agent.tools",
                     summary=f"Executed {len(loop_result.observations)} tool step(s) in planner-driven loop.",
                 ),
+                AssistantDecisionOperationModel(
+                    id=_entity_id("op"),
+                    action="edit_draft_state_finalized",
+                    target="workspace.edit_draft",
+                    summary="EditDraft was finalized from explicit tool observations only.",
+                ),
             ]
-            if decision.draft_strategy == "placeholder_first_cut" and next_draft.shots:
-                ops.append(
-                    AssistantDecisionOperationModel(
-                        id=_entity_id("op"),
-                        action="placeholder_edit_draft_applied",
-                        target="workspace.edit_draft",
-                        summary="Applied placeholder first-cut strategy after loop finalized.",
-                    )
-                )
-            else:
-                ops.append(
-                    AssistantDecisionOperationModel(
-                        id=_entity_id("op"),
-                        action="no_edit_draft_change",
-                        target="workspace.edit_draft",
-                        summary="Planner explicitly chose not to modify the draft in the current iteration.",
-                    )
-                )
             assistant_turn = AssistantDecisionTurnModel(
                 id=_entity_id("turn"),
                 role="assistant",
                 type="decision",
                 decision_type="EDIT_DRAFT_PATCH",
-                reasoning_summary=reply_text,
+                assistant_reply=reply_text,
                 ops=ops,
                 agent_steps=loop_result.agent_steps,
             )

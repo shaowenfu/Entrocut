@@ -15,9 +15,6 @@ from config import (
 )
 from runtime.helpers import (
     _bump_draft,
-    _chat_history_summary,
-    _draft_summary,
-    _entity_id,
     _extract_first_json_object,
     _extract_text_content,
     _now_iso,
@@ -36,6 +33,10 @@ from contracts import (
     PlannerDecisionModel,
     ProjectRuntimeState,
     EditDraftPatchModel,
+    InspectInputModel,
+    PatchInputModel,
+    PreviewInputModel,
+    ReadInputModel,
     SUPPORTED_TOOL_NAMES,
     ToolCallModel,
     ToolObservationModel,
@@ -43,12 +44,7 @@ from contracts import (
 from application.store import store
 from media.rendering import build_render_plan, render_preview
 
-from application.context import (
-    build_goal_state,
-    build_planner_context_packet,
-    build_planner_system_prompt,
-    build_scope_state,
-)
+from application.context import build_agent_prompt
 
 
 async def _emit_agent_progress(
@@ -116,35 +112,9 @@ def _seed_loop_runtime_state(
     target: ChatTarget | None,
     draft: EditDraftModel,
 ) -> dict[str, Any]:
+    _ = (prompt, target, draft)
     current_runtime_state = ProjectRuntimeState.model_validate(record.get("runtime_state") or {}).model_dump()
     now = _now_iso()
-    goal_state = build_goal_state(prompt=prompt, runtime_goal_state=current_runtime_state.get("goal_state"))
-    current_runtime_state["goal_state"].update(
-        {
-            "brief": goal_state["goal_summary"],
-            "open_questions": goal_state["open_questions"],
-            "updated_at": now,
-        }
-    )
-    scope_state = build_scope_state(
-        target=target.model_dump() if target else None,
-        draft_summary=_draft_summary(draft),
-        focus_state=current_runtime_state.get("focus_state"),
-    )
-    current_runtime_state["focus_state"].update(
-        {
-            "scope_type": scope_state["scope_type"],
-            "scene_id": scope_state["selected_scene_id"],
-            "shot_id": scope_state["selected_shot_id"],
-            "updated_at": now,
-        }
-    )
-    current_runtime_state["conversation_state"].update(
-        {
-            "pending_questions": goal_state["open_questions"],
-            "updated_at": now,
-        }
-    )
     current_runtime_state["execution_state"].update(
         {
             "agent_run_state": "planning",
@@ -200,37 +170,26 @@ def _build_planner_messages(
     iteration: int,
     observations: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    planner_record, media_summary, capabilities, summary_state = _planner_workspace_state(
+    _ = (project_id, iteration)
+    planner_record, _media_summary, capabilities, _summary_state = _planner_workspace_state(
         record=record,
         draft=draft,
         runtime_state=runtime_state,
     )
-    chat_history_summary = _chat_history_summary(planner_record)
-    current_user_summary = f"user: {prompt.strip()[:160]}"
-    if chat_history_summary and chat_history_summary[-1] == current_user_summary:
-        chat_history_summary = chat_history_summary[:-1]
-    context_packet = build_planner_context_packet(
-        project_id=project_id,
-        iteration=iteration,
-        prompt=prompt,
-        target=target.model_dump() if target else None,
-        project=planner_record["project"],
-        summary_state=summary_state,
-        runtime_state=planner_record["runtime_state"],
-        media_summary=media_summary,
-        capabilities=capabilities,
-        draft_summary=_draft_summary(draft),
-        chat_history_summary=chat_history_summary,
+    chat_turns = list(planner_record.get("chat_turns") or [])
+    if chat_turns and chat_turns[-1].get("role") == "user" and str(chat_turns[-1].get("content") or "").strip() == prompt.strip():
+        chat_turns = chat_turns[:-1]
+    selected_scene_id = (target.scene_id if target else None) or draft.selected_scene_id or "none"
+    selected_shot_id = (target.shot_id if target else None) or draft.selected_shot_id or "none"
+    prompt_text = build_agent_prompt(
+        user_prompt=prompt,
+        edit_draft=draft,
+        chat_turns=chat_turns,
         tool_observations=observations or [],
+        selected_scene_id=selected_scene_id,
+        selected_shot_id=selected_shot_id,
     )
-    system_prompt = build_planner_system_prompt()
-    return [
-        {"role": "system", "content": system_prompt},
-        {
-            "role": "user",
-            "content": json.dumps(context_packet.planner_input, ensure_ascii=False),
-        },
-    ]
+    return [{"role": "system", "content": prompt_text}]
 
 
 async def _request_server_planner_decision(
@@ -407,23 +366,6 @@ def _should_continue_agent_loop(*, decision: PlannerDecisionModel) -> bool:
     return decision.status == "requires_tool"
 
 
-def _parse_tool_input_summary(tool_input_summary: str | None) -> dict[str, Any]:
-    normalized = _trimmed(tool_input_summary)
-    if not normalized:
-        return {}
-    try:
-        parsed = json.loads(normalized)
-    except json.JSONDecodeError:
-        return {"query": normalized}
-    return parsed if isinstance(parsed, dict) else {"query": normalized}
-
-
-def _decision_tool_input(decision: PlannerDecisionModel) -> dict[str, Any]:
-    if isinstance(decision.tool_input, dict):
-        return decision.tool_input
-    return _parse_tool_input_summary(decision.tool_input_summary)
-
-
 def _build_tool_call_or_raise(decision: PlannerDecisionModel) -> ToolCallModel:
     normalized_tool_name = _trimmed(decision.tool_name)
     if not normalized_tool_name:
@@ -433,41 +375,36 @@ def _build_tool_call_or_raise(decision: PlannerDecisionModel) -> ToolCallModel:
             message="Planner requested tool execution without a tool name.",
         )
     try:
+        tool_input = decision.tool_input or {}
+        if normalized_tool_name == "read":
+            tool_input = ReadInputModel.model_validate(tool_input).model_dump()
+        elif normalized_tool_name == "inspect":
+            tool_input = InspectInputModel.model_validate(tool_input).model_dump()
+        elif normalized_tool_name == "patch":
+            tool_input = PatchInputModel.model_validate(tool_input).model_dump()
+        elif normalized_tool_name == "preview":
+            tool_input = PreviewInputModel.model_validate(tool_input).model_dump()
+        elif normalized_tool_name == "retrieve":
+            query = _trimmed(str(tool_input.get("query") or ""))
+            if not query:
+                raise ValueError("retrieve query is required")
+            tool_input = {"query": query}
         return ToolCallModel(
             tool_name=normalized_tool_name,  # type: ignore[arg-type]
-            tool_input=_decision_tool_input(decision),
+            tool_input=tool_input,
         )
-    except ValidationError as exc:
+    except (ValidationError, ValueError) as exc:
         raise CoreApiError(
             status_code=502,
             code="TOOL_INPUT_INVALID",
             message="Planner tool input is invalid for execution.",
-            details={"validation_errors": exc.errors()},
+            details={"validation_errors": exc.errors() if isinstance(exc, ValidationError) else str(exc)},
         ) from exc
 
 
 def _active_clips(draft: EditDraftModel) -> list[ClipModel]:
     active_asset_ids = {asset.id for asset in draft.assets if asset.lifecycle_state == "active"}
     return [clip for clip in draft.clips if clip.asset_id in active_asset_ids]
-
-
-def _clip_id_from_alias(draft: EditDraftModel, alias: str) -> str | None:
-    normalized_alias = _trimmed(alias).lower()
-    if not normalized_alias:
-        return None
-    active_clips = _active_clips(draft)
-    for index, clip in enumerate(active_clips, start=1):
-        if normalized_alias == f"clip{index}":
-            return clip.id
-    return None
-
-
-def _clip_id_from_tool_input(draft: EditDraftModel, tool_input: dict[str, Any]) -> str:
-    clip_id = _trimmed(str(tool_input.get("clip_id") or ""))
-    if clip_id:
-        return clip_id
-    alias_id = _clip_id_from_alias(draft, str(tool_input.get("clip_alias") or ""))
-    return alias_id or ""
 
 
 def _asset_name_for_clip(draft: EditDraftModel, clip: ClipModel) -> str:
@@ -477,6 +414,147 @@ def _asset_name_for_clip(draft: EditDraftModel, clip: ClipModel) -> str:
 
 def _clip_label(draft: EditDraftModel, clip: ClipModel) -> str:
     return f"{_asset_name_for_clip(draft, clip)} {clip.source_start_ms / 1000:.1f}s-{clip.source_end_ms / 1000:.1f}s"
+
+
+def _read_tool_output(draft: EditDraftModel, read_input: ReadInputModel) -> dict[str, Any]:
+    shots_by_id = {shot.id: shot for shot in draft.shots}
+    clips_by_id = {clip.id: clip for clip in draft.clips}
+
+    def _shot_duration(shot: Any) -> int:
+        return max(0, int(shot.source_out_ms) - int(shot.source_in_ms))
+
+    if read_input.target_type == "draft_tree":
+        if read_input.target_id != "root":
+            raise CoreApiError(status_code=422, code="READ_INVALID_TARGET", message='draft_tree target_id must be "root".')
+        return {
+            "target_type": read_input.target_type,
+            "target_id": read_input.target_id,
+            "data": {
+                "draft_id": draft.id,
+                "draft_version": draft.version,
+                "scenes": [
+                    {
+                        "scene_id": scene.id,
+                        "order": scene.order,
+                        "enabled": scene.enabled,
+                        "label": scene.label or "none",
+                        "intent": scene.intent or "none",
+                        "shot_ids": scene.shot_ids,
+                    }
+                    for scene in sorted(draft.scenes or [], key=lambda item: item.order)
+                ],
+                "shots": [
+                    {
+                        "shot_id": shot.id,
+                        "order": shot.order,
+                        "enabled": shot.enabled,
+                        "clip_id": shot.clip_id,
+                        "label": shot.label or "none",
+                        "intent": shot.intent or "none",
+                    }
+                    for shot in sorted(draft.shots, key=lambda item: item.order)
+                ],
+            },
+        }
+
+    if read_input.target_type == "storyline":
+        if read_input.target_id != "root":
+            raise CoreApiError(status_code=422, code="READ_INVALID_TARGET", message='storyline target_id must be "root".')
+        return {
+            "target_type": read_input.target_type,
+            "target_id": read_input.target_id,
+            "data": {
+                "scenes": [
+                    {
+                        "scene_id": scene.id,
+                        "order": scene.order,
+                        "label": scene.label or "none",
+                        "intent": scene.intent or "none",
+                        "shot_intents": [
+                            {
+                                "shot_id": shot.id,
+                                "order": shot.order,
+                                "label": shot.label or "none",
+                                "intent": shot.intent or "none",
+                            }
+                            for shot_id in scene.shot_ids
+                            for shot in [shots_by_id.get(shot_id)]
+                            if shot is not None
+                        ],
+                    }
+                    for scene in sorted(draft.scenes or [], key=lambda item: item.order)
+                ]
+            },
+        }
+
+    if read_input.target_type == "scene":
+        scene = next((item for item in draft.scenes or [] if item.id == read_input.target_id), None)
+        if scene is None:
+            raise CoreApiError(status_code=422, code="READ_SCENE_NOT_FOUND", message="read scene target_id not found.")
+        scene_shots = [shots_by_id[shot_id] for shot_id in scene.shot_ids if shot_id in shots_by_id]
+        return {
+            "target_type": read_input.target_type,
+            "target_id": read_input.target_id,
+            "data": {
+                "scene_id": scene.id,
+                "order": scene.order,
+                "enabled": scene.enabled,
+                "label": scene.label or "none",
+                "intent": scene.intent or "none",
+                "duration_ms": sum(_shot_duration(shot) for shot in scene_shots),
+                "shots": [
+                    {
+                        "shot_id": shot.id,
+                        "order": shot.order,
+                        "clip_id": shot.clip_id,
+                        "duration_ms": _shot_duration(shot),
+                        "label": shot.label or "none",
+                        "intent": shot.intent or "none",
+                    }
+                    for shot in scene_shots
+                ],
+            },
+        }
+
+    if read_input.target_type == "shot":
+        shot = shots_by_id.get(read_input.target_id)
+        if shot is None:
+            raise CoreApiError(status_code=422, code="READ_SHOT_NOT_FOUND", message="read shot target_id not found.")
+        return {
+            "target_type": read_input.target_type,
+            "target_id": read_input.target_id,
+            "data": {
+                "shot_id": shot.id,
+                "clip_id": shot.clip_id,
+                "source_in_ms": shot.source_in_ms,
+                "source_out_ms": shot.source_out_ms,
+                "duration_ms": _shot_duration(shot),
+                "order": shot.order,
+                "enabled": shot.enabled,
+                "label": shot.label or "none",
+                "intent": shot.intent or "none",
+                "locked_fields": shot.locked_fields,
+            },
+        }
+
+    clip = clips_by_id.get(read_input.target_id)
+    if clip is None:
+        raise CoreApiError(status_code=422, code="READ_CLIP_NOT_FOUND", message="read clip target_id not found.")
+    return {
+        "target_type": read_input.target_type,
+        "target_id": read_input.target_id,
+        "data": {
+            "clip_id": clip.id,
+            "asset_id": clip.asset_id,
+            "source_start_ms": clip.source_start_ms,
+            "source_end_ms": clip.source_end_ms,
+            "duration_ms": max(0, clip.source_end_ms - clip.source_start_ms),
+            "visual_desc": clip.visual_desc or "none",
+            "visual_description": clip.visual_description or "none",
+            "semantic_tags": clip.semantic_tags,
+            "thumbnail_ref": clip.thumbnail_ref or "none",
+        },
+    }
 
 
 def _tool_display_for_call(
@@ -501,31 +579,31 @@ def _tool_display_for_call(
         }
 
     if tool_call.tool_name == "inspect":
-        clip_id = _clip_id_from_tool_input(draft, tool_call.tool_input)
+        inspect_input = InspectInputModel.model_validate(tool_call.tool_input)
         target_clip = pick_clip_for_inspect(
-            clip_id=clip_id,
-            candidate_clip_ids=runtime_state.get("retrieval_state", {}).get("candidate_clip_ids") or [],
+            clip_id=inspect_input.clip_id,
+            candidate_clip_ids=[],
             clips=_active_clips(draft),
         )
         return {
             "title": "调用 Inspect",
             "summary": f"检查 {_clip_label(draft, target_clip)}",
-            "body": f"查看 {_clip_label(draft, target_clip)} 的画面内容和剪辑价值。",
+            "body": f"按“{inspect_input.inspection_goal}”查看 {_clip_label(draft, target_clip)}。",
             "clip_ids": [target_clip.id],
         }
 
     if tool_call.tool_name == "patch":
-        clip_id = _trimmed(str(tool_call.tool_input.get("clip_id") or "")) or (
-            (runtime_state.get("retrieval_state", {}).get("candidate_clip_ids") or [None])[0]
-        )
-        active_clip_ids = {clip.id for clip in _active_clips(draft)}
-        if not clip_id or clip_id not in active_clip_ids:
-            raise CoreApiError(status_code=422, code="PATCH_INVALID_CLIP", message="Patch requires clip_id.")
+        patch_input = PatchInputModel.model_validate(tool_call.tool_input)
+        clip_ids = [
+            operation.clip_id
+            for operation in patch_input.operations
+            if hasattr(operation, "clip_id") and getattr(operation, "clip_id")
+        ]
         return {
             "title": "调用 Patch",
             "summary": "写入剪辑草案",
-            "body": f"把片段 {clip_id} 写入当前剪辑草案。",
-            "clip_ids": [clip_id] if clip_id else [],
+            "body": f"执行 {len(patch_input.operations)} 个剪辑补丁操作。",
+            "clip_ids": clip_ids,
         }
 
     if tool_call.tool_name == "preview":
@@ -537,10 +615,11 @@ def _tool_display_for_call(
         }
 
     if tool_call.tool_name == "read":
+        read_input = ReadInputModel.model_validate(tool_call.tool_input)
         return {
             "title": "调用 Read",
-            "summary": "读取当前草案",
-            "body": "读取当前剪辑草案状态。",
+            "summary": "读取剪辑事实",
+            "body": f"读取 {read_input.target_type}:{read_input.target_id}。",
             "clip_ids": [],
         }
 
@@ -562,7 +641,7 @@ def _tool_result_display(*, observation: ToolObservationModel, draft: EditDraftM
         }
 
     if observation.tool_name == "retrieve":
-        matches = observation.output.get("matches")
+        matches = observation.output.get("candidates")
         normalized_matches = matches if isinstance(matches, list) else []
         clip_ids = [str(item.get("clip_id")) for item in normalized_matches if isinstance(item, dict) and item.get("clip_id")]
         return {
@@ -574,11 +653,9 @@ def _tool_result_display(*, observation: ToolObservationModel, draft: EditDraftM
 
     if observation.tool_name == "inspect":
         output = observation.output
-        clip_payload = output.get("clip") if isinstance(output.get("clip"), dict) else {}
-        clip_id = str(clip_payload.get("id") or "")
-        server_response = output.get("server_response") if isinstance(output.get("server_response"), dict) else {}
-        description = str(server_response.get("description") or output.get("summary") or "").strip()
-        uncertainty = str(server_response.get("uncertainty") or "").strip()
+        clip_id = str(output.get("clip_id") or "")
+        description = str(output.get("visual_description") or "").strip()
+        uncertainty = str(output.get("uncertainty") or "").strip()
         body_parts = [
             description,
             f"不确定性：{uncertainty}" if uncertainty else "",
@@ -592,12 +669,18 @@ def _tool_result_display(*, observation: ToolObservationModel, draft: EditDraftM
         }
 
     if observation.tool_name == "patch":
-        clip_id = str(observation.output.get("clip_id") or "")
+        applied = observation.output.get("applied_operations")
+        applied_operations = applied if isinstance(applied, list) else []
+        clip_ids = [
+            str(item.get("clip_id"))
+            for item in applied_operations
+            if isinstance(item, dict) and item.get("clip_id")
+        ]
         return {
             "title": "Patch 返回结果",
             "summary": "剪辑草案已更新",
             "body": "选定片段已经写入当前剪辑草案。",
-            "clip_ids": [clip_id] if clip_id else [],
+            "clip_ids": clip_ids,
         }
 
     if observation.tool_name == "preview":
@@ -610,15 +693,7 @@ def _tool_result_display(*, observation: ToolObservationModel, draft: EditDraftM
         }
 
     if observation.tool_name == "read":
-        draft_summary = observation.output.get("draft_summary")
-        if isinstance(draft_summary, dict):
-            body = (
-                f"当前草案包含 {int(draft_summary.get('scene_count') or 0)} 个场景、"
-                f"{int(draft_summary.get('shot_count') or 0)} 个镜头、"
-                f"{int(draft_summary.get('clip_count') or 0)} 个可用片段。"
-            )
-        else:
-            body = observation.summary
+        body = f"已读取 {observation.output.get('target_type')}:{observation.output.get('target_id')}。"
         return {
             "title": "Read 返回结果",
             "summary": "已读取当前草案",
@@ -660,14 +735,12 @@ async def _execute_tool_call_todo(
         )
     try:
         if tool_call.tool_name == "read":
-            output = {
-                "draft_summary": _draft_summary(draft),
-                "query": tool_call.tool_input.get("query"),
-            }
+            read_input = ReadInputModel.model_validate(tool_call.tool_input)
+            output = _read_tool_output(draft, read_input)
             return ToolObservationModel(
                 tool_name="read",
                 success=True,
-                summary="Read current draft state for planner.",
+                summary=f"Read {read_input.target_type}:{read_input.target_id}.",
                 output=output,
                 state_delta={
                     "runtime_state_update": {
@@ -685,22 +758,13 @@ async def _execute_tool_call_todo(
                 query_text=query,
                 draft=draft,
             )
-            matched_clip_ids = [str(item["clip_id"]) for item in matches]
             return ToolObservationModel(
                 tool_name="retrieve",
                 success=True,
                 summary="Retrieved candidate clips from server vector retrieval.",
-                output={"query": query, "matches": matches, "matched_clip_ids": matched_clip_ids},
+                output={"query": query, "candidates": matches},
                 state_delta={
                     "runtime_state_update": {
-                        "retrieval_state": {
-                            "last_query": query.strip() or None,
-                            "candidate_clip_ids": matched_clip_ids,
-                            "candidate_scores": {item["clip_id"]: item["score"] for item in matches},
-                            "retrieval_ready": bool(runtime_state.get("retrieval_state", {}).get("retrieval_ready")),
-                            "blocking_reason": None,
-                            "updated_at": _now_iso(),
-                        },
                         "execution_state": {"last_tool_name": "retrieve", "updated_at": _now_iso()},
                         "updated_at": _now_iso(),
                     }
@@ -708,11 +772,10 @@ async def _execute_tool_call_todo(
             )
 
         if tool_call.tool_name == "inspect":
-            clip_id = _clip_id_from_tool_input(draft, tool_call.tool_input)
-            candidate_clip_ids = runtime_state.get("retrieval_state", {}).get("candidate_clip_ids") or []
+            inspect_input = InspectInputModel.model_validate(tool_call.tool_input)
             target_clip = pick_clip_for_inspect(
-                clip_id=clip_id,
-                candidate_clip_ids=candidate_clip_ids,
+                clip_id=inspect_input.clip_id,
+                candidate_clip_ids=[],
                 clips=_active_clips(draft),
             )
             inspection = await describe_clip_with_server(
@@ -720,13 +783,12 @@ async def _execute_tool_call_todo(
                 project_id=project_id,
                 draft=draft,
                 clip=target_clip,
-                question=_trimmed(str(tool_call.tool_input.get("question") or "")) or None,
-                task_summary=_trimmed(str(tool_call.tool_input.get("task_summary") or decision.reasoning_summary or "")) or None,
+                inspection_goal=inspect_input.inspection_goal,
             )
             next_draft = _draft_with_clip_visual_description(
                 draft=draft,
                 clip_id=target_clip.id,
-                description=inspection["summary"],
+                description=inspection["visual_description"],
             )
             return ToolObservationModel(
                 tool_name="inspect",
@@ -736,12 +798,6 @@ async def _execute_tool_call_todo(
                 state_delta={
                     "draft_update": next_draft.model_dump(),
                     "runtime_state_update": {
-                        "retrieval_state": {
-                            "candidate_clip_ids": [target_clip.id],
-                            "selected_candidate_id": target_clip.id,
-                            "inspection_summary": inspection["summary"],
-                            "updated_at": _now_iso(),
-                        },
                         "execution_state": {"last_tool_name": "inspect", "updated_at": _now_iso()},
                         "updated_at": _now_iso(),
                     }
@@ -749,41 +805,32 @@ async def _execute_tool_call_todo(
             )
 
         if tool_call.tool_name == "patch":
-            active_clip_ids = {clip.id for clip in _active_clips(draft)}
-            clip_id = _trimmed(str(tool_call.tool_input.get("clip_id") or "")) or (
-                (runtime_state.get("retrieval_state", {}).get("candidate_clip_ids") or [None])[0]
-            )
-            if not clip_id or clip_id not in active_clip_ids:
-                raise CoreApiError(status_code=422, code="PATCH_INVALID_CLIP", message="Patch requires clip_id.")
-            patch_payload = EditDraftPatchModel(
-                operations=[
-                    {
-                        "op": "insert_shot",
-                        "clip_id": clip_id,
-                    }
-                ],
-                reasoning_summary="tool.patch generated",
-                scope="project",
-            )
+            patch_input = PatchInputModel.model_validate(tool_call.tool_input)
+            patch_payload = EditDraftPatchModel(operations=[operation.model_dump() for operation in patch_input.operations])
             next_draft = apply_edit_draft_patch(draft, patch_payload)
+            applied_operations = []
+            for operation in patch_input.operations:
+                payload = operation.model_dump()
+                applied_operations.append(
+                    {
+                        "op": payload["op"],
+                        "target_id": payload.get("shot_id") or payload.get("scene_id") or "draft",
+                        "clip_id": payload.get("clip_id") or "none",
+                        "result": "applied",
+                    }
+                )
             return ToolObservationModel(
                 tool_name="patch",
                 success=True,
                 summary="Patched draft using formal EditDraftPatch pipeline.",
-                output={"clip_id": clip_id, "draft_version": next_draft.version},
+                output={
+                    "draft_id": next_draft.id,
+                    "draft_version": next_draft.version,
+                    "applied_operations": applied_operations,
+                },
                 state_delta={
                     "draft_update": next_draft.model_dump(),
                     "runtime_state_update": {
-                        "focus_state": {
-                            "scope_type": "shot",
-                            "scene_id": next_draft.selected_scene_id,
-                            "shot_id": next_draft.selected_shot_id,
-                            "updated_at": _now_iso(),
-                        },
-                        "conversation_state": {
-                            "confirmed_facts": [f"已将片段 {clip_id} 写入草案"],
-                            "updated_at": _now_iso(),
-                        },
                         "execution_state": {"last_tool_name": "patch", "updated_at": _now_iso()},
                         "updated_at": _now_iso(),
                     },
@@ -791,6 +838,7 @@ async def _execute_tool_call_todo(
             )
 
         if tool_call.tool_name == "preview":
+            preview_input = PreviewInputModel.model_validate(tool_call.tool_input)
             preview_path = store._workspace_manager.preview_output_path(project_id, "mp4")
             plan = build_render_plan(draft)
             preview_result = await asyncio.to_thread(render_preview, plan, preview_path)
@@ -807,8 +855,13 @@ async def _execute_tool_call_todo(
             return ToolObservationModel(
                 tool_name="preview",
                 success=True,
-                summary="Rendered real preview artifact.",
-                output=preview_result,
+                summary=f"Rendered real preview artifact: {preview_input.reason}",
+                output={
+                    "draft_id": draft.id,
+                    "draft_version": draft.version,
+                    "output_url": preview_result["output_url"],
+                    "duration_ms": preview_result["duration_ms"],
+                },
                 state_delta={
                     "runtime_state_update": {
                         "execution_state": {"last_tool_name": "preview", "updated_at": _now_iso()},
@@ -977,24 +1030,16 @@ async def _run_chat_agent_loop(
                 details={
                     "iteration": iteration,
                     "status": decision.status,
-                    "draft_strategy": decision.draft_strategy,
                     "tool_name": decision.tool_name,
                     "assistant_reply": decision.assistant_reply,
+                    "current_focus": decision.current_focus.model_dump(),
                 },
             )
         )
         if not _should_continue_agent_loop(decision=decision):
-            current_runtime_state["conversation_state"].update(
-                {
-                    "pending_questions": current_runtime_state["goal_state"].get("open_questions", []),
-                    "updated_at": _now_iso(),
-                }
-            )
             current_runtime_state["execution_state"].update(
                 {
-                    "agent_run_state": "waiting_user"
-                    if current_runtime_state["goal_state"].get("open_questions") and not current_draft.shots
-                    else "planning",
+                    "agent_run_state": "planning",
                     "updated_at": _now_iso(),
                 }
             )

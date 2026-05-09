@@ -1,455 +1,295 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
-from pydantic import BaseModel
+from contracts import ChatTurnModel, EditDraftModel, ToolObservationModel
 
 
-class PlannerRuntimeState(BaseModel):
-    current_user_request: dict[str, Any]
-    identity: dict[str, Any]
-    goal: dict[str, Any]
-    scope: dict[str, Any]
-    project: dict[str, Any]
-    draft: dict[str, Any]
-    media: dict[str, Any]
-    capabilities: dict[str, Any]
-    tools: dict[str, Any]
-    memory: dict[str, Any]
-    runtime_state: dict[str, Any]
-    runtime_capabilities: dict[str, Any]
-    trace: dict[str, Any]
+def _text(value: Any) -> str:
+    normalized = " ".join(str(value or "").strip().split())
+    return normalized or "none"
 
 
-class PlannerContextPacket(BaseModel):
-    runtime_state: PlannerRuntimeState
-    planner_input: dict[str, Any]
+def _json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
-def _normalize_text(value: str) -> str:
-    return " ".join(value.strip().split())
+def _shot_duration_ms(source_in_ms: int, source_out_ms: int) -> int:
+    return max(0, int(source_out_ms) - int(source_in_ms))
 
 
-def _normalize_string_list(values: list[Any] | None) -> list[str]:
-    normalized: list[str] = []
-    for value in values or []:
-        if not isinstance(value, str):
-            continue
-        text = _normalize_text(value)
-        if text and text not in normalized:
-            normalized.append(text)
-    return normalized
+def _shots_by_id(draft: EditDraftModel) -> dict[str, Any]:
+    return {shot.id: shot for shot in draft.shots}
 
 
-def _infer_success_criteria(prompt: str) -> list[str]:
-    criteria = ["输出结果应与用户描述目标保持一致"]
-    lowered = prompt.lower()
-    if any(token in prompt for token in ["开头", "片头", "第一段"]) or "opening" in lowered:
-        criteria.append("草案应明确包含开场结构（例如前3-10秒引入）")
-    if any(token in prompt for token in ["节奏", "快", "慢"]) or "rhythm" in lowered:
-        criteria.append("剪辑节奏应与用户要求匹配")
-    if any(token in prompt for token in ["情绪", "氛围", "感觉"]) or "mood" in lowered:
-        criteria.append("画面表达的情绪和氛围应可感知")
-    return criteria
-
-
-def _infer_open_questions(prompt: str) -> list[str]:
-    questions: list[str] = []
-    lowered = prompt.lower()
-    if not any(token in prompt for token in ["时长", "秒", "分钟"]) and "duration" not in lowered:
-        questions.append("目标片段期望时长尚未明确")
-    if not any(token in prompt for token in ["比例", "横屏", "竖屏", "16:9", "9:16"]) and "aspect" not in lowered:
-        questions.append("输出画幅与分发平台尚未明确")
-    if not any(token in prompt for token in ["音乐", "配乐", "字幕", "旁白"]) and "music" not in lowered:
-        questions.append("音频策略（配乐/旁白/字幕）尚未明确")
-    return questions
-
-
-def build_agent_identity_state() -> dict[str, Any]:
-    return {
-        "agent_name": "EntroCut Core Planner",
-        "role": "对话到剪辑的规划层，负责将用户意图转成下一步可执行决策",
-        "core_principles": [
-            "优先基于结构化 runtime state 做决策，而不是复述原始聊天文本",
-            "每一轮只推进最关键的一步，并保证输出可被程序消费",
-            "当信息不足时优先澄清关键缺口，避免盲目修改草案",
-        ],
-        "non_goals": [
-            "不直接承担底层媒体处理细节",
-            "不跳过工具边界直接伪造执行结果",
-        ],
-    }
-
-
-def build_goal_state(*, prompt: str, runtime_goal_state: dict[str, Any] | None = None) -> dict[str, Any]:
-    normalized_prompt = _normalize_text(prompt)
-    runtime_goal = runtime_goal_state or {}
-    runtime_open_questions = _normalize_string_list(runtime_goal.get("open_questions"))
-    inferred_open_questions = _infer_open_questions(normalized_prompt)
-    return {
-        "user_intent": normalized_prompt,
-        "goal_summary": _normalize_text(str(runtime_goal.get("brief") or normalized_prompt)),
-        "constraints": _normalize_string_list(runtime_goal.get("constraints")),
-        "preferences": _normalize_string_list(runtime_goal.get("preferences")),
-        "success_criteria": _infer_success_criteria(normalized_prompt),
-        "open_questions": runtime_open_questions + [
-            item for item in inferred_open_questions if item not in runtime_open_questions
-        ],
-        "goal_source": "runtime_state_then_prompt",
-    }
-
-
-def build_scope_state(
-    *,
-    target: dict[str, Any] | None,
-    draft_summary: dict[str, Any] | None = None,
-    focus_state: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    target_payload = target or {}
-    focus_payload = focus_state or {}
-    selected_shot_id = (
-        target_payload.get("shot_id")
-        or focus_payload.get("shot_id")
-        or (draft_summary or {}).get("selected_shot_id")
-    )
-    selected_scene_id = (
-        target_payload.get("scene_id")
-        or focus_payload.get("scene_id")
-        or (draft_summary or {}).get("selected_scene_id")
-    )
-
-    if selected_shot_id:
-        scope_type = "shot"
-    elif selected_scene_id:
-        scope_type = "scene"
-    else:
-        scope_type = str(focus_payload.get("scope_type") or "project")
-
-    return {
-        "scope_type": scope_type,
-        "selected_scene_id": selected_scene_id,
-        "selected_shot_id": selected_shot_id,
-        "target": target_payload or None,
-        "derivation": "target_then_runtime_focus_then_draft_selection",
-    }
-
-
-def build_project_state(*, project: dict[str, Any], summary_state: str | None) -> dict[str, Any]:
-    return {
-        "project_id": project.get("id"),
-        "title": project.get("title"),
-        "summary_state": summary_state,
-        "lifecycle_state": project.get("lifecycle_state"),
-    }
-
-
-def build_draft_state(*, draft_summary: dict[str, Any]) -> dict[str, Any]:
-    clip_excerpt = draft_summary.get("clip_excerpt") if isinstance(draft_summary, dict) else []
-    compact_clips: list[dict[str, Any]] = []
-    if isinstance(clip_excerpt, list):
-        for index, clip in enumerate(clip_excerpt, start=1):
-            if not isinstance(clip, dict):
-                continue
-            compact_clips.append(
-                {
-                    "alias": f"clip{index}",
-                    "id": clip.get("clip_id"),
-                    "asset_id": clip.get("asset_id"),
-                    "desc": clip.get("visual_desc"),
-                    "visual_description": clip.get("visual_description"),
-                    "tags": clip.get("semantic_tags") or [],
-                }
+def _scene_rows(draft: EditDraftModel) -> list[str]:
+    scenes = sorted(draft.scenes or [], key=lambda item: item.order)
+    if not scenes:
+        return ["- scene_id: none\n  order: 0\n  enabled: false\n  label: none\n  intent: none\n  shot_ids: []"]
+    rows: list[str] = []
+    for scene in scenes:
+        rows.append(
+            "\n".join(
+                [
+                    f"- scene_id: {scene.id}",
+                    f"  order: {scene.order}",
+                    f"  enabled: {str(scene.enabled).lower()}",
+                    f"  label: {_text(scene.label)}",
+                    f"  intent: {_text(scene.intent)}",
+                    f"  shot_ids: {_json(scene.shot_ids)}",
+                ]
             )
-    return {
-        "summary": {
-            "draft_id": draft_summary.get("draft_id"),
-            "draft_version": draft_summary.get("draft_version"),
-            "asset_count": draft_summary.get("asset_count"),
-            "clip_count": draft_summary.get("clip_count"),
-            "shot_count": draft_summary.get("shot_count"),
-            "scene_count": draft_summary.get("scene_count"),
-            "selected_scene_id": draft_summary.get("selected_scene_id"),
-            "selected_shot_id": draft_summary.get("selected_shot_id"),
-        },
-        "clips": compact_clips,
-        "draft_focus": {
-            "draft_version": draft_summary.get("draft_version"),
-            "shot_count": draft_summary.get("shot_count"),
-            "scene_count": draft_summary.get("scene_count"),
-        },
-    }
+        )
+    return rows
 
 
-def build_media_state(*, media_summary: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "asset_count": media_summary.get("asset_count", 0),
-        "pending_asset_count": media_summary.get("pending_asset_count", 0),
-        "processing_asset_count": media_summary.get("processing_asset_count", 0),
-        "ready_asset_count": media_summary.get("ready_asset_count", 0),
-        "failed_asset_count": media_summary.get("failed_asset_count", 0),
-        "total_clip_count": media_summary.get("total_clip_count", 0),
-        "indexed_clip_count": media_summary.get("indexed_clip_count", 0),
-        "retrieval_ready": bool(media_summary.get("retrieval_ready")),
-    }
+def _storyline_rows(draft: EditDraftModel) -> list[str]:
+    scenes = sorted(draft.scenes or [], key=lambda item: item.order)
+    shots_by_id = _shots_by_id(draft)
+    if not scenes:
+        return ["- scene_id: none\n  narrative_position: 0\n  intent: none\n  shots: []"]
+    rows: list[str] = []
+    for scene in scenes:
+        shot_lines = []
+        for shot_id in scene.shot_ids:
+            shot = shots_by_id.get(shot_id)
+            if shot is None:
+                continue
+            shot_lines.append(f"    - shot_id: {shot.id}\n      intent: {_text(shot.intent)}")
+        rows.append(
+            "\n".join(
+                [
+                    f"- scene_id: {scene.id}",
+                    f"  narrative_position: {scene.order}",
+                    f"  intent: {_text(scene.intent)}",
+                    "  shots:",
+                    "\n".join(shot_lines) if shot_lines else "    []",
+                ]
+            )
+        )
+    return rows
 
 
-def build_capabilities_state(*, capabilities: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "chat_mode": capabilities.get("chat_mode"),
-        "can_send_chat": bool(capabilities.get("can_send_chat")),
-        "can_retrieve": bool(capabilities.get("can_retrieve")),
-        "can_inspect": bool(capabilities.get("can_inspect")),
-        "can_patch_draft": bool(capabilities.get("can_patch_draft")),
-        "can_preview": bool(capabilities.get("can_preview")),
-        "can_export": bool(capabilities.get("can_export")),
-        "blocking_reasons": _normalize_string_list(capabilities.get("blocking_reasons")),
-    }
+def _assistant_tools(turn: dict[str, Any]) -> str:
+    tools: list[str] = []
+    for step in turn.get("agent_steps") or []:
+        if not isinstance(step, dict):
+            continue
+        details = step.get("details") if isinstance(step.get("details"), dict) else {}
+        tool_name = details.get("tool_name")
+        if isinstance(tool_name, str) and tool_name and tool_name not in tools:
+            tools.append(tool_name)
+    return f"[tool: {', '.join(tools)}] " if tools else ""
 
 
-def build_tool_capability_state(*, capabilities: dict[str, Any], media_summary: dict[str, Any]) -> dict[str, Any]:
-    tool_enabled_map = {
-        "read": True,
-        "retrieve": bool(capabilities.get("can_retrieve")),
-        "inspect": bool(capabilities.get("can_inspect")),
-        "patch": bool(capabilities.get("can_patch_draft")),
-        "preview": bool(capabilities.get("can_preview")),
-    }
-    blocking_reasons = _normalize_string_list(capabilities.get("blocking_reasons"))
-    default_blocking_reason = blocking_reasons[0] if blocking_reasons else None
-
-    def _tool_descriptor(
-        *,
-        name: str,
-        purpose: str,
-        when_to_use: str,
-        when_not_to_use: str,
-    ) -> dict[str, Any]:
-        return {
-            "name": name,
-            "purpose": purpose,
-            "when_to_use": when_to_use,
-            "when_not_to_use": when_not_to_use,
-            "enabled": tool_enabled_map[name],
-            "blocking_reason": None if tool_enabled_map[name] else default_blocking_reason,
-        }
-
-    available_tools = [
-        _tool_descriptor(
-            name="read",
-            purpose="读取当前工作事实（草案、选区、候选、约束）以避免基于过期信息决策",
-            when_to_use="在规划前需要确认当前状态、或发现上下文可能过期时",
-            when_not_to_use="仅做自然语言回复且现有上下文已足够时",
-        ),
-        _tool_descriptor(
-            name="retrieve",
-            purpose="从素材池召回与当前目标相关的候选片段",
-            when_to_use="需要寻找新素材、替换素材或补充候选时",
-            when_not_to_use="chat_mode 为 planning_only 或当前无可检索 clip 时",
-        ),
-        _tool_descriptor(
-            name="inspect",
-            purpose="调用视觉模型描述一个已知 clip，作为文本 Agent 的眼睛",
-            when_to_use="用户指定某个 clip、或你需要确认画面主体、动作、场景、文字、镜头细节时",
-            when_not_to_use="当前没有任何可定位 clip，或只是需要从素材池寻找候选时",
-        ),
-        _tool_descriptor(
-            name="patch",
-            purpose="将结构化增量修改应用到 EditDraft",
-            when_to_use="已形成明确编辑决策并需落盘到草案时",
-            when_not_to_use="planning_only 阶段或素材候选仍不足时",
-        ),
-        _tool_descriptor(
-            name="preview",
-            purpose="生成可审阅预览以验证当前草案效果",
-            when_to_use="需要向用户展示阶段性结果或验证可视化效果时",
-            when_not_to_use="草案尚未形成可评估结构时",
-        ),
-    ]
-    return {
-        "enabled": [tool["name"] for tool in available_tools if tool["enabled"]],
-        "disabled": {
-            tool["name"]: tool["blocking_reason"]
-            for tool in available_tools
-            if not tool["enabled"]
-        },
-        "chat_mode": capabilities.get("chat_mode"),
-        "media_readiness": {
-            "asset_count": media_summary.get("asset_count", 0),
-            "indexed_clip_count": media_summary.get("indexed_clip_count", 0),
-            "retrieval_ready": bool(media_summary.get("retrieval_ready")),
-        },
-    }
+def _turn_to_dict(turn: ChatTurnModel | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(turn, dict):
+        return turn
+    return turn.model_dump()
 
 
-def build_working_memory_state(
+def render_static_agent_prompt() -> str:
+    return """你是 EntroCut Editing Agent（剪辑智能体）。
+
+你的任务是把用户的自然语言剪辑意图转成结构化剪辑动作。你只修改 EditDraft（剪辑草稿），不直接处理底层媒体文件，不伪造渲染结果，不伪造视觉观察结果。
+
+核心术语：
+- Asset（资产）：原始媒体文件。
+- Clip（片段）：Asset（资产）经过切分和索引得到的候选媒体片段。
+- Shot（镜头）：Timeline（时间线）上的最小剪辑单元，引用一个 Clip（片段）并声明实际使用的源时间范围。
+- Scene（场景）：多个 Shot（镜头）的叙事组合。
+- Storyline（故事线）：Scene（场景）之间的叙事顺序与意图骨架。
+- EditDraft（剪辑草稿）：当前项目的结构化剪辑配方。
+
+决策原则：
+1. 当前用户请求优先于历史对话。
+2. Global TOC（全局目录）只提供结构骨架；涉及画面、时间切口、标签、素材细节时，必须调用 read。
+3. 需要找新素材时调用 retrieve。
+4. 需要确认一个已知 Clip（片段）的画面内容时调用 inspect。
+5. 已有明确剪辑决策时调用 patch。
+6. 需要让用户检查效果时调用 preview。
+7. 不要猜测 Tool（工具）结果。
+8. 不要输出 Markdown（标记语言）。
+9. 不要输出解释性推理过程。
+10. 每轮只能请求一个 Tool（工具）或给出一个 final（最终）回复。"""
+
+
+def render_system_context_and_global_state(
     *,
-    chat_history_summary: list[str],
-    tool_observations: list[dict[str, Any]],
-    runtime_state: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    runtime_payload = runtime_state or {}
-    conversation_state = runtime_payload.get("conversation_state") if isinstance(runtime_payload, dict) else {}
-    retrieval_state = runtime_payload.get("retrieval_state") if isinstance(runtime_payload, dict) else {}
-    recent_decisions = [line for line in chat_history_summary if line.startswith("assistant:")][-3:]
-    recent_observation_summary = [
-        {
-            "tool_name": item.get("tool_name"),
-            "success": item.get("success"),
-            "summary": item.get("summary") or item.get("tool_input") or item.get("tool_input_summary"),
-        }
-        for item in tool_observations[-3:]
-    ]
-    pending_risks: list[str] = []
+    user_prompt: str,
+    edit_draft: EditDraftModel,
+    selected_scene_id: str,
+    selected_shot_id: str,
+) -> str:
+    return "\n".join(
+        [
+            "=== 1. System Context & Global State（系统设定与全局状态） ===",
+            "",
+            "Current User Request（当前用户请求）:",
+            _text(user_prompt),
+            "",
+            "Current Focus（当前焦点）:",
+            f"- selected_scene_id: {_text(selected_scene_id)}",
+            f"- selected_shot_id: {_text(selected_shot_id)}",
+            "",
+            "Global TOC（全局目录）:",
+            f"- draft_id: {edit_draft.id}",
+            f"- draft_version: {edit_draft.version}",
+            f"- scene_count: {len(edit_draft.scenes or [])}",
+            f"- shot_count: {len(edit_draft.shots)}",
+            "- scenes:",
+            "\n".join(_scene_rows(edit_draft)),
+            "",
+            "Storyline Digest（故事线摘要）:",
+            "\n".join(_storyline_rows(edit_draft)),
+        ]
+    )
+
+
+def render_chat_history(chat_turns: list[ChatTurnModel | dict[str, Any]]) -> str:
+    recent_turns = [_turn_to_dict(turn) for turn in chat_turns[-10:]]
+    lines = ["=== 2. Chat History（对话历史） ===", ""]
+    if not recent_turns:
+        lines.append("暂无。")
+        return "\n".join(lines)
+    for turn in recent_turns:
+        if turn.get("role") == "user":
+            lines.append(f"User: {_text(turn.get('content'))}")
+        elif turn.get("role") == "assistant":
+            lines.append(f"Assistant: {_assistant_tools(turn)}{_text(turn.get('assistant_reply'))}")
+    return "\n".join(lines)
+
+
+def render_current_loop_observations(tool_observations: list[ToolObservationModel | dict[str, Any]]) -> str:
+    lines = ["=== 3. Current Loop Observations（当前循环观测） ===", ""]
     if not tool_observations:
-        pending_risks.append("尚无工具观测，决策主要依赖聊天与草案摘要")
-    blocking_reason = retrieval_state.get("blocking_reason") if isinstance(retrieval_state, dict) else None
-    if isinstance(blocking_reason, str) and blocking_reason:
-        pending_risks.append(f"retrieval 当前受阻：{blocking_reason}")
+        lines.append("暂无。")
+        return "\n".join(lines)
+    for index, observation in enumerate(tool_observations, start=1):
+        payload = observation if isinstance(observation, dict) else observation.model_dump()
+        output = payload.get("output") if isinstance(payload.get("output"), dict) else {}
+        lines.extend(
+            [
+                f"[Step {index}]",
+                f"- tool_name: {_text(payload.get('tool_name'))}",
+                f"- success: {str(bool(payload.get('success'))).lower()}",
+                f"- summary: {_text(payload.get('summary'))}",
+                f"- output: {_json(output)}",
+                "",
+            ]
+        )
+    return "\n".join(lines).rstrip()
 
-    return {
-        "recent_chat_summary": chat_history_summary[-6:],
-        "recent_decisions": recent_decisions,
-        "recent_tool_observations": recent_observation_summary,
-        "pending_risks": pending_risks,
-        "open_questions": _normalize_string_list((conversation_state or {}).get("pending_questions")),
-        "confirmed_facts": _normalize_string_list((conversation_state or {}).get("confirmed_facts")),
+
+def render_available_tools() -> str:
+    return """=== 4. Available Tools（可用工具） ===
+
+1. read
+作用：读取当前剪辑业务事实。它是 Agent 的显微镜，用于从骨架上下文进入局部细节。
+什么时候调用：需要知道 Storyline（故事线）、Scene（场景）里的 Shot（镜头）、Shot（镜头）的时间切口、Clip（片段）的画面描述或标签时。
+什么时候不要调用：当前 Prompt（提示词）骨架已经足够做最终回复，或只是需要找新素材时。
+Input:
+{
+  "target_type": "draft_tree" | "storyline" | "scene" | "shot" | "clip",
+  "target_id": "string"
+}
+target_id 规则：draft_tree/storyline 传 "root"；scene/shot/clip 传真实 ID。
+
+2. retrieve
+作用：通过文本 Query（查询）在素材池中召回候选 Clip（片段）。它只负责高召回初筛，不负责判断哪个最好。
+什么时候调用：用户要替换、补充或寻找某类画面，而当前已知 Clip（片段）不足以决策时。
+什么时候不要调用：已经有明确 clip_id 需要观察时；需要最终选择、排序或剪辑时。
+Input:
+{
+  "query": "string"
+}
+
+3. inspect
+作用：调用 VLM（多模态大模型）观察一个已知 Clip（片段）的画面。它是 Agent 的眼睛。
+什么时候调用：已有明确 clip_id，但需要确认主体、动作、场景、景别、稳定性、情绪或剪辑价值时。
+什么时候不要调用：还没有候选 Clip（片段）时；需要执行剪辑修改时；需要比较大量候选时。
+Input:
+{
+  "clip_id": "string",
+  "inspection_goal": "string"
+}
+
+4. patch
+作用：把明确的剪辑决策写入 EditDraft（剪辑草稿）。
+什么时候调用：已经知道要插入、替换或删除哪个 Shot（镜头），且拥有真实 scene_id/shot_id/clip_id 和时间切口时。
+什么时候不要调用：还不知道目标 Shot（镜头）、Clip（片段）或时间切口时；还需要视觉确认时。
+Input:
+{
+  "operations": [
+    {
+      "op": "insert_shot",
+      "scene_id": "string",
+      "index": number,
+      "clip_id": "string",
+      "source_in_ms": number,
+      "source_out_ms": number,
+      "intent": "string"
     }
+  ]
+}
+也可以使用 replace_shot 或 delete_shot：
+replace_shot 需要 op、shot_id、clip_id、source_in_ms、source_out_ms、intent。
+delete_shot 需要 op、shot_id、deletion_reason。
+
+5. preview
+作用：根据当前 EditDraft（剪辑草稿）生成真实预览文件。
+什么时候调用：草稿已经被修改，用户需要检查结果时。
+什么时候不要调用：草稿还没有可渲染结构时；只是需要继续读取、检索或修改时。
+Input:
+{
+  "reason": "string"
+}"""
 
 
-def build_runtime_state_snapshot(runtime_state: dict[str, Any] | None) -> dict[str, Any]:
-    payload = runtime_state or {}
-    return {
-        "goal_state": payload.get("goal_state") or {},
-        "focus_state": payload.get("focus_state") or {},
-        "conversation_state": payload.get("conversation_state") or {},
-        "retrieval_state": payload.get("retrieval_state") or {},
-        "execution_state": payload.get("execution_state") or {},
-        "updated_at": payload.get("updated_at"),
-    }
+def render_strict_json_output_contract() -> str:
+    return """=== 5. Strict JSON Output（严格 JSON 输出） ===
+
+必须只输出一个合法 JSON 对象，不要输出 Markdown、代码围栏、解释文本或字符串化 JSON。
+
+interface PlannerDecision {
+  status: "requires_tool" | "final";
+  tool_name: "read" | "retrieve" | "inspect" | "patch" | "preview" | null;
+  tool_input: object | null;
+  assistant_reply: string | null;
+  current_focus: {
+    target_type: "project" | "scene" | "shot" | "clip";
+    target_id: string;
+  };
+}
+
+规则：
+- status 是 "requires_tool" 时，tool_name 必须是一个工具名，tool_input 必须是对应工具输入，assistant_reply 必须是 null。
+- status 是 "final" 时，tool_name 必须是 null，tool_input 必须是 null，assistant_reply 必须是中文用户回复。
+- current_focus 始终必填。无具体对象时使用 {"target_type":"project","target_id":"project"}。
+- 每轮只能请求一个工具。"""
 
 
-def build_current_user_request_state(*, prompt: str, target: dict[str, Any] | None) -> dict[str, Any]:
-    return {
-        "text": _normalize_text(prompt),
-        "target": target or None,
-        "priority": "must_answer_first",
-    }
-
-
-def build_runtime_capabilities_state(*, capabilities: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "planner_loop": "implemented",
-        "tool_execution": "implemented_minimal",
-        "allowed_draft_strategy": ["placeholder_first_cut", "no_change"],
-        "chat_mode": capabilities.get("chat_mode"),
-        "tool_gating": "workspace_capabilities",
-    }
-
-
-def build_trace_state(*, project_id: str, iteration: int) -> dict[str, Any]:
-    return {
-        "project_id": project_id,
-        "iteration": iteration,
-    }
-
-
-def build_planner_context_packet(
+def build_agent_prompt(
     *,
-    project_id: str,
-    iteration: int,
-    prompt: str,
-    target: dict[str, Any] | None,
-    project: dict[str, Any],
-    summary_state: str | None,
-    runtime_state: dict[str, Any],
-    media_summary: dict[str, Any],
-    capabilities: dict[str, Any],
-    draft_summary: dict[str, Any],
-    chat_history_summary: list[str],
-    tool_observations: list[dict[str, Any]],
-) -> PlannerContextPacket:
-    normalized_runtime_state = build_runtime_state_snapshot(runtime_state)
-    target_payload = target or None
-    planner_runtime_state = PlannerRuntimeState(
-        current_user_request=build_current_user_request_state(prompt=prompt, target=target_payload),
-        identity=build_agent_identity_state(),
-        goal=build_goal_state(prompt=prompt, runtime_goal_state=normalized_runtime_state.get("goal_state")),
-        scope=build_scope_state(
-            target=target_payload,
-            draft_summary=draft_summary,
-            focus_state=normalized_runtime_state.get("focus_state"),
+    user_prompt: str,
+    edit_draft: EditDraftModel,
+    chat_turns: list[ChatTurnModel | dict[str, Any]],
+    tool_observations: list[ToolObservationModel | dict[str, Any]],
+    selected_scene_id: str,
+    selected_shot_id: str,
+) -> str:
+    sections = [
+        render_static_agent_prompt(),
+        render_system_context_and_global_state(
+            user_prompt=user_prompt,
+            edit_draft=edit_draft,
+            selected_scene_id=selected_scene_id,
+            selected_shot_id=selected_shot_id,
         ),
-        project=build_project_state(project=project, summary_state=summary_state),
-        draft=build_draft_state(draft_summary=draft_summary),
-        media=build_media_state(media_summary=media_summary),
-        capabilities=build_capabilities_state(capabilities=capabilities),
-        tools=build_tool_capability_state(capabilities=capabilities, media_summary=media_summary),
-        memory=build_working_memory_state(
-            chat_history_summary=chat_history_summary,
-            tool_observations=tool_observations,
-            runtime_state=normalized_runtime_state,
-        ),
-        runtime_state=normalized_runtime_state,
-        runtime_capabilities=build_runtime_capabilities_state(capabilities=capabilities),
-        trace=build_trace_state(project_id=project_id, iteration=iteration),
-    )
-    planner_input = {
-        "current_user_request": planner_runtime_state.current_user_request,
-        "goal": {
-            "goal_summary": planner_runtime_state.goal["goal_summary"],
-            "constraints": planner_runtime_state.goal["constraints"],
-            "preferences": planner_runtime_state.goal["preferences"],
-            "open_questions": planner_runtime_state.goal["open_questions"],
-            "role": "project_background_not_current_request",
-        },
-        "scope": planner_runtime_state.scope,
-        "project": planner_runtime_state.project,
-        "draft": planner_runtime_state.draft,
-        "media": planner_runtime_state.media,
-        "capabilities": planner_runtime_state.capabilities,
-        "tools": planner_runtime_state.tools,
-        "memory": planner_runtime_state.memory,
-        "runtime_capabilities": planner_runtime_state.runtime_capabilities,
-        "iteration": planner_runtime_state.trace["iteration"],
-    }
-    return PlannerContextPacket(runtime_state=planner_runtime_state, planner_input=planner_input)
-
-
-def build_planner_system_prompt() -> str:
-    return (
-        "[Identity]\n"
-        "You are EntroCut Core Planner, responsible for the next best editing decision.\n"
-        "[Decision Priority]\n"
-        "planner_input.current_user_request.text is the highest-priority instruction for this turn."
-        " Always answer or act on it before using goal or memory."
-        " goal is project-level background only and must not override current_user_request."
-        " memory is summarized background, not an ordered raw transcript.\n"
-        "[Tool Usage Policy]\n"
-        "Use tools only when needed. Respect tools.enabled, tools.disabled, and capabilities.chat_mode."
-        " Prefer read before risky operations. Use retrieve to find candidate clips."
-        " Use inspect only to ask a visual model to describe one known clip."
-        " Do comparison, ranking, choice, and editing decisions yourself after reading the description."
-        " If the user names a specific clip alias from draft.clips, inspect can be used without another retrieval step."
-        " for deterministic draft updates, patch; for review output, preview."
-        " If chat_mode is planning_only or a tool is disabled, ask clarifying questions instead of requesting that tool.\n"
-        "[Tool Input Interfaces]\n"
-        'type ToolName = "read" | "retrieve" | "inspect" | "patch" | "preview";\n'
-        'interface ReadInput { scope?: "draft" | "conversation" | "runtime"; }\n'
-        "interface RetrieveInput { query: string; }\n"
-        "interface InspectInput { clip_id?: string; clip_alias?: string; question: string; task_summary?: string; }\n"
-        "interface PatchInput { clip_id: string; intent?: string; }\n"
-        'interface PreviewInput { reason?: string; }\n'
-        "tool_input must be a JSON object matching the selected tool. Never return stringified JSON.\n"
-        "[Context Compaction Policy]\n"
-        "Rely on planner_input as the single source of decision context."
-        " Treat chat history as summarized memory, not raw transcript.\n"
-        "[Output Contract]\n"
-        "Return exactly one JSON object with fields:\n"
-        '- status: "final" | "requires_tool"\n'
-        "- reasoning_summary: short English planning summary\n"
-        "- assistant_reply: concise Chinese reply for the user\n"
-        "- tool_name: string or null\n"
-        "- tool_input: object or null\n"
-        '- draft_strategy: "placeholder_first_cut" | "no_change"\n'
-        "Do not return markdown, code fences, or extra prose."
-    )
+        render_chat_history(chat_turns),
+        render_current_loop_observations(tool_observations),
+        render_available_tools(),
+        render_strict_json_output_contract(),
+    ]
+    return "\n\n".join(sections)
