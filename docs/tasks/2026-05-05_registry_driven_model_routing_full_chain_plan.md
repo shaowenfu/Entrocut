@@ -125,7 +125,7 @@ client model panel
   "model": "deepseek-v4-flash",
   "stream": false,
   "temperature": 0.1,
-  "max_tokens": 600,
+  "max_tokens": 6000,
   "messages": []
 }
 ```

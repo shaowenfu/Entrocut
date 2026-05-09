@@ -107,6 +107,12 @@ async def chat(project_id: str, payload: ChatRequest, request: Request) -> TaskR
     return TaskResponse(task=task)
 
 
+@router.delete("/api/v1/projects/{project_id}/chat-turns", response_model=GetWorkspaceResponse)
+async def clear_chat_turns(project_id: str) -> GetWorkspaceResponse:
+    workspace = await store.clear_project_chat_turns(project_id)
+    return GetWorkspaceResponse(workspace=workspace)
+
+
 @router.post("/api/v1/projects/{project_id}/export", response_model=TaskResponse)
 async def export_project(project_id: str, payload: ExportRequest) -> TaskResponse:
     task = await store.queue_export(project_id, payload)
