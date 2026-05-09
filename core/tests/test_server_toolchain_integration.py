@@ -494,10 +494,48 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self.assertEqual(captured_context["project"]["summary_state"], "editing")
         self.assertEqual(captured_context["capabilities"]["chat_mode"], "editing")
         self.assertTrue(captured_context["media"]["retrieval_ready"])
-        self.assertEqual(captured_context["runtime_state"]["focus_state"]["scene_id"], "scene_focus_1")
-        tool_names = [item["name"] for item in captured_context["tools"]["available_tools"]]
-        self.assertIn("read", tool_names)
+        self.assertEqual(captured_context["current_user_request"]["target"]["scene_id"], "scene_focus_1")
+        self.assertNotIn("runtime_state", captured_context)
+        self.assertIn("read", captured_context["tools"]["enabled"])
+        self.assertNotIn("user: 做一个旅行视频开头", captured_context["memory"]["recent_chat_summary"])
         self.assertEqual(workspace["runtime_state"]["focus_state"]["scene_id"], "scene_focus_1")
+
+    def test_clear_project_chat_turns_removes_history_and_conversation_state(self) -> None:
+        response = self.client.post("/api/v1/projects", json={"title": "Clear Chat Test"})
+        self.assertEqual(response.status_code, 200)
+        project_id = response.json()["project"]["id"]
+        self._set_auth_session()
+
+        planner_json = (
+            '{"status":"final","reasoning_summary":"answer identity",'
+            '"assistant_reply":"我是 EntroCut Core Planner。","tool_name":null,'
+            '"tool_input":null,"draft_strategy":"no_change"}'
+        )
+
+        async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
+            class _DummyResponse:
+                status_code = 200
+
+                @staticmethod
+                def json() -> dict[str, Any]:
+                    return {"choices": [{"message": {"content": planner_json}}]}
+
+                text = planner_json
+
+            return _DummyResponse()
+
+        with patch("httpx.AsyncClient.post", fake_post):
+            chat_response = self.client.post(f"/api/v1/projects/{project_id}/chat", json={"prompt": "who are u"})
+            self.assertEqual(chat_response.status_code, 200)
+            workspace = self._poll_workspace(project_id)
+
+        self.assertEqual(len(workspace["chat_turns"]), 2)
+        clear_response = self.client.delete(f"/api/v1/projects/{project_id}/chat-turns")
+        self.assertEqual(clear_response.status_code, 200)
+        cleared = clear_response.json()["workspace"]
+        self.assertEqual(cleared["chat_turns"], [])
+        self.assertEqual(cleared["runtime_state"]["conversation_state"]["pending_questions"], [])
+        self.assertEqual(cleared["runtime_state"]["conversation_state"]["confirmed_facts"], [])
 
     def test_planning_only_chat_blocks_retrieve_tool_request(self) -> None:
         response = self.client.post("/api/v1/projects", json={})
@@ -593,7 +631,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self._set_auth_session()
         inspect_tool_input = core_server.json.dumps(
             {
-                "mode": "describe",
+                "mode": "inspect",
                 "clip_id": clip_ids[0],
                 "question": "Describe visible actions and editing value for a travel opener.",
             },
@@ -612,6 +650,13 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             ),
         ]
         captured_inspect_payload: dict[str, Any] = {}
+        captured_agent_events: list[dict[str, Any]] = []
+        original_emit = store.emit
+
+        async def capture_emit(project_id: str, event_name: str, data: dict[str, Any]) -> None:
+            if event_name == "agent.step.updated":
+                captured_agent_events.append(data)
+            await original_emit(project_id, event_name, data)
 
         async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
             if url.endswith("/v1/tools/inspect"):
@@ -665,7 +710,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
 
             return _ChatResponse()
 
-        with patch("httpx.AsyncClient.post", fake_post), patch(
+        with patch("httpx.AsyncClient.post", fake_post), patch.object(store, "emit", capture_emit), patch(
             "agent_runtime.inspection.extract_and_stitch_frames",
             return_value=_valid_jpeg_base64(),
         ):
@@ -682,6 +727,16 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             "A preparation shot with travel-opener value.",
         )
         self.assertEqual(workspace["runtime_state"]["execution_state"]["last_tool_name"], "inspect")
+        decision_event = next(item for item in captured_agent_events if item["phase"] == "planner_decision_received")
+        self.assertEqual(decision_event["details"]["assistant_reply"], "我先仔细看这个 clip。")
+        tool_call_event = next(item for item in captured_agent_events if item["phase"] == "tool_execution_requested")
+        self.assertNotIn("tool_input_summary", tool_call_event["details"])
+        self.assertEqual(tool_call_event["details"]["tool_display"]["clip_ids"], [clip_ids[0]])
+        result_event = next(item for item in captured_agent_events if item["phase"] == "tool_observation_recorded")
+        result_display = result_event["details"]["tool_result_display"]
+        self.assertEqual(result_display["clip_ids"], [clip_ids[0]])
+        self.assertIn("A preparation shot with travel-opener value.", result_display["body"])
+        self.assertIn("剪辑价值：Can establish departure preparation.", result_display["body"])
 
     def test_create_project_initializes_local_persistence_and_workspace_dir(self) -> None:
         response = self.client.post(

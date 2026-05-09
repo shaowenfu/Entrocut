@@ -165,7 +165,7 @@ function getIconForPhase(phase: string) {
 }
 
 type AgentStepStatus = "loading" | "success" | "error";
-type AgentDisplayKind = "decision" | "tool_call" | "tool_result";
+type AgentDisplayKind = "assistant_message" | "tool_call" | "tool_result";
 type ToolName = "retrieve" | "inspect" | "patch" | "preview" | "read" | string;
 
 interface AgentDisplayStep {
@@ -179,6 +179,13 @@ interface AgentDisplayStep {
   clipIds: string[];
 }
 
+interface AgentStepDisplayPayload {
+  title: string;
+  summary: string;
+  body: string;
+  clipIds: string[];
+}
+
 function getStringDetail(details: Record<string, unknown>, key: string): string | null {
   const value = details[key];
   return typeof value === "string" && value.trim() ? value : null;
@@ -187,6 +194,43 @@ function getStringDetail(details: Record<string, unknown>, key: string): string 
 function getBooleanDetail(details: Record<string, unknown>, key: string): boolean | null {
   const value = details[key];
   return typeof value === "boolean" ? value : null;
+}
+
+function getRecordDetail(details: Record<string, unknown>, key: string): Record<string, unknown> | null {
+  const value = details[key];
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function getStringFromRecord(record: Record<string, unknown>, key: string): string | null {
+  const value = record[key];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function getStringArrayFromRecord(record: Record<string, unknown>, key: string): string[] {
+  const value = record[key];
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function getDisplayPayload(details: Record<string, unknown>, key: string): AgentStepDisplayPayload | null {
+  const payload = getRecordDetail(details, key);
+  if (!payload) {
+    return null;
+  }
+  const title = getStringFromRecord(payload, "title");
+  const summary = getStringFromRecord(payload, "summary");
+  const body = getStringFromRecord(payload, "body");
+  if (!title || !summary || !body) {
+    return null;
+  }
+  return {
+    title,
+    summary,
+    body,
+    clipIds: getStringArrayFromRecord(payload, "clip_ids"),
+  };
 }
 
 function getToolNameForStep(step: CoreAgentStepItem): string | null {
@@ -216,66 +260,6 @@ function getToolLabel(toolName?: string | null): string {
       return "Read";
     default:
       return toolName ? toolName : "Tool";
-  }
-}
-
-function getToolActionLabel(toolName?: string | null): string {
-  switch (toolName) {
-    case "retrieve":
-      return "检索候选片段";
-    case "inspect":
-      return "检查候选片段";
-    case "patch":
-      return "写入剪辑草案";
-    case "preview":
-      return "生成草案预览";
-    case "read":
-      return "读取当前草案";
-    default:
-      return "执行工具";
-  }
-}
-
-function getToolDecisionText(
-  toolName?: string | null,
-  context: { assetCount?: number; clipCount?: number } = {}
-): string {
-  switch (toolName) {
-    case "retrieve":
-      if ((context.assetCount ?? 0) > 0 || (context.clipCount ?? 0) > 0) {
-        return `我看到当前项目里有 ${context.assetCount ?? 0} 个素材、${context.clipCount ?? 0} 个可检索片段，会先从这些内容里找候选镜头。`;
-      }
-      return "我会先从素材库里检索和这次剪辑目标相关的候选片段。";
-    case "inspect":
-      return "我会检查候选片段的画面质量，确认它是否适合当前剪辑意图。";
-    case "patch":
-      return "我已经有了可用候选片段，接下来会把它写入当前剪辑草案。";
-    case "preview":
-      return "我会生成一版草案预览，方便你直接查看当前结果。";
-    case "read":
-      return "我会先读取当前草案状态，确认已有结构和可修改范围。";
-    default:
-      return "我已经确定下一步操作，会调用合适的工具继续推进。";
-  }
-}
-
-function getToolResultText(toolName?: string | null, clipCount = 0, success = true): string {
-  if (!success) {
-    return `${getToolLabel(toolName)} 没有成功完成，我会保留这一步供你查看。`;
-  }
-  switch (toolName) {
-    case "retrieve":
-      return clipCount > 0 ? `Retrieve 找到了 ${clipCount} 个候选片段。` : "Retrieve 已完成候选片段检索。";
-    case "inspect":
-      return "Inspect 已完成候选片段检查。";
-    case "patch":
-      return "Patch 已把选定内容写入剪辑草案。";
-    case "preview":
-      return "Preview 已生成草案预览。";
-    case "read":
-      return "Read 已读取当前草案状态。";
-    default:
-      return `${getToolLabel(toolName)} 已完成。`;
   }
 }
 
@@ -328,73 +312,12 @@ function formatAgentDetailValue(value: unknown): string {
   }
 }
 
-function collectClipIdsFromValue(value: unknown, ids: Set<string>, keyHint = "") {
-  if (typeof value === "string") {
-    const key = keyHint.toLowerCase();
-    if (
-      key === "clip_id" ||
-      key === "selected_candidate_id" ||
-      key.endsWith("_clip_id") ||
-      key.endsWith("clip_id")
-    ) {
-      ids.add(value);
-    }
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      collectClipIdsFromValue(item, ids, keyHint);
-    }
-    return;
-  }
-  if (value && typeof value === "object") {
-    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
-      const normalized = key.toLowerCase();
-      if (
-        Array.isArray(nested) &&
-        (normalized === "clip_ids" ||
-          normalized === "candidate_clip_ids" ||
-          normalized === "matched_clip_ids" ||
-          normalized.endsWith("_clip_ids"))
-      ) {
-        for (const item of nested) {
-          if (typeof item === "string") {
-            ids.add(item);
-          } else {
-            collectClipIdsFromValue(item, ids, key);
-          }
-        }
-        continue;
-      }
-      collectClipIdsFromValue(nested, ids, key);
-    }
-  }
-}
-
-function extractClipIdsFromStep(step: CoreAgentStepItem, fallbackClipIds: string[], allowFallback: boolean): string[] {
-  const ids = new Set<string>();
-  collectClipIdsFromValue(step.details, ids);
-  const toolName = getToolNameForStep(step);
-  if (allowFallback && (toolName === "retrieve" || toolName === "inspect") && ids.size === 0) {
-    for (const clipId of fallbackClipIds) {
-      ids.add(clipId);
-    }
-  }
-  return Array.from(ids);
-}
-
 function buildAgentDisplaySteps({
   steps,
   isThinking,
-  fallbackClipIds,
-  assetCount,
-  clipCount,
 }: {
   steps: CoreAgentStepItem[];
   isThinking: boolean;
-  fallbackClipIds: string[];
-  assetCount: number;
-  clipCount: number;
 }): AgentDisplayStep[] {
   const seen = new Set<string>();
   const deduped = steps.filter((step) => {
@@ -412,49 +335,57 @@ function buildAgentDisplaySteps({
     const toolName = getToolNameForStep(step);
     const isLastStep = index === deduped.length - 1;
     const status = getAgentStepStatus(step, isLastStep, isThinking);
-    const success = status !== "error";
-    const clipIds = extractClipIdsFromStep(step, fallbackClipIds, phase === "tool_observation_recorded");
-    const toolInputSummary = getStringDetail(step.details, "tool_input_summary");
     const id = getAgentStepKey(step, index);
 
     if (phase === "planner_decision_received" && toolName) {
+      const assistantReply = getStringDetail(step.details, "assistant_reply");
+      if (!assistantReply) {
+        return;
+      }
       displaySteps.push({
         id,
-        kind: "decision",
+        kind: "assistant_message",
         status,
-        title: `决定${getToolActionLabel(toolName)}`,
-        summary: `决定${getToolActionLabel(toolName)}`,
-        body: getToolDecisionText(toolName, { assetCount, clipCount }),
-        toolName,
-        clipIds,
+        title: assistantReply,
+        summary: assistantReply,
+        body: assistantReply,
+        clipIds: [],
       });
       return;
     }
 
     if (phase === "tool_execution_requested" && toolName) {
+      const displayPayload = getDisplayPayload(step.details, "tool_display");
+      if (!displayPayload) {
+        return;
+      }
       displaySteps.push({
         id,
         kind: "tool_call",
         status,
-        title: `调用 ${getToolLabel(toolName)}：${getToolActionLabel(toolName)}`,
-        summary: `调用 ${getToolLabel(toolName)}`,
-        body: toolInputSummary ?? getToolDecisionText(toolName, { assetCount, clipCount }),
+        title: displayPayload.title,
+        summary: displayPayload.summary,
+        body: displayPayload.body,
         toolName,
-        clipIds,
+        clipIds: displayPayload.clipIds,
       });
       return;
     }
 
     if (phase === "tool_observation_recorded" && toolName) {
+      const displayPayload = getDisplayPayload(step.details, "tool_result_display");
+      if (!displayPayload) {
+        return;
+      }
       displaySteps.push({
         id,
         kind: "tool_result",
         status,
-        title: `${getToolLabel(toolName)} 返回结果`,
-        summary: `${getToolLabel(toolName)} 返回结果`,
-        body: getToolResultText(toolName, clipIds.length, success),
+        title: displayPayload.title,
+        summary: displayPayload.summary,
+        body: displayPayload.body,
         toolName,
-        clipIds,
+        clipIds: displayPayload.clipIds,
       });
     }
   });
@@ -495,6 +426,18 @@ function AgentFinalMessageView({ turn }: { turn: AssistantDecisionTurn }) {
         <p>{finalMessage || "我已经完成这轮分析，等待你的下一步指令。"}</p>
       </div>
     </article>
+  );
+}
+
+function AgentInlineMessageView({ text }: { text: string }) {
+  return (
+    <div className="chat-turn-assistant">
+      <article className="decision-card">
+        <div className="decision-content">
+          <p>{text}</p>
+        </div>
+      </article>
+    </div>
   );
 }
 
@@ -570,20 +513,25 @@ function AgentStepArtifact({
   clips: WorkspaceClipItem[];
   onClipSelect: (clipId: string) => void;
 }) {
+  if (displayStep.kind === "assistant_message") {
+    return null;
+  }
+
   const matchedClips = displayStep.clipIds
     .map((clipId) => clips.find((clip) => clip.id === clipId))
     .filter((clip): clip is (typeof clips)[number] => Boolean(clip));
+  const showToolContext = !(displayStep.kind === "tool_result" && displayStep.toolName === "inspect");
 
   return (
     <div className="agent-step-body">
       {displayStep.body ? <p>{displayStep.body}</p> : null}
-      {displayStep.toolName ? (
+      {displayStep.toolName && showToolContext ? (
         <div className="agent-tool-line">
           <span>Tool</span>
           <strong>{getToolLabel(displayStep.toolName)}</strong>
         </div>
       ) : null}
-      {matchedClips.length > 0 ? (
+      {matchedClips.length > 0 && showToolContext ? (
         <div className="agent-artifact agent-retrieve-artifact">
           {matchedClips.slice(0, 4).map((clip) => (
             <button key={clip.id} type="button" className="agent-clip-match" onClick={() => onClipSelect(clip.id)}>
@@ -767,6 +715,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const restoreAsset = useWorkspaceStore((state) => state.restoreAsset);
   const renameProject = useWorkspaceStore((state) => state.renameProject);
   const sendChat = useWorkspaceStore((state) => state.sendChat);
+  const clearProjectChatTurns = useWorkspaceStore((state) => state.clearProjectChatTurns);
   const exportProject = useWorkspaceStore((state) => state.exportProject);
   const clearLastError = useWorkspaceStore((state) => state.clearLastError);
 
@@ -909,29 +858,28 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   );
   const latestChatTurn = chatTurns[chatTurns.length - 1] ?? null;
   const isAgentRunFinalized = latestChatTurn?.role === "assistant" && agentSteps.length > 0 && !isThinking;
-  const fallbackAgentClipIds = useMemo(() => {
-    const ids = new Set<string>();
-    const retrievalState = coreRuntimeState?.retrieval_state;
-    for (const clipId of retrievalState?.candidate_clip_ids ?? []) {
-      ids.add(clipId);
-    }
-    if (retrievalState?.selected_candidate_id) {
-      ids.add(retrievalState.selected_candidate_id);
-    }
-    return Array.from(ids);
-  }, [coreRuntimeState]);
   const visibleAgentSteps = useMemo(
     () =>
       buildAgentDisplaySteps({
         steps: agentSteps,
         isThinking,
-        fallbackClipIds: fallbackAgentClipIds,
-        assetCount: assets.length,
-        clipCount: clips.length,
       }),
-    [agentSteps, assets.length, clips.length, fallbackAgentClipIds, isThinking]
+    [agentSteps, isThinking]
   );
   const activeAgentSteps = latestChatTurn?.role === "assistant" ? [] : visibleAgentSteps;
+  const persistedAgentStepHistoryByAssistantId = useMemo(() => {
+    const history: Record<string, AgentDisplayStep[]> = {};
+    for (const turn of chatTurns) {
+      if (turn.role !== "assistant" || !turn.agent_steps?.length) {
+        continue;
+      }
+      history[turn.id] = buildAgentDisplaySteps({
+        steps: turn.agent_steps,
+        isThinking: false,
+      });
+    }
+    return history;
+  }, [chatTurns]);
 
   const previewDurationSec = useMemo(() => {
     if (selectedClip) {
@@ -1266,6 +1214,15 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     await sendChat(enhancePromptWithAssetReferences(trimmed, assets, assetAliases));
   }
 
+  async function handleClearProjectChatTurns() {
+    if (isThinking || chatTurns.length === 0) {
+      return;
+    }
+    setReasoningOverlay(null);
+    await clearProjectChatTurns();
+    setAgentStepHistoryByAssistantId({});
+  }
+
   function insertMentionOption(option: AssetMentionOption) {
     if (!mentionQuery) {
       return;
@@ -1535,6 +1492,18 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
               </span>
             ) : null}
           </div>
+          <button
+            className="icon-btn topbar-icon-btn"
+            type="button"
+            onClick={() => {
+              void handleClearProjectChatTurns();
+            }}
+            disabled={isThinking || chatTurns.length === 0}
+            aria-label="clear project chat history"
+            title="Clear project chat history"
+          >
+            <Trash2 size={15} />
+          </button>
           <AccountMenu />
           <details className="byok-config" title={modelCatalogWarning ?? undefined}>
             <summary>
@@ -2033,7 +2002,8 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
             {chatTurns.map((turn, index) => {
               const finalizedSteps =
                 turn.role === "assistant"
-                  ? agentStepHistoryByAssistantId[turn.id] ??
+                  ? persistedAgentStepHistoryByAssistantId[turn.id] ??
+                    agentStepHistoryByAssistantId[turn.id] ??
                     (index === chatTurns.length - 1 && isAgentRunFinalized ? visibleAgentSteps : [])
                   : [];
 
@@ -2042,6 +2012,9 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                   {finalizedSteps.length > 0 ? (
                     <div className="agent-execution-block agent-execution-block-finalized">
                       {finalizedSteps.map((step) => {
+                        if (step.kind === "assistant_message" && step.body) {
+                          return <AgentInlineMessageView key={step.id} text={step.body} />;
+                        }
                         const Icon = getIconForPhase(step.toolName ?? step.kind);
 
                         return (
@@ -2074,6 +2047,9 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
             {activeAgentSteps.length > 0 ? (
               <div className="agent-execution-block">
                 {activeAgentSteps.map((step) => {
+                  if (step.kind === "assistant_message" && step.body) {
+                    return <AgentInlineMessageView key={step.id} text={step.body} />;
+                  }
                   const Icon = getIconForPhase(step.toolName ?? step.kind);
 
                   return (

@@ -57,16 +57,19 @@ async def _emit_agent_progress(
     phase: str,
     summary: str,
     details: dict[str, Any] | None = None,
-) -> None:
+) -> dict[str, Any]:
+    step = {
+        "phase": phase,
+        "summary": summary,
+        "details": details or {},
+        "emitted_at": _now_iso(),
+    }
     await store.emit(
         project_id,
         "agent.step.updated",
-        {
-            "phase": phase,
-            "summary": summary,
-            "details": details or {},
-        },
+        step,
     )
+    return step
 
 
 def _tool_is_enabled(tool_name: str, capabilities: dict[str, Any]) -> bool:
@@ -202,6 +205,10 @@ def _build_planner_messages(
         draft=draft,
         runtime_state=runtime_state,
     )
+    chat_history_summary = _chat_history_summary(planner_record)
+    current_user_summary = f"user: {prompt.strip()[:160]}"
+    if chat_history_summary and chat_history_summary[-1] == current_user_summary:
+        chat_history_summary = chat_history_summary[:-1]
     context_packet = build_planner_context_packet(
         project_id=project_id,
         iteration=iteration,
@@ -213,7 +220,7 @@ def _build_planner_messages(
         media_summary=media_summary,
         capabilities=capabilities,
         draft_summary=_draft_summary(draft),
-        chat_history_summary=_chat_history_summary(planner_record),
+        chat_history_summary=chat_history_summary,
         tool_observations=observations or [],
     )
     system_prompt = build_planner_system_prompt()
@@ -246,7 +253,7 @@ async def _request_server_planner_decision(
         "custom_model": routing_config.get("custom_model") or None,
         "stream": False,
         "temperature": 0.1,
-        "max_tokens": 600,
+        "max_tokens": 6000,
         "messages": _build_planner_messages(
             record=record,
             project_id=project_id,
@@ -413,6 +420,12 @@ def _parse_tool_input_summary(tool_input_summary: str | None) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {"query": normalized}
 
 
+def _decision_tool_input(decision: PlannerDecisionModel) -> dict[str, Any]:
+    if isinstance(decision.tool_input, dict):
+        return decision.tool_input
+    return _parse_tool_input_summary(decision.tool_input_summary)
+
+
 def _build_tool_call_or_raise(decision: PlannerDecisionModel) -> ToolCallModel:
     normalized_tool_name = _trimmed(decision.tool_name)
     if not normalized_tool_name:
@@ -424,7 +437,7 @@ def _build_tool_call_or_raise(decision: PlannerDecisionModel) -> ToolCallModel:
     try:
         return ToolCallModel(
             tool_name=normalized_tool_name,  # type: ignore[arg-type]
-            tool_input=_parse_tool_input_summary(decision.tool_input_summary),
+            tool_input=_decision_tool_input(decision),
         )
     except ValidationError as exc:
         raise CoreApiError(
@@ -435,9 +448,203 @@ def _build_tool_call_or_raise(decision: PlannerDecisionModel) -> ToolCallModel:
         ) from exc
 
 
+def _normalize_inspect_mode(raw_mode: str) -> str:
+    normalized = _trimmed(raw_mode).lower()
+    if normalized in {"", "inspect", "describe"}:
+        return "describe"
+    return normalized
+
+
 def _active_clips(draft: EditDraftModel) -> list[ClipModel]:
     active_asset_ids = {asset.id for asset in draft.assets if asset.lifecycle_state == "active"}
     return [clip for clip in draft.clips if clip.asset_id in active_asset_ids]
+
+
+def _clip_id_from_alias(draft: EditDraftModel, alias: str) -> str | None:
+    normalized_alias = _trimmed(alias).lower()
+    if not normalized_alias:
+        return None
+    active_clips = _active_clips(draft)
+    for index, clip in enumerate(active_clips, start=1):
+        if normalized_alias == f"clip{index}":
+            return clip.id
+    return None
+
+
+def _clip_id_from_tool_input(draft: EditDraftModel, tool_input: dict[str, Any]) -> str:
+    clip_id = _trimmed(str(tool_input.get("clip_id") or ""))
+    if clip_id:
+        return clip_id
+    alias_id = _clip_id_from_alias(draft, str(tool_input.get("clip_alias") or ""))
+    return alias_id or ""
+
+
+def _asset_name_for_clip(draft: EditDraftModel, clip: ClipModel) -> str:
+    asset = next((item for item in draft.assets if item.id == clip.asset_id), None)
+    return asset.name if asset is not None else clip.asset_id
+
+
+def _clip_label(draft: EditDraftModel, clip: ClipModel) -> str:
+    return f"{_asset_name_for_clip(draft, clip)} {clip.source_start_ms / 1000:.1f}s-{clip.source_end_ms / 1000:.1f}s"
+
+
+def _tool_display_for_call(
+    *,
+    tool_call: ToolCallModel,
+    draft: EditDraftModel,
+    runtime_state: dict[str, Any],
+) -> dict[str, Any]:
+    if tool_call.tool_name == "retrieve":
+        query = _trimmed(str(tool_call.tool_input.get("query") or ""))
+        if not query:
+            raise CoreApiError(
+                status_code=422,
+                code="RETRIEVAL_QUERY_REQUIRED",
+                message="retrieve tool requires a non-empty query.",
+            )
+        return {
+            "title": "调用 Retrieve",
+            "summary": "检索候选片段",
+            "body": f"按“{query}”检索候选片段。",
+            "clip_ids": [],
+        }
+
+    if tool_call.tool_name == "inspect":
+        clip_id = _clip_id_from_tool_input(draft, tool_call.tool_input)
+        target_clip = pick_clip_for_inspect(
+            clip_id=clip_id,
+            candidate_clip_ids=runtime_state.get("retrieval_state", {}).get("candidate_clip_ids") or [],
+            clips=_active_clips(draft),
+        )
+        return {
+            "title": "调用 Inspect",
+            "summary": f"检查 {_clip_label(draft, target_clip)}",
+            "body": f"查看 {_clip_label(draft, target_clip)} 的画面内容和剪辑价值。",
+            "clip_ids": [target_clip.id],
+        }
+
+    if tool_call.tool_name == "patch":
+        clip_id = _trimmed(str(tool_call.tool_input.get("clip_id") or "")) or (
+            (runtime_state.get("retrieval_state", {}).get("candidate_clip_ids") or [None])[0]
+        )
+        active_clip_ids = {clip.id for clip in _active_clips(draft)}
+        if not clip_id or clip_id not in active_clip_ids:
+            raise CoreApiError(status_code=422, code="PATCH_INVALID_CLIP", message="Patch requires clip_id.")
+        return {
+            "title": "调用 Patch",
+            "summary": "写入剪辑草案",
+            "body": f"把片段 {clip_id} 写入当前剪辑草案。",
+            "clip_ids": [clip_id] if clip_id else [],
+        }
+
+    if tool_call.tool_name == "preview":
+        return {
+            "title": "调用 Preview",
+            "summary": "生成草案预览",
+            "body": "根据当前剪辑草案生成可播放预览。",
+            "clip_ids": [],
+        }
+
+    if tool_call.tool_name == "read":
+        return {
+            "title": "调用 Read",
+            "summary": "读取当前草案",
+            "body": "读取当前剪辑草案状态。",
+            "clip_ids": [],
+        }
+
+    raise CoreApiError(
+        status_code=502,
+        code="TOOL_NAME_NOT_SUPPORTED",
+        message="Tool is not supported by current loop implementation.",
+        details={"tool_name": tool_call.tool_name},
+    )
+
+
+def _tool_result_display(*, observation: ToolObservationModel, draft: EditDraftModel) -> dict[str, Any]:
+    if not observation.success:
+        return {
+            "title": f"{observation.tool_name} 执行失败",
+            "summary": f"{observation.tool_name} 执行失败",
+            "body": observation.summary,
+            "clip_ids": [],
+        }
+
+    if observation.tool_name == "retrieve":
+        matches = observation.output.get("matches")
+        normalized_matches = matches if isinstance(matches, list) else []
+        clip_ids = [str(item.get("clip_id")) for item in normalized_matches if isinstance(item, dict) and item.get("clip_id")]
+        return {
+            "title": "Retrieve 返回结果",
+            "summary": f"找到 {len(clip_ids)} 个候选片段",
+            "body": f"找到 {len(clip_ids)} 个和检索目标匹配的候选片段。",
+            "clip_ids": clip_ids,
+        }
+
+    if observation.tool_name == "inspect":
+        output = observation.output
+        clip_payload = output.get("clip") if isinstance(output.get("clip"), dict) else {}
+        clip_id = str(clip_payload.get("id") or "")
+        server_response = output.get("server_response") if isinstance(output.get("server_response"), dict) else {}
+        descriptions = server_response.get("descriptions") if isinstance(server_response.get("descriptions"), list) else []
+        first_description = descriptions[0] if descriptions and isinstance(descriptions[0], dict) else {}
+        actions = first_description.get("actions")
+        action_text = ", ".join(str(action) for action in actions) if isinstance(actions, list) else ""
+        body_parts = [
+            str(output.get("summary") or "").strip(),
+            f"场景：{first_description.get('scene')}" if first_description.get("scene") else "",
+            f"动作：{action_text}" if action_text else "",
+            f"剪辑价值：{first_description.get('editing_value')}" if first_description.get("editing_value") else "",
+        ]
+        body = "\n".join(part for part in body_parts if part)
+        return {
+            "title": "Inspect 返回结果",
+            "summary": "已获得片段画面描述",
+            "body": body,
+            "clip_ids": [clip_id] if clip_id else [],
+        }
+
+    if observation.tool_name == "patch":
+        clip_id = str(observation.output.get("clip_id") or "")
+        return {
+            "title": "Patch 返回结果",
+            "summary": "剪辑草案已更新",
+            "body": "选定片段已经写入当前剪辑草案。",
+            "clip_ids": [clip_id] if clip_id else [],
+        }
+
+    if observation.tool_name == "preview":
+        output_url = str(observation.output.get("output_url") or "")
+        return {
+            "title": "Preview 返回结果",
+            "summary": "预览已生成",
+            "body": f"预览文件已生成：{output_url}",
+            "clip_ids": [],
+        }
+
+    if observation.tool_name == "read":
+        draft_summary = observation.output.get("draft_summary")
+        if isinstance(draft_summary, dict):
+            body = (
+                f"当前草案包含 {int(draft_summary.get('scene_count') or 0)} 个场景、"
+                f"{int(draft_summary.get('shot_count') or 0)} 个镜头、"
+                f"{int(draft_summary.get('clip_count') or 0)} 个可用片段。"
+            )
+        else:
+            body = observation.summary
+        return {
+            "title": "Read 返回结果",
+            "summary": "已读取当前草案",
+            "body": body,
+            "clip_ids": [],
+        }
+
+    raise CoreApiError(
+        status_code=502,
+        code="TOOL_NAME_NOT_SUPPORTED",
+        message="Tool is not supported by current loop implementation.",
+        details={"tool_name": observation.tool_name},
+    )
 
 
 async def _execute_tool_call_todo(
@@ -515,8 +722,8 @@ async def _execute_tool_call_todo(
             )
 
         if tool_call.tool_name == "inspect":
-            mode = _trimmed(str(tool_call.tool_input.get("mode") or "describe")) or "describe"
-            clip_id = _trimmed(str(tool_call.tool_input.get("clip_id") or ""))
+            mode = _normalize_inspect_mode(str(tool_call.tool_input.get("mode") or "describe"))
+            clip_id = _clip_id_from_tool_input(draft, tool_call.tool_input)
             candidate_clip_ids = runtime_state.get("retrieval_state", {}).get("candidate_clip_ids") or []
             target_clip = pick_clip_for_inspect(
                 clip_id=clip_id,
@@ -679,12 +886,14 @@ async def _run_chat_agent_loop(
     byok_key: str | None,
     agent_loop_max_iterations: int,
 ) -> AgentLoopResultModel:
-    await _emit_agent_progress(
-        project_id,
-        phase="loop_started",
-        summary="Agent loop started.",
-        details={"max_iterations": agent_loop_max_iterations},
-    )
+    agent_steps: list[dict[str, Any]] = [
+        await _emit_agent_progress(
+            project_id,
+            phase="loop_started",
+            summary="Agent loop started.",
+            details={"max_iterations": agent_loop_max_iterations},
+        )
+    ]
     current_draft = draft
     current_runtime_state = _seed_loop_runtime_state(
         record=record,
@@ -699,18 +908,20 @@ async def _run_chat_agent_loop(
             draft=current_draft,
             runtime_state=current_runtime_state,
         )
-        await _emit_agent_progress(
-            project_id,
-            phase="planner_context_assembled",
-            summary="Planner context assembled.",
-            details={
-                "iteration": iteration,
-                "draft_version": current_draft.version,
-                "observation_count": len(observations),
-                "chat_mode": capabilities.get("chat_mode"),
-                "summary_state": summary_state,
-                "retrieval_ready": media_summary.get("retrieval_ready"),
-            },
+        agent_steps.append(
+            await _emit_agent_progress(
+                project_id,
+                phase="planner_context_assembled",
+                summary="Planner context assembled.",
+                details={
+                    "iteration": iteration,
+                    "draft_version": current_draft.version,
+                    "observation_count": len(observations),
+                    "chat_mode": capabilities.get("chat_mode"),
+                    "summary_state": summary_state,
+                    "retrieval_ready": media_summary.get("retrieval_ready"),
+                },
+            )
         )
         decision = await _request_server_planner_decision(
             access_token=access_token,
@@ -731,16 +942,19 @@ async def _run_chat_agent_loop(
             draft=current_draft,
             capabilities=capabilities,
         )
-        await _emit_agent_progress(
-            project_id,
-            phase="planner_decision_received",
-            summary="Planner decision received.",
-            details={
-                "iteration": iteration,
-                "status": decision.status,
-                "draft_strategy": decision.draft_strategy,
-                "tool_name": decision.tool_name,
-            },
+        agent_steps.append(
+            await _emit_agent_progress(
+                project_id,
+                phase="planner_decision_received",
+                summary="Planner decision received.",
+                details={
+                    "iteration": iteration,
+                    "status": decision.status,
+                    "draft_strategy": decision.draft_strategy,
+                    "tool_name": decision.tool_name,
+                    "assistant_reply": decision.assistant_reply,
+                },
+            )
         )
         if not _should_continue_agent_loop(decision=decision):
             current_runtime_state["conversation_state"].update(
@@ -758,28 +972,38 @@ async def _run_chat_agent_loop(
                 }
             )
             current_runtime_state["updated_at"] = _now_iso()
-            await _emit_agent_progress(
-                project_id,
-                phase="loop_finalized",
-                summary="Planner returned a final decision.",
-                details={"iteration": iteration, "draft_version": current_draft.version},
+            agent_steps.append(
+                await _emit_agent_progress(
+                    project_id,
+                    phase="loop_finalized",
+                    summary="Planner returned a final decision.",
+                    details={"iteration": iteration, "draft_version": current_draft.version},
+                )
             )
             return AgentLoopResultModel(
                 final_decision=decision,
                 draft=current_draft,
                 observations=observations,
                 runtime_state=ProjectRuntimeState.model_validate(current_runtime_state),
+                agent_steps=agent_steps,
             )
-        await _emit_agent_progress(
-            project_id,
-            phase="tool_execution_requested",
-            summary="Planner requested tool execution.",
-            details={
-                "iteration": iteration,
-                "tool_name": decision.tool_name,
-                "tool_input_summary": decision.tool_input_summary,
-                "chat_mode": capabilities.get("chat_mode"),
-            },
+        tool_call = _build_tool_call_or_raise(decision)
+        agent_steps.append(
+            await _emit_agent_progress(
+                project_id,
+                phase="tool_execution_requested",
+                summary="Planner requested tool execution.",
+                details={
+                    "iteration": iteration,
+                    "tool_name": decision.tool_name,
+                    "tool_display": _tool_display_for_call(
+                        tool_call=tool_call,
+                        draft=current_draft,
+                        runtime_state=current_runtime_state,
+                    ),
+                    "chat_mode": capabilities.get("chat_mode"),
+                },
+            )
         )
         observation = await _execute_tool_call_todo(
             project_id=project_id,
@@ -791,16 +1015,19 @@ async def _run_chat_agent_loop(
             access_token=access_token,
         )
         observations.append(observation)
-        await _emit_agent_progress(
-            project_id,
-            phase="tool_observation_recorded",
-            summary="Tool observation recorded for replanning.",
-            details={
-                "iteration": iteration,
-                "tool_name": observation.tool_name,
-                "success": observation.success,
-                "observation_count": len(observations),
-            },
+        agent_steps.append(
+            await _emit_agent_progress(
+                project_id,
+                phase="tool_observation_recorded",
+                summary="Tool observation recorded for replanning.",
+                details={
+                    "iteration": iteration,
+                    "tool_name": observation.tool_name,
+                    "success": observation.success,
+                    "observation_count": len(observations),
+                    "tool_result_display": _tool_result_display(observation=observation, draft=current_draft),
+                },
+            )
         )
         current_runtime_state = _apply_tool_observation_to_runtime_state(current_runtime_state, observation)
         current_runtime_state["execution_state"].update(
@@ -811,11 +1038,13 @@ async def _run_chat_agent_loop(
         )
         current_runtime_state["updated_at"] = _now_iso()
         current_draft = _apply_tool_observation_to_draft_todo(current_draft, observation)
-        await _emit_agent_progress(
-            project_id,
-            phase="draft_updated_in_loop",
-            summary="Loop draft state updated from tool observation.",
-            details={"iteration": iteration, "draft_version": current_draft.version},
+        agent_steps.append(
+            await _emit_agent_progress(
+                project_id,
+                phase="draft_updated_in_loop",
+                summary="Loop draft state updated from tool observation.",
+                details={"iteration": iteration, "draft_version": current_draft.version},
+            )
         )
     raise CoreApiError(
         status_code=502,

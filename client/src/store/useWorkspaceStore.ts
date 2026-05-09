@@ -9,6 +9,7 @@ import {
 } from "../services/electronBridge";
 import {
   createProjectEventsSocket,
+  clearProjectChatTurns as clearProjectChatTurnsRequest,
   deleteAsset as deleteAssetRequest,
   exportProject as exportProjectRequest,
   getWorkspace,
@@ -101,6 +102,7 @@ export interface AssistantDecisionTurn {
   decision_type: string;
   reasoning_summary: string;
   ops: AssistantDecisionOperation[];
+  agent_steps?: CoreAgentStepItem[];
 }
 
 export type ChatTurn = UserTurn | AssistantDecisionTurn;
@@ -241,6 +243,7 @@ interface WorkspaceState {
   deleteAsset: (assetId: string) => Promise<void>;
   restoreAsset: (assetId: string) => Promise<void>;
   sendChat: (prompt: string) => Promise<void>;
+  clearProjectChatTurns: () => Promise<void>;
   exportProject: () => Promise<ExportResult | null>;
   clearLastError: () => void;
 }
@@ -982,6 +985,7 @@ const initialState: Omit<
   | "deleteAsset"
   | "restoreAsset"
   | "sendChat"
+  | "clearProjectChatTurns"
   | "exportProject"
   | "clearLastError"
 > = {
@@ -1543,6 +1547,30 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         dispatch({
           type: "CHAT_FAILED",
           error: toWorkspaceError("send_chat_failed", error),
+        });
+      }
+    },
+
+    clearProjectChatTurns: async () => {
+      const workspaceId = get().workspaceId;
+      if (!workspaceId || get().chatState === "responding") {
+        return;
+      }
+      try {
+        const response = await clearProjectChatTurnsRequest(workspaceId);
+        dispatch({
+          type: "WORKSPACE_LOAD_SUCCEEDED",
+          workspace: response.workspace,
+          workspaceName: get().workspaceName ?? undefined,
+        });
+        applyDirectPatch({
+          agentSteps: [],
+          lastError: null,
+        });
+      } catch (error) {
+        dispatch({
+          type: "CHAT_FAILED",
+          error: toWorkspaceError("clear_project_chat_turns_failed", error),
         });
       }
     },

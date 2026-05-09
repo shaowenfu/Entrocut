@@ -138,6 +138,7 @@ export interface CoreChatAssistantTurn {
   decision_type: string;
   reasoning_summary: string;
   ops: CoreAssistantDecisionOperation[];
+  agent_steps?: CoreAgentStepItem[];
 }
 
 // 聊天轮次联合类型。
@@ -255,10 +256,30 @@ export interface CoreWorkspaceSnapshot {
 }
 
 // Agent 步骤事件项。
+export interface CoreAgentStepDisplayPayload {
+  title: string;
+  summary: string;
+  body: string;
+  clip_ids: string[];
+}
+
+export interface CoreAgentStepDetails extends Record<string, unknown> {
+  iteration?: number;
+  status?: string;
+  draft_strategy?: string;
+  tool_name?: string | null;
+  assistant_reply?: string;
+  tool_display?: CoreAgentStepDisplayPayload;
+  tool_result_display?: CoreAgentStepDisplayPayload;
+  success?: boolean;
+  observation_count?: number;
+  chat_mode?: string | null;
+}
+
 export interface CoreAgentStepItem {
   phase: string;
   summary: string;
-  details: Record<string, unknown>;
+  details: CoreAgentStepDetails;
   status?: string;
   iteration?: number;
   emitted_at?: string;
@@ -560,6 +581,14 @@ export async function sendChat(
     method: "POST",
     body: payload,
     headers,
+    authRequired: false,
+  });
+}
+
+// 清空当前项目的聊天历史，不删除素材或 EditDraft。
+export async function clearProjectChatTurns(projectId: string): Promise<GetWorkspaceResponse> {
+  return requestJson<GetWorkspaceResponse>(buildCoreUrl(`/api/v1/projects/${projectId}/chat-turns`), {
+    method: "DELETE",
     authRequired: false,
   });
 }

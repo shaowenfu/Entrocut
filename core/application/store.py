@@ -641,6 +641,40 @@ class InMemoryProjectStore:
         await self.emit(project_id, "project.updated", {"project": record["project"]})
         return self.workspace_snapshot(project_id)
 
+    async def clear_project_chat_turns(self, project_id: str) -> WorkspaceSnapshotModel:
+        record = self.get_project_or_raise(project_id)
+        self._ensure_record_defaults(record)
+        active_task = self.get_running_task(project_id, "agent")
+        if active_task:
+            raise CoreApiError(
+                status_code=409,
+                code="TASK_ALREADY_RUNNING",
+                message="Chat history cannot be cleared while an agent task is running.",
+                details={"project_id": project_id, "active_task_id": active_task.get("id")},
+            )
+        now = _now_iso()
+        record["chat_turns"] = []
+        record["runtime_state"]["conversation_state"].update(
+            {
+                "pending_questions": [],
+                "confirmed_facts": [],
+                "latest_user_feedback": "unknown",
+                "updated_at": now,
+            }
+        )
+        record["runtime_state"]["execution_state"].update(
+            {
+                "last_error": None,
+                "updated_at": now,
+            }
+        )
+        record["runtime_state"]["updated_at"] = now
+        record["project"]["updated_at"] = now
+        self._persist_record_unlocked(project_id)
+        workspace = self.workspace_snapshot(project_id)
+        await self.emit(project_id, "workspace.snapshot", {"workspace": workspace.model_dump()})
+        return workspace
+
     async def emit(self, project_id: str, event_name: str, data: dict[str, Any]) -> None:
         async with self._lock:
             record = self.get_project_or_raise(project_id)
@@ -1698,6 +1732,7 @@ class InMemoryProjectStore:
                 decision_type="EDIT_DRAFT_PATCH",
                 reasoning_summary=reply_text,
                 ops=ops,
+                agent_steps=loop_result.agent_steps,
             )
             await self._finalize_chat_success(
                 project_id=project_id,

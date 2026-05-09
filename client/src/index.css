@@ -1313,6 +1313,7 @@ textarea {
 .agent-step-body p {
   margin: 0;
   color: #b8c0da;
+  white-space: pre-line;
 }
 
 .agent-tool-line {

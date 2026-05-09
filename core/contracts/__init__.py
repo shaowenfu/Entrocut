@@ -208,6 +208,7 @@ class AssistantDecisionTurnModel(BaseModel):
     decision_type: DecisionType
     reasoning_summary: str
     ops: list[AssistantDecisionOperationModel]
+    agent_steps: list[dict[str, Any]] = Field(default_factory=list)
 
 
 ChatTurnModel = UserTurnModel | AssistantDecisionTurnModel
@@ -365,6 +366,7 @@ class PlannerDecisionModel(BaseModel):
     reasoning_summary: str
     assistant_reply: str
     tool_name: str | None = None
+    tool_input: dict[str, Any] | None = None
     tool_input_summary: str | None = None
     draft_strategy: PlannerDraftStrategy = "placeholder_first_cut"
 
@@ -387,6 +389,7 @@ class AgentLoopResultModel(BaseModel):
     draft: EditDraftModel
     observations: list[ToolObservationModel] = Field(default_factory=list)
     runtime_state: ProjectRuntimeState = Field(default_factory=ProjectRuntimeState)
+    agent_steps: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ExportRequest(BaseModel):
