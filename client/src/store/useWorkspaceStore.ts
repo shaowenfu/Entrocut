@@ -8,6 +8,7 @@ import {
   type MediaPickMode,
 } from "../services/electronBridge";
 import {
+  answerAgentQuestion as answerAgentQuestionRequest,
   createProjectEventsSocket,
   clearProjectChatTurns as clearProjectChatTurnsRequest,
   deleteAsset as deleteAssetRequest,
@@ -21,7 +22,10 @@ import {
   toRequestError,
   updateProject as updateProjectRequest,
   type CoreChatAssistantTurn,
+  type CoreChatAnswerTurn,
+  type CoreChatQuestionTurn,
   type CoreChatTurn,
+  type CoreAgentQuestionOption,
   type CoreAgentStepItem,
   type CoreProjectCapabilities,
   type CoreProjectMediaSummary,
@@ -85,7 +89,17 @@ export interface StoryboardScene {
 export interface UserTurn {
   id: string;
   role: "user";
+  type?: undefined;
   content: string;
+}
+
+export interface UserAnswerTurn {
+  id: string;
+  role: "user";
+  type: "answer";
+  question_id: string;
+  selected_option_id?: string | null;
+  custom_answer?: string | null;
 }
 
 export interface AssistantDecisionOperation {
@@ -105,7 +119,18 @@ export interface AssistantDecisionTurn {
   agent_steps?: CoreAgentStepItem[];
 }
 
-export type ChatTurn = UserTurn | AssistantDecisionTurn;
+export interface AssistantQuestionTurn {
+  id: string;
+  role: "assistant";
+  type: "question";
+  question_id: string;
+  question: string;
+  options: CoreAgentQuestionOption[];
+  allow_custom?: boolean;
+  context_brief?: string | null;
+}
+
+export type ChatTurn = UserTurn | UserAnswerTurn | AssistantDecisionTurn | AssistantQuestionTurn;
 
 type ProcessingPhase = "idle" | "media_processing" | "indexing" | "chat_thinking" | "ready" | "failed";
 type WorkspaceLoadState = "idle" | "loading" | "ready" | "failed";
@@ -243,6 +268,11 @@ interface WorkspaceState {
   deleteAsset: (assetId: string) => Promise<void>;
   restoreAsset: (assetId: string) => Promise<void>;
   sendChat: (prompt: string) => Promise<void>;
+  answerAgentQuestion: (input: {
+    questionId: string;
+    selectedOptionId?: string | null;
+    customAnswer?: string | null;
+  }) => Promise<void>;
   clearProjectChatTurns: () => Promise<void>;
   exportProject: () => Promise<ExportResult | null>;
   clearLastError: () => void;
@@ -422,8 +452,14 @@ function mapStoryboard(editDraft: CoreEditDraft): StoryboardScene[] {
 
 function mapTurns(turns: CoreChatTurn[]): ChatTurn[] {
   return turns.map((turn) => {
+    if (turn.role === "user" && turn.type === "answer") {
+      return turn as CoreChatAnswerTurn as UserAnswerTurn;
+    }
     if (turn.role === "user") {
       return turn as UserTurn;
+    }
+    if (turn.type === "question") {
+      return turn as CoreChatQuestionTurn as AssistantQuestionTurn;
     }
     return {
       ...(turn as CoreChatAssistantTurn),
@@ -838,8 +874,12 @@ function reduceWorkspaceState(
       return {
         chatTurns: appendTurn(
           state.chatTurns,
-          event.turn.role === "user"
+          event.turn.role === "user" && event.turn.type === "answer"
+            ? (event.turn as CoreChatAnswerTurn as UserAnswerTurn)
+            : event.turn.role === "user"
             ? (event.turn as UserTurn)
+            : event.turn.type === "question"
+            ? (event.turn as CoreChatQuestionTurn as AssistantQuestionTurn)
             : ({
                 ...(event.turn as CoreChatAssistantTurn),
               } as AssistantDecisionTurn)
@@ -861,7 +901,7 @@ function reduceWorkspaceState(
       const nextTask = mapTask(event.task);
       const activeTasks = [
         ...state.activeTasks.filter((task) => task.id !== event.task.id),
-        ...(nextTask && (event.task.status === "queued" || event.task.status === "running") ? [nextTask] : []),
+        ...(nextTask && (event.task.status === "queued" || event.task.status === "running" || event.task.status === "paused") ? [nextTask] : []),
       ];
       const activeTask = findRunningTask(activeTasks);
       return {
@@ -985,6 +1025,7 @@ const initialState: Omit<
   | "deleteAsset"
   | "restoreAsset"
   | "sendChat"
+  | "answerAgentQuestion"
   | "clearProjectChatTurns"
   | "exportProject"
   | "clearLastError"
@@ -1547,6 +1588,72 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         dispatch({
           type: "CHAT_FAILED",
           error: toWorkspaceError("send_chat_failed", error),
+        });
+      }
+    },
+
+    answerAgentQuestion: async ({ questionId, selectedOptionId, customAnswer }) => {
+      const workspaceId = get().workspaceId;
+      if (!workspaceId || get().chatState === "responding") {
+        return;
+      }
+      if (!selectedOptionId && !customAnswer?.trim()) {
+        return;
+      }
+      try {
+        const selection = get().selectionContext;
+        const { modelPrefs } = useAuthStore.getState();
+        const selectedProvider =
+          modelPrefs.routingMode === "BYOK" ? modelPrefs.byokProvider.trim() : modelPrefs.platformProvider.trim();
+        const selectedModel =
+          modelPrefs.routingMode === "BYOK"
+            ? (modelPrefs.byokCustomModel.trim() || modelPrefs.byokModel.trim() || "deepseek-v4-flash")
+            : (modelPrefs.platformCustomModel.trim() || modelPrefs.platformModel.trim());
+        if (!selectedProvider || !selectedModel) {
+          dispatch({
+            type: "CHAT_FAILED",
+            error: {
+              code: "MODEL_SELECTION_REQUIRED",
+              message: "Select an available provider and model before sending chat.",
+            },
+          });
+          return;
+        }
+        const response = await answerAgentQuestionRequest(
+          workspaceId,
+          questionId,
+          {
+            selected_option_id: selectedOptionId ?? null,
+            custom_answer: customAnswer?.trim() || null,
+            routing: {
+              mode: modelPrefs.routingMode,
+              provider: selectedProvider,
+              model: modelPrefs.routingMode === "BYOK" ? modelPrefs.byokModel : modelPrefs.platformModel,
+              custom_model: modelPrefs.routingMode === "BYOK" ? (modelPrefs.byokCustomModel.trim() || null) : (modelPrefs.platformCustomModel.trim() || null),
+            },
+            model: selectedModel,
+            target:
+              selection.scope === "global"
+                ? undefined
+                : {
+                    scene_id: selection.selectedSceneId,
+                    shot_id: selection.scope === "shot" ? selection.selectedShotId : undefined,
+                  },
+          },
+          {
+            mode: modelPrefs.routingMode,
+            provider: selectedProvider,
+            byokKey: modelPrefs.routingMode === "BYOK" ? modelPrefs.byokKey : undefined,
+          }
+        );
+        dispatch({
+          type: "CHAT_REQUEST_ACCEPTED",
+          task: mapTask(response.task)!,
+        });
+      } catch (error) {
+        dispatch({
+          type: "CHAT_FAILED",
+          error: toWorkspaceError("answer_question_failed", error),
         });
       }
     },

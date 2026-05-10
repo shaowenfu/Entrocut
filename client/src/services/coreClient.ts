@@ -24,7 +24,7 @@ export type TaskSlot = "media" | "agent" | "preview" | "export";
 // 后台任务类型。
 export type TaskType = "ingest" | "index" | "chat" | "render";
 // 后台任务状态。
-export type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "paused";
 // 聊天模式：仅规划或可编辑。
 export type ChatMode = "planning_only" | "editing";
 // 用户反馈分类。
@@ -119,6 +119,7 @@ export interface CoreEditDraft {
 export interface CoreChatUserTurn {
   id: string;
   role: "user";
+  type?: undefined;
   content: string;
 }
 
@@ -141,8 +142,34 @@ export interface CoreChatAssistantTurn {
   agent_steps?: CoreAgentStepItem[];
 }
 
+export interface CoreAgentQuestionOption {
+  id: string;
+  label: string;
+  description?: string | null;
+}
+
+export interface CoreChatQuestionTurn {
+  id: string;
+  role: "assistant";
+  type: "question";
+  question_id: string;
+  question: string;
+  options: CoreAgentQuestionOption[];
+  allow_custom?: boolean;
+  context_brief?: string | null;
+}
+
+export interface CoreChatAnswerTurn {
+  id: string;
+  role: "user";
+  type: "answer";
+  question_id: string;
+  selected_option_id?: string | null;
+  custom_answer?: string | null;
+}
+
 // 聊天轮次联合类型。
-export type CoreChatTurn = CoreChatUserTurn | CoreChatAssistantTurn;
+export type CoreChatTurn = CoreChatUserTurn | CoreChatAssistantTurn | CoreChatQuestionTurn | CoreChatAnswerTurn;
 
 // core 后台任务。
 export interface CoreTask {
@@ -395,6 +422,15 @@ export interface ChatRequest {
   };
 }
 
+// 回答 Agent 提问请求。
+export interface ChatAnswerRequest {
+  selected_option_id?: string | null;
+  custom_answer?: string | null;
+  model?: string;
+  routing?: ChatRequest["routing"];
+  target?: ChatRequest["target"];
+}
+
 // 聊天路由参数：平台模型或 BYOK。
 export interface ChatRoutingOptions {
   mode: "Platform" | "BYOK";
@@ -577,6 +613,27 @@ export async function sendChat(
     headers["X-BYOK-Key"] = routing.byokKey;
   }
   return requestJson<TaskResponse>(buildCoreUrl(`/api/v1/projects/${projectId}/chat`), {
+    method: "POST",
+    body: payload,
+    headers,
+    authRequired: false,
+  });
+}
+
+// 回答 Agent 在上一轮提出的问题。
+export async function answerAgentQuestion(
+  projectId: string,
+  questionId: string,
+  payload: ChatAnswerRequest,
+  routing: ChatRoutingOptions
+): Promise<TaskResponse> {
+  const headers: Record<string, string> = {
+    "X-Routing-Mode": routing.mode,
+  };
+  if (routing.mode === "BYOK" && routing.byokKey) {
+    headers["X-BYOK-Key"] = routing.byokKey;
+  }
+  return requestJson<TaskResponse>(buildCoreUrl(`/api/v1/projects/${projectId}/questions/${questionId}:answer`), {
     method: "POST",
     body: payload,
     headers,

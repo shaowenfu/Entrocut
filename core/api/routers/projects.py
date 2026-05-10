@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Query, Request, Response
 
 from config import AGENT_LOOP_MAX_ITERATIONS
 from contracts import (
     ChatRequest,
+    ChatAnswerRequest,
     CoreApiError,
     CreateProjectRequest,
     CreateProjectResponse,
@@ -107,15 +108,44 @@ async def chat(project_id: str, payload: ChatRequest, request: Request) -> TaskR
     return TaskResponse(task=task)
 
 
+@router.post("/api/v1/projects/{project_id}/questions/{question_id}:answer", response_model=TaskResponse)
+async def answer_question(
+    project_id: str,
+    question_id: str,
+    payload: ChatAnswerRequest,
+    request: Request,
+) -> TaskResponse:
+    routing = payload.routing.model_dump() if payload.routing else {}
+    normalized_mode = "BYOK" if (routing.get("mode") or "Platform").upper() == "BYOK" else "Platform"
+    if normalized_mode != "BYOK":
+        auth_session = await auth_session_store.snapshot()
+        if not auth_session.get("access_token"):
+            raise CoreApiError(
+                status_code=401,
+                code="AUTH_SESSION_REQUIRED",
+                message="Sign in is required before chat can run.",
+            )
+    task = await store.answer_agent_question(
+        project_id,
+        question_id,
+        payload,
+        routing,
+        request.headers.get("X-BYOK-Key"),
+        _agent_loop_max_iterations_resolver(),
+    )
+    return TaskResponse(task=task)
+
+
 @router.delete("/api/v1/projects/{project_id}/chat-turns", response_model=GetWorkspaceResponse)
 async def clear_chat_turns(project_id: str) -> GetWorkspaceResponse:
     workspace = await store.clear_project_chat_turns(project_id)
     return GetWorkspaceResponse(workspace=workspace)
 
 
-@router.delete("/api/v1/projects/{project_id}", status_code=204)
-async def delete_project(project_id: str) -> None:
+@router.delete("/api/v1/projects/{project_id}", status_code=204, response_class=Response)
+async def delete_project(project_id: str) -> Response:
     await store.delete_project(project_id)
+    return Response(status_code=204)
 
 
 @router.post("/api/v1/projects/{project_id}/export", response_model=TaskResponse)

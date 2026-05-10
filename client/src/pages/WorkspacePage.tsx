@@ -18,6 +18,7 @@ import {
   Film,
   FolderUp,
   GripVertical,
+  HelpCircle,
   KeyRound,
   Layers,
   ListVideo,
@@ -56,7 +57,9 @@ import {
 import {
   useWorkspaceStore,
   type AssistantDecisionTurn,
+  type AssistantQuestionTurn,
   type ChatTurn,
+  type UserAnswerTurn,
   type WorkspaceAssetItem,
   type WorkspaceClipItem,
 } from "../store/useWorkspaceStore";
@@ -429,6 +432,82 @@ function AgentFinalMessageView({ turn }: { turn: AssistantDecisionTurn }) {
   );
 }
 
+function UserAnswerView({ turn }: { turn: UserAnswerTurn }) {
+  const answerText = turn.custom_answer?.trim() || turn.selected_option_id || "已选择一个选项";
+
+  return (
+    <div className="chat-row chat-row-user">
+      <div className="chat-bubble chat-bubble-answer">{answerText}</div>
+    </div>
+  );
+}
+
+function AgentQuestionView({
+  turn,
+  disabled,
+  onAnswer,
+}: {
+  turn: AssistantQuestionTurn;
+  disabled: boolean;
+  onAnswer: (input: { questionId: string; selectedOptionId?: string | null; customAnswer?: string | null }) => void;
+}) {
+  const [customAnswer, setCustomAnswer] = useState("");
+  const questionId = turn.question_id || turn.id;
+  const canSubmitCustom = (turn.allow_custom ?? true) && customAnswer.trim().length > 0 && !disabled;
+
+  return (
+    <article className="decision-card question-card">
+      <header>
+        <HelpCircle size={14} />
+        <span>NEEDS INPUT</span>
+      </header>
+      <div className="decision-content question-content">
+        {turn.context_brief ? <p className="question-context">{turn.context_brief}</p> : null}
+        <p className="question-title">{turn.question}</p>
+        <div className="question-options">
+          {turn.options.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              className="question-option"
+              disabled={disabled}
+              onClick={() => onAnswer({ questionId, selectedOptionId: option.id })}
+            >
+              <span>{option.label}</span>
+              {option.description ? <small>{option.description}</small> : null}
+            </button>
+          ))}
+        </div>
+        {(turn.allow_custom ?? true) ? (
+          <div className="question-custom-answer">
+            <textarea
+              value={customAnswer}
+              onChange={(event) => setCustomAnswer(event.target.value)}
+              disabled={disabled}
+              rows={2}
+              placeholder="自定义回答..."
+            />
+            <button
+              type="button"
+              disabled={!canSubmitCustom}
+              onClick={() => {
+                const trimmed = customAnswer.trim();
+                if (!trimmed) {
+                  return;
+                }
+                setCustomAnswer("");
+                onAnswer({ questionId, customAnswer: trimmed });
+              }}
+            >
+              <Send size={14} />
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
 function AgentInlineMessageView({ text }: { text: string }) {
   return (
     <div className="chat-turn-assistant">
@@ -715,6 +794,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   const restoreAsset = useWorkspaceStore((state) => state.restoreAsset);
   const renameProject = useWorkspaceStore((state) => state.renameProject);
   const sendChat = useWorkspaceStore((state) => state.sendChat);
+  const answerAgentQuestion = useWorkspaceStore((state) => state.answerAgentQuestion);
   const clearProjectChatTurns = useWorkspaceStore((state) => state.clearProjectChatTurns);
   const exportProject = useWorkspaceStore((state) => state.exportProject);
   const clearLastError = useWorkspaceStore((state) => state.clearLastError);
@@ -857,7 +937,8 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     selectedAsset?.sourcePath && missingMediaAssetIds.has(selectedAsset.id)
   );
   const latestChatTurn = chatTurns[chatTurns.length - 1] ?? null;
-  const isAgentRunFinalized = latestChatTurn?.role === "assistant" && agentSteps.length > 0 && !isThinking;
+  const isAgentRunFinalized =
+    latestChatTurn?.role === "assistant" && latestChatTurn.type === "decision" && agentSteps.length > 0 && !isThinking;
   const visibleAgentSteps = useMemo(
     () =>
       buildAgentDisplaySteps({
@@ -866,11 +947,11 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
       }),
     [agentSteps, isThinking]
   );
-  const activeAgentSteps = latestChatTurn?.role === "assistant" ? [] : visibleAgentSteps;
+  const activeAgentSteps = latestChatTurn?.role === "assistant" && latestChatTurn.type === "decision" ? [] : visibleAgentSteps;
   const persistedAgentStepHistoryByAssistantId = useMemo(() => {
     const history: Record<string, AgentDisplayStep[]> = {};
     for (const turn of chatTurns) {
-      if (turn.role !== "assistant" || !turn.agent_steps?.length) {
+      if (turn.role !== "assistant" || turn.type !== "decision" || !turn.agent_steps?.length) {
         continue;
       }
       history[turn.id] = buildAgentDisplaySteps({
@@ -1058,7 +1139,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   }, [assets, mediaRegistryVersion, thumbnailUrls, workspaceId]);
 
   useEffect(() => {
-    const latest = [...chatTurns].reverse().find((turn) => turn.role === "assistant");
+    const latest = [...chatTurns].reverse().find((turn) => turn.role === "assistant" && turn.type === "decision");
     if (!latest || latestAssistantIdRef.current === latest.id) {
       return;
     }
@@ -1207,6 +1288,18 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     setComposerCaretIndex(0);
     setIsPlaying(false);
     await sendChat(enhancePromptWithAssetReferences(trimmed, assets, assetAliases));
+  }
+
+  async function handleAnswerQuestion(input: {
+    questionId: string;
+    selectedOptionId?: string | null;
+    customAnswer?: string | null;
+  }) {
+    if (!canSendChat) {
+      return;
+    }
+    setReasoningOverlay(null);
+    await answerAgentQuestion(input);
   }
 
   async function handleClearProjectChatTurns() {
@@ -2036,8 +2129,16 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                     </div>
                   ) : null}
                   <div className={turn.role === "user" ? "chat-turn-user" : "chat-turn-assistant"}>
-                    {turn.role === "user" ? (
+                    {turn.role === "user" && turn.type === "answer" ? (
+                      <UserAnswerView turn={turn as UserAnswerTurn} />
+                    ) : turn.role === "user" ? (
                       <UserMessageView text={turn.content} />
+                    ) : turn.type === "question" ? (
+                      <AgentQuestionView
+                        turn={turn as AssistantQuestionTurn}
+                        disabled={!canSendChat || isThinking}
+                        onAnswer={(input) => void handleAnswerQuestion(input)}
+                      />
                     ) : (
                       <AgentFinalMessageView turn={turn as AssistantDecisionTurn} />
                     )}

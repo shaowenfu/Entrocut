@@ -233,8 +233,10 @@ class AgentAskTurnModel(BaseModel):
     id: str
     role: Literal["assistant"]
     type: Literal["question"]
+    question_id: str
     question: str
     options: list[dict[str, Any]]
+    allow_custom: bool = True
     context_brief: str | None = None
 
 
@@ -385,6 +387,14 @@ class ChatTarget(BaseModel):
 
 class ChatRequest(BaseModel):
     prompt: str
+    target: ChatTarget | None = None
+    model: str | None = None
+    routing: "ChatRoutingConfig | None" = None
+
+
+class ChatAnswerRequest(BaseModel):
+    selected_option_id: str | None = None
+    custom_answer: str | None = None
     target: ChatTarget | None = None
     model: str | None = None
     routing: "ChatRoutingConfig | None" = None

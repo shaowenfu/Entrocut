@@ -169,7 +169,9 @@ def render_chat_history(chat_turns: list[ChatTurnModel | dict[str, Any]]) -> str
                 options_text = ", ".join(
                     f"{opt.get('label', '')}" for opt in (turn.get("options") or []) if isinstance(opt, dict)
                 )
-                lines.append(f"Assistant: [question] {_text(turn.get('question'))}")
+                lines.append(
+                    f"Assistant: [question {_text(turn.get('question_id') or turn.get('id'))}] {_text(turn.get('question'))}"
+                )
                 if options_text:
                     lines.append(f"  Options: {options_text}")
             else:

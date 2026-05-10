@@ -216,6 +216,28 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             ensure_ascii=False,
         )
 
+    def _ask_user_decision(self, question_id: str = "q_style") -> str:
+        return core_server.json.dumps(
+            {
+                "status": "ask_user",
+                "tool_name": None,
+                "tool_input": None,
+                "assistant_reply": None,
+                "question": {
+                    "id": question_id,
+                    "question": "你希望开头使用哪种节奏？",
+                    "options": [
+                        {"id": "fast", "label": "快节奏", "description": "更适合短视频开场"},
+                        {"id": "calm", "label": "舒缓", "description": "更适合旅行氛围"},
+                    ],
+                    "allow_custom": True,
+                    "context_brief": "当前需要确认剪辑方向。",
+                },
+                "current_focus": {"target_type": "project", "target_id": "project"},
+            },
+            ensure_ascii=False,
+        )
+
     def test_chat_runs_planner_prompt_and_final_reply_without_implicit_edit(self) -> None:
         project_id, _ = self._create_project()
         self._set_auth_session()
@@ -556,6 +578,78 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
         self.assertEqual(cleared["chat_turns"], [])
         self.assertEqual(cleared["runtime_state"]["conversation_state"]["pending_questions"], [])
         self.assertEqual(cleared["runtime_state"]["conversation_state"]["confirmed_facts"], [])
+
+    def test_chat_can_ask_user_and_resume_from_answer(self) -> None:
+        response = self.client.post("/api/v1/projects", json={"title": "Question Test"})
+        self.assertEqual(response.status_code, 200)
+        project_id = response.json()["project"]["id"]
+        self._set_auth_session()
+
+        planner_sequence = [
+            self._ask_user_decision("q_style"),
+            self._final_decision("已按快节奏方向继续规划。"),
+        ]
+
+        async def fake_post(_self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
+            class _DummyResponse:
+                status_code = 200
+
+                @staticmethod
+                def json() -> dict[str, Any]:
+                    planner_json = planner_sequence.pop(0)
+                    return {"choices": [{"message": {"content": planner_json}}]}
+
+                text = ""
+
+            return _DummyResponse()
+
+        with patch("httpx.AsyncClient.post", fake_post):
+            chat_response = self.client.post(
+                f"/api/v1/projects/{project_id}/chat",
+                json={"prompt": "帮我剪一个旅行开场"},
+            )
+            self.assertEqual(chat_response.status_code, 200)
+            workspace = self._poll_workspace(project_id)
+
+            question_turn = [turn for turn in workspace["chat_turns"] if turn.get("type") == "question"][-1]
+            self.assertEqual(question_turn["question_id"], "q_style")
+            self.assertEqual(len(question_turn["options"]), 2)
+            self.assertEqual(workspace["runtime_state"]["execution_state"]["agent_run_state"], "waiting_user")
+            self.assertEqual(workspace["runtime_state"]["conversation_state"]["pending_questions"], ["q_style"])
+            self.assertEqual(workspace["active_tasks"][0]["status"], "paused")
+
+            answer_response = self.client.post(
+                f"/api/v1/projects/{project_id}/questions/q_style:answer",
+                json={"selected_option_id": "fast"},
+            )
+            self.assertEqual(answer_response.status_code, 200)
+            resumed_workspace = self._poll_workspace(project_id, assistant_turns=2)
+
+        answer_turn = [turn for turn in resumed_workspace["chat_turns"] if turn.get("type") == "answer"][-1]
+        self.assertEqual(answer_turn["question_id"], "q_style")
+        self.assertEqual(answer_turn["selected_option_id"], "fast")
+        assistant_turn = [turn for turn in resumed_workspace["chat_turns"] if turn.get("type") == "decision"][-1]
+        self.assertIn("快节奏", assistant_turn["assistant_reply"])
+        self.assertEqual(resumed_workspace["runtime_state"]["conversation_state"]["pending_questions"], [])
+        self.assertEqual(resumed_workspace["runtime_state"]["execution_state"]["agent_run_state"], "idle")
+        self.assertEqual(resumed_workspace["active_tasks"], [])
+
+    def test_delete_project_removes_records_and_workspace(self) -> None:
+        response = self.client.post("/api/v1/projects", json={"title": "Delete Me"})
+        self.assertEqual(response.status_code, 200)
+        project_id = response.json()["project"]["id"]
+        workspace_dir = Path(store.get_project_or_raise(project_id)["workspace_dir"])
+        self.assertTrue(workspace_dir.exists())
+
+        delete_response = self.client.delete(f"/api/v1/projects/{project_id}")
+        self.assertEqual(delete_response.status_code, 204)
+        self.assertEqual(delete_response.content, b"")
+        self.assertFalse(workspace_dir.exists())
+        self.assertEqual(self.client.get(f"/api/v1/projects/{project_id}").status_code, 404)
+
+        with sqlite3.connect(store.db_path) as connection:
+            row = connection.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
+        self.assertIsNone(row)
 
     def test_planning_only_chat_blocks_retrieve_tool_request(self) -> None:
         response = self.client.post("/api/v1/projects", json={})

@@ -25,6 +25,7 @@ from contracts import (
     AssistantDecisionOperationModel,
     AssistantDecisionTurnModel,
     AssetModel,
+    ChatAnswerRequest,
     ChatTarget,
     ClipModel,
     CoreApiError,
@@ -38,6 +39,7 @@ from contracts import (
     ProjectModel,
     ProjectRuntimeState,
     TaskModel,
+    UserAnswerTurnModel,
     UserTurnModel,
     WorkspaceSnapshotModel,
 )
@@ -309,6 +311,12 @@ class InMemoryProjectStore:
             if isinstance(turn, dict) and turn.get("role") == "assistant" and "assistant_reply" not in turn:
                 turn = {**turn, "assistant_reply": str(turn.get("reasoning_summary") or "")}
                 turn.pop("reasoning_summary", None)
+            if isinstance(turn, dict) and turn.get("role") == "assistant" and turn.get("type") == "question":
+                turn = {
+                    **turn,
+                    "question_id": str(turn.get("question_id") or turn.get("id") or ""),
+                    "allow_custom": bool(turn.get("allow_custom", True)),
+                }
             normalized_turns.append(turn)
         record["chat_turns"] = normalized_turns
         record["runtime_state"] = ProjectRuntimeState.model_validate(
@@ -1573,6 +1581,151 @@ class InMemoryProjectStore:
         self._register_background_task(project_id, background_task)
         return task
 
+    def _find_question_turn(self, record: dict[str, Any], question_id: str) -> dict[str, Any] | None:
+        for turn in reversed(record.get("chat_turns") or []):
+            if turn.get("role") != "assistant" or turn.get("type") != "question":
+                continue
+            if turn.get("question_id") == question_id or turn.get("id") == question_id:
+                return turn
+        return None
+
+    def _answer_text_from_question(self, question_turn: dict[str, Any], payload: ChatAnswerRequest) -> str:
+        selected_option_id = _trimmed(payload.selected_option_id)
+        custom_answer = _trimmed(payload.custom_answer)
+        options = [option for option in question_turn.get("options") or [] if isinstance(option, dict)]
+        option_by_id = {str(option.get("id")): option for option in options if option.get("id")}
+        selected_option = option_by_id.get(selected_option_id or "") if selected_option_id else None
+
+        if selected_option_id and selected_option is None:
+            raise CoreApiError(
+                status_code=422,
+                code="QUESTION_OPTION_INVALID",
+                message="Selected question option does not exist.",
+                details={"question_id": question_turn.get("question_id") or question_turn.get("id")},
+            )
+        if custom_answer and not bool(question_turn.get("allow_custom", True)):
+            raise CoreApiError(
+                status_code=422,
+                code="QUESTION_CUSTOM_ANSWER_NOT_ALLOWED",
+                message="This question does not allow a custom answer.",
+                details={"question_id": question_turn.get("question_id") or question_turn.get("id")},
+            )
+        if selected_option is None and custom_answer is None:
+            raise CoreApiError(
+                status_code=422,
+                code="QUESTION_ANSWER_REQUIRED",
+                message="Select an option or provide a custom answer.",
+                details={"question_id": question_turn.get("question_id") or question_turn.get("id")},
+            )
+
+        parts: list[str] = []
+        if selected_option is not None:
+            label = str(selected_option.get("label") or selected_option.get("id") or "").strip()
+            description = str(selected_option.get("description") or "").strip()
+            parts.append(label if not description else f"{label}：{description}")
+        if custom_answer is not None:
+            parts.append(custom_answer)
+        return "；".join(parts)
+
+    async def answer_agent_question(
+        self,
+        project_id: str,
+        question_id: str,
+        payload: ChatAnswerRequest,
+        routing_config: dict[str, Any],
+        byok_key: str | None,
+        agent_loop_max_iterations: int,
+    ) -> TaskModel:
+        record = self.get_project_or_raise(project_id)
+        self._ensure_record_defaults(record)
+        active_task = self.get_running_task(project_id, "agent") or self.get_running_task(project_id, "export")
+        if active_task:
+            raise CoreApiError(
+                status_code=409,
+                code="TASK_ALREADY_RUNNING",
+                message="Another task is already running for this project.",
+                details={"project_id": project_id, "active_task_id": active_task.get("id")},
+            )
+
+        question_turn = self._find_question_turn(record, question_id)
+        if question_turn is None:
+            raise CoreApiError(
+                status_code=404,
+                code="QUESTION_NOT_FOUND",
+                message="Question was not found for this project.",
+                details={"project_id": project_id, "question_id": question_id},
+            )
+        answer_text = self._answer_text_from_question(question_turn, payload)
+        normalized_question_id = str(question_turn.get("question_id") or question_turn.get("id") or question_id)
+
+        now = _now_iso()
+        answer_turn = UserAnswerTurnModel(
+            id=_entity_id("turn"),
+            role="user",
+            type="answer",
+            question_id=normalized_question_id,
+            selected_option_id=_trimmed(payload.selected_option_id),
+            custom_answer=_trimmed(payload.custom_answer),
+        )
+        task = TaskModel(
+            id=_entity_id("task_chat"),
+            slot="agent",
+            type="chat",
+            status="queued",
+            owner_type="project",
+            owner_id=project_id,
+            progress=None,
+            message="Chat queued",
+            created_at=now,
+            updated_at=now,
+        )
+        record["chat_turns"].append(answer_turn.model_dump())
+        record["active_tasks"] = [
+            task_payload
+            for task_payload in record.get("active_tasks", [])
+            if not (task_payload.get("slot") == "agent" and task_payload.get("status") == "paused")
+        ]
+        queued_task = self._upsert_active_task(record, task)
+        record["project"]["updated_at"] = now
+        record["runtime_state"]["conversation_state"].update(
+            {
+                "pending_questions": [
+                    item
+                    for item in record["runtime_state"]["conversation_state"].get("pending_questions", [])
+                    if item != normalized_question_id
+                ],
+                "latest_user_feedback": "clarify",
+                "updated_at": now,
+            }
+        )
+        record["runtime_state"]["execution_state"].update(
+            {
+                "agent_run_state": "planning",
+                "current_task_id": task.id,
+                "last_error": None,
+                "updated_at": now,
+            }
+        )
+        record["runtime_state"]["updated_at"] = now
+        record["summary_state"] = self._derive_summary_state(record)
+
+        await self.emit(project_id, "chat.turn.created", {"turn": answer_turn.model_dump()})
+        await self.emit(project_id, "task.updated", {"task": queued_task})
+        background_task = asyncio.create_task(
+            self._run_chat(
+                project_id,
+                f"回答问题 {normalized_question_id}：{answer_text}",
+                payload.target,
+                task,
+                payload.model,
+                routing_config,
+                byok_key,
+                agent_loop_max_iterations,
+            )
+        )
+        self._register_background_task(project_id, background_task)
+        return task
+
     async def _finalize_chat_success(
         self,
         *,
@@ -1645,11 +1798,20 @@ class InMemoryProjectStore:
             id=_entity_id("turn"),
             role="assistant",
             type="question",
+            question_id=question.id,
             question=question.question,
             options=[option.model_dump() for option in question.options],
+            allow_custom=question.allow_custom,
             context_brief=question.context_brief,
         )
         record["chat_turns"].append(ask_turn.model_dump())
+        record["runtime_state"]["conversation_state"].update(
+            {
+                "pending_questions": [question.id],
+                "latest_user_feedback": "clarify",
+                "updated_at": next_draft.updated_at,
+            }
+        )
 
         await self.emit(project_id, "chat.turn.created", {"turn": ask_turn.model_dump()})
         await self.emit(
