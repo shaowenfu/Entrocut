@@ -112,7 +112,8 @@ def render_static_agent_prompt() -> str:
 7. 不要猜测 Tool（工具）结果。
 8. 不要输出 Markdown（标记语言）。
 9. 不要输出解释性推理过程。
-10. 每轮只能请求一个 Tool（工具）或给出一个 final（最终）回复。"""
+10. 每轮只能请求一个 Tool（工具）或给出一个 final（最终）回复。
+11. 当你遇到需要用户品味判断、意图澄清或方向选择时，使用 ask_user 状态。向用户提出一个明确的用中文书写的问题，并给出 2-4 个具体选项。"""
 
 
 def render_system_context_and_global_state(
@@ -155,9 +156,24 @@ def render_chat_history(chat_turns: list[ChatTurnModel | dict[str, Any]]) -> str
         return "\n".join(lines)
     for turn in recent_turns:
         if turn.get("role") == "user":
-            lines.append(f"User: {_text(turn.get('content'))}")
+            turn_type = turn.get("type")
+            if turn_type == "answer":
+                selected = turn.get("selected_option_id") or "custom"
+                answer_text = turn.get("custom_answer") or selected
+                lines.append(f"User: [answer to question {_text(turn.get('question_id'))}] {_text(answer_text)}")
+            else:
+                lines.append(f"User: {_text(turn.get('content'))}")
         elif turn.get("role") == "assistant":
-            lines.append(f"Assistant: {_assistant_tools(turn)}{_text(turn.get('assistant_reply'))}")
+            turn_type = turn.get("type")
+            if turn_type == "question":
+                options_text = ", ".join(
+                    f"{opt.get('label', '')}" for opt in (turn.get("options") or []) if isinstance(opt, dict)
+                )
+                lines.append(f"Assistant: [question] {_text(turn.get('question'))}")
+                if options_text:
+                    lines.append(f"  Options: {options_text}")
+            else:
+                lines.append(f"Assistant: {_assistant_tools(turn)}{_text(turn.get('assistant_reply'))}")
     return "\n".join(lines)
 
 
@@ -186,7 +202,7 @@ def render_available_tools() -> str:
     return """=== 4. Available Tools（可用工具） ===
 
 1. read
-作用：读取当前剪辑业务事实。它是 Agent 的显微镜，用于从骨架上下文进入局部细节。
+作用：读取当前剪辑业务事实和系统信息。它是 Agent 的显微镜，用于从骨架上下文进入局部细节。
 什么时候调用：需要知道 Storyline（故事线）、Scene（场景）里的 Shot（镜头）、Shot（镜头）的时间切口、Clip（片段）的画面描述或标签时。
 什么时候不要调用：当前 Prompt（提示词）骨架已经足够做最终回复，或只是需要找新素材时。
 Input:
@@ -197,7 +213,7 @@ Input:
 target_id 规则：draft_tree/storyline 传 "root"；scene/shot/clip 传真实 ID。
 
 2. retrieve
-作用：通过文本 Query（查询）在素材池中召回候选 Clip（片段）。它只负责高召回初筛，不负责判断哪个最好。
+作用：基于多模态向量检索技术，通过文本 Query（查询）在素材池中召回候选 Clip（片段）。它只负责高召回初筛，不负责判断哪个最好。
 什么时候调用：用户要替换、补充或寻找某类画面，而当前已知 Clip（片段）不足以决策时。
 什么时候不要调用：已经有明确 clip_id 需要观察时；需要最终选择、排序或剪辑时。
 Input:
@@ -212,7 +228,7 @@ Input:
 Input:
 {
   "clip_id": "string",
-  "inspection_goal": "string"
+  "inspection_goal": "string" //给VLM的提示词，详细描述需要观察的内容和关注点，可以是一个或多个具体问题。
 }
 
 4. patch
@@ -253,10 +269,16 @@ def render_strict_json_output_contract() -> str:
 必须只输出一个合法 JSON 对象，不要输出 Markdown、代码围栏、解释文本或字符串化 JSON。
 
 interface PlannerDecision {
-  status: "requires_tool" | "final";
+  status: "requires_tool" | "final" | "ask_user";
   tool_name: "read" | "retrieve" | "inspect" | "patch" | "preview" | null;
   tool_input: object | null;
   assistant_reply: string | null;
+  question: {
+    question: string;
+    options: [{id: string; label: string; description: string | null}];
+    allow_custom: boolean;
+    context_brief: string | null;
+  } | null;
   current_focus: {
     target_type: "project" | "scene" | "shot" | "clip";
     target_id: string;
@@ -264,10 +286,15 @@ interface PlannerDecision {
 }
 
 规则：
-- status 是 "requires_tool" 时，tool_name 必须是一个工具名，tool_input 必须是对应工具输入，assistant_reply 必须是 null。
-- status 是 "final" 时，tool_name 必须是 null，tool_input 必须是 null，assistant_reply 必须是中文用户回复。
+- status 是 "requires_tool" 时，tool_name 必须是一个工具名，tool_input 必须是对应工具输入，assistant_reply 必须是 null，question 必须是 null。
+- status 是 "final" 时，tool_name 必须是 null，tool_input 必须是 null，question 必须是 null，assistant_reply 必须是中文用户回复。
+- status 是 "ask_user" 时，tool_name 必须是 null，tool_input 必须是 null，assistant_reply 必须是 null，question 必须包含：
+    question: 用中文提出的明确问题
+    options: 2-4 个选项，每个包含 id/label/description
+    allow_custom: 是否允许用户自定义回答
+    context_brief: 简短说明当前上下文和目标
 - current_focus 始终必填。无具体对象时使用 {"target_type":"project","target_id":"project"}。
-- 每轮只能请求一个工具。"""
+- 每轮只能请求一个工具或提出一个问题。"""
 
 
 def build_agent_prompt(

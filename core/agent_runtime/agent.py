@@ -359,11 +359,47 @@ def _validate_planner_decision(
                     "draft_version": draft.version,
                 },
             )
+    if decision.status == "ask_user":
+        question = decision.question
+        if question is None:
+            raise CoreApiError(
+                status_code=502,
+                code="PLANNER_DECISION_INVALID",
+                message="Planner requested ask_user without a question.",
+                details={"iteration": iteration, "draft_version": draft.version},
+            )
+        if not question.question.strip():
+            raise CoreApiError(
+                status_code=502,
+                code="PLANNER_DECISION_INVALID",
+                message="ask_user question text is required.",
+                details={"iteration": iteration, "draft_version": draft.version},
+            )
+        option_count = len(question.options)
+        if option_count < 2 or option_count > 4:
+            raise CoreApiError(
+                status_code=502,
+                code="PLANNER_DECISION_INVALID",
+                message="ask_user must have 2-4 options.",
+                details={"iteration": iteration, "option_count": option_count},
+            )
+        option_ids = {option.id for option in question.options}
+        if len(option_ids) != option_count:
+            raise CoreApiError(
+                status_code=502,
+                code="PLANNER_DECISION_INVALID",
+                message="ask_user option ids must be unique.",
+                details={"iteration": iteration},
+            )
     return decision
 
 
 def _should_continue_agent_loop(*, decision: PlannerDecisionModel) -> bool:
     return decision.status == "requires_tool"
+
+
+def _should_wait_for_user(*, decision: PlannerDecisionModel) -> bool:
+    return decision.status == "ask_user"
 
 
 def _build_tool_call_or_raise(decision: PlannerDecisionModel) -> ToolCallModel:
@@ -1032,10 +1068,34 @@ async def _run_chat_agent_loop(
                     "status": decision.status,
                     "tool_name": decision.tool_name,
                     "assistant_reply": decision.assistant_reply,
+                    "question": decision.question.model_dump() if decision.question else None,
                     "current_focus": decision.current_focus.model_dump(),
                 },
             )
         )
+        if _should_wait_for_user(decision=decision):
+            current_runtime_state["execution_state"].update(
+                {
+                    "agent_run_state": "waiting_user",
+                    "updated_at": _now_iso(),
+                }
+            )
+            current_runtime_state["updated_at"] = _now_iso()
+            agent_steps.append(
+                await _emit_agent_progress(
+                    project_id,
+                    phase="ask_user_requested",
+                    summary="Planner is waiting for user input.",
+                    details={"iteration": iteration, "question": decision.question.model_dump() if decision.question else {}},
+                )
+            )
+            return AgentLoopResultModel(
+                final_decision=decision,
+                draft=current_draft,
+                observations=observations,
+                runtime_state=ProjectRuntimeState.model_validate(current_runtime_state),
+                agent_steps=agent_steps,
+            )
         if not _should_continue_agent_loop(decision=decision):
             current_runtime_state["execution_state"].update(
                 {

@@ -12,12 +12,12 @@ AssetVectorIndexState = Literal["none", "active", "inactive"]
 AssetType = Literal["video", "audio"]
 TaskSlot = Literal["media", "agent", "preview", "export"]
 TaskType = Literal["ingest", "index", "chat", "render"]
-TaskStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
+TaskStatus = Literal["queued", "running", "succeeded", "failed", "cancelled", "paused"]
 EditDraftStatus = Literal["draft", "ready", "rendering", "failed"]
 LockedShotField = Literal["source_range", "order", "clip_id", "enabled"]
 LockedSceneField = Literal["shot_ids", "order", "enabled", "intent"]
 DecisionType = Literal["EDIT_DRAFT_PATCH"]
-PlannerDecisionStatus = Literal["final", "requires_tool"]
+PlannerDecisionStatus = Literal["final", "requires_tool", "ask_user"]
 ToolName = Literal["read", "retrieve", "inspect", "patch", "preview"]
 ReadTargetType = Literal["draft_tree", "storyline", "scene", "shot", "clip"]
 PatchOperationType = Literal["insert_shot", "replace_shot", "delete_shot"]
@@ -215,7 +215,39 @@ class AssistantDecisionTurnModel(BaseModel):
     agent_steps: list[dict[str, Any]] = Field(default_factory=list)
 
 
-ChatTurnModel = UserTurnModel | AssistantDecisionTurnModel
+class AgentQuestionOptionModel(BaseModel):
+    id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    description: str | None = None
+
+
+class AgentQuestionModel(BaseModel):
+    id: str
+    question: str = Field(min_length=1)
+    options: list[AgentQuestionOptionModel] = Field(min_length=2, max_length=4)
+    allow_custom: bool = True
+    context_brief: str | None = None
+
+
+class AgentAskTurnModel(BaseModel):
+    id: str
+    role: Literal["assistant"]
+    type: Literal["question"]
+    question: str
+    options: list[dict[str, Any]]
+    context_brief: str | None = None
+
+
+class UserAnswerTurnModel(BaseModel):
+    id: str
+    role: Literal["user"]
+    type: Literal["answer"]
+    question_id: str
+    selected_option_id: str | None = None
+    custom_answer: str | None = None
+
+
+ChatTurnModel = UserTurnModel | AssistantDecisionTurnModel | AgentAskTurnModel | UserAnswerTurnModel
 
 
 class ProjectMediaSummary(BaseModel):
@@ -379,6 +411,7 @@ class PlannerDecisionModel(BaseModel):
     tool_name: str | None = None
     tool_input: dict[str, Any] | None = None
     assistant_reply: str | None = None
+    question: AgentQuestionModel | None = None
     current_focus: PlannerFocusModel
 
     @model_validator(mode="after")
@@ -390,11 +423,25 @@ class PlannerDecisionModel(BaseModel):
                 raise ValueError("tool_input is required when status is requires_tool")
             if self.assistant_reply is not None:
                 raise ValueError("assistant_reply must be null when status is requires_tool")
+            if self.question is not None:
+                raise ValueError("question must be null when status is requires_tool")
+            return self
+        if self.status == "ask_user":
+            if self.tool_name is not None:
+                raise ValueError("tool_name must be null when status is ask_user")
+            if self.tool_input is not None:
+                raise ValueError("tool_input must be null when status is ask_user")
+            if self.assistant_reply is not None:
+                raise ValueError("assistant_reply must be null when status is ask_user")
+            if self.question is None:
+                raise ValueError("question is required when status is ask_user")
             return self
         if self.tool_name is not None:
             raise ValueError("tool_name must be null when status is final")
         if self.tool_input is not None:
             raise ValueError("tool_input must be null when status is final")
+        if self.question is not None:
+            raise ValueError("question must be null when status is final")
         if not (self.assistant_reply or "").strip():
             raise ValueError("assistant_reply is required when status is final")
         return self
