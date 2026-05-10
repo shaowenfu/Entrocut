@@ -283,6 +283,12 @@ class LocalStateRepository:
             connection.execute("DELETE FROM projects")
             connection.commit()
 
+    def delete_project_records(self, project_id: str) -> None:
+        """Delete a project and all related records (CASCADE handles child tables)."""
+        with self._connect() as connection:
+            connection.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+            connection.commit()
+
     def upsert_task(self, project_id: str, task: dict[str, Any]) -> None:
         with self._connect() as connection:
             self._upsert_task(connection, project_id, task)

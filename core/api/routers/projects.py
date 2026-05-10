@@ -113,6 +113,11 @@ async def clear_chat_turns(project_id: str) -> GetWorkspaceResponse:
     return GetWorkspaceResponse(workspace=workspace)
 
 
+@router.delete("/api/v1/projects/{project_id}", status_code=204)
+async def delete_project(project_id: str) -> None:
+    await store.delete_project(project_id)
+
+
 @router.post("/api/v1/projects/{project_id}/export", response_model=TaskResponse)
 async def export_project(project_id: str, payload: ExportRequest) -> TaskResponse:
     task = await store.queue_export(project_id, payload)

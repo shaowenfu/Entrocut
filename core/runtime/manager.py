@@ -35,6 +35,11 @@ class WorkspaceManager:
         normalized_suffix = (suffix or "json").strip().lower() or "json"
         return self.project_subdir(project_id, "preview") / f"{project_id}_preview.{normalized_suffix}"
 
+    def delete_project_workspace(self, project_id: str) -> None:
+        workspace_dir = project_workspace_dir(project_id, self.app_data_root)
+        if workspace_dir.exists():
+            shutil.rmtree(workspace_dir)
+
     def clear_all_project_workspaces(self) -> None:
         projects_root = self.app_data_root / "projects"
         if projects_root.exists():

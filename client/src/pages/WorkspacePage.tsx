@@ -1111,40 +1111,34 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !selectedPreviewSource) {
-      return;
-    }
-    const clipStartSec = selectedClip ? parseClipTimeSeconds(selectedClip.start) : 0;
-    video.currentTime = clipStartSec;
-    setCurrentTimeSec(0);
-    if (isPlaying) {
-      void video.play().catch(() => {
-        setIsPlaying(false);
-      });
-    } else {
-      video.pause();
-    }
-  }, [isPlaying, selectedClip, selectedPreviewSource]);
-
-  useEffect(() => {
-    const video = videoRef.current;
     if (!video) {
       return;
     }
 
+    let rafId: number | null = null;
+
+    // Reset playback position when preview source changes
+    const clipStartSec = selectedClip ? parseClipTimeSeconds(selectedClip.start) : 0;
+    video.currentTime = clipStartSec;
+    setCurrentTimeSec(0);
+
     const handleTimeUpdate = () => {
-      const clipStartSec = selectedClip ? parseClipTimeSeconds(selectedClip.start) : 0;
-      const clipEndSec = selectedClip ? parseClipTimeSeconds(selectedClip.end) : Number.POSITIVE_INFINITY;
-      setCurrentTimeSec(Math.max(0, video.currentTime - clipStartSec));
-      if (video.currentTime >= clipEndSec) {
-        video.pause();
-        setIsPlaying(false);
-      }
+      if (rafId !== null) return; // 上一帧未处理完则跳过
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        const _clipStartSec = selectedClip ? parseClipTimeSeconds(selectedClip.start) : 0;
+        const clipEndSec = selectedClip ? parseClipTimeSeconds(selectedClip.end) : Number.POSITIVE_INFINITY;
+        setCurrentTimeSec(Math.max(0, video.currentTime - _clipStartSec));
+        if (video.currentTime >= clipEndSec) {
+          video.pause();
+          // pause 事件会触发 handlePause → setIsPlaying(false)
+        }
+      });
     };
 
     const handleLoadedMetadata = () => {
-      const clipStartSec = selectedClip ? parseClipTimeSeconds(selectedClip.start) : 0;
-      video.currentTime = clipStartSec;
+      const _clipStartSec = selectedClip ? parseClipTimeSeconds(selectedClip.start) : 0;
+      video.currentTime = _clipStartSec;
       setCurrentTimeSec(0);
     };
 
@@ -1165,6 +1159,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     video.addEventListener("pause", handlePause);
 
     return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
       video.removeEventListener("timeupdate", handleTimeUpdate);
       video.removeEventListener("loadedmetadata", handleLoadedMetadata);
       video.removeEventListener("ended", handleEnded);
@@ -1273,9 +1268,6 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
   }
 
   function handleTogglePlay() {
-    if (chatState === "responding" || isMediaProcessing) {
-      return;
-    }
     const video = videoRef.current;
     if (!video || !selectedPreviewSource) {
       return;
@@ -1286,9 +1278,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
         video.currentTime = clipStartSec;
         setCurrentTimeSec(0);
       }
-      void video.play().catch(() => {
-        setIsPlaying(false);
-      });
+      void video.play().catch(() => {});
       return;
     }
     video.pause();
@@ -1332,7 +1322,9 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     void index;
     setPreviewSelection({ kind: "scene", sceneId });
     setCurrentTimeSec(0);
-    setIsPlaying(true);
+    requestAnimationFrame(() => {
+      videoRef.current?.play().catch(() => {});
+    });
   }
 
   function handleAgentClipSelect(clipId: string) {
@@ -1344,7 +1336,9 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     setClipAssetFilterId(clip.assetId);
     setPreviewSelection({ kind: "clip", clipId });
     setCurrentTimeSec(0);
-    setIsPlaying(true);
+    requestAnimationFrame(() => {
+      videoRef.current?.play().catch(() => {});
+    });
     window.setTimeout(() => {
       const clipCard = clipCardRefs.current[clipId];
       clipCard?.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -1361,7 +1355,12 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
     }
     setPreviewSelection({ kind: "asset", assetId: asset.id });
     setCurrentTimeSec(0);
-    setIsPlaying(!sourceMissing);
+    if (!sourceMissing) {
+      // 等待下一帧 video 元素挂载后 play
+      requestAnimationFrame(() => {
+        videoRef.current?.play().catch(() => {});
+      });
+    }
     if (options.viewClips) {
       setClipAssetFilterId(asset.id);
       setMediaTab("clips");
@@ -1942,14 +1941,18 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                       onClick={() => {
                         setPreviewSelection({ kind: "clip", clipId: clip.id });
                         setCurrentTimeSec(0);
-                        setIsPlaying(true);
+                        requestAnimationFrame(() => {
+                          videoRef.current?.play().catch(() => {});
+                        });
                       }}
                       onKeyDown={(event) => {
                         if (event.key === "Enter" || event.key === " ") {
                           event.preventDefault();
                           setPreviewSelection({ kind: "clip", clipId: clip.id });
                           setCurrentTimeSec(0);
-                          setIsPlaying(true);
+                          requestAnimationFrame(() => {
+                            videoRef.current?.play().catch(() => {});
+                          });
                         }
                       }}
                     >
@@ -2203,7 +2206,7 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
           <div className="preview-panel">
             <div className="preview-frame">
               <div className="preview-layer" />
-              {isThinking || isMediaProcessing || isLoadingWorkspace ? (
+              {isLoadingWorkspace ? (
                 <div className="preview-center">
                   <Loader2 size={32} />
                   <span>RENDERING PIPELINE</span>
@@ -2234,13 +2237,13 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
                 </div>
               )}
               <div className="timecode">{formatTimecode(currentTimeSec)}</div>
-              {!isThinking && !isMediaProcessing && !isLoadingWorkspace ? (
+              {!isLoadingWorkspace ? (
                 <div className="preview-meta">
                   <strong>{previewTitle} {selectedPreviewSource?.kind === "draft" ? "(Draft Preview)" : "(Source Media)"}</strong>
                   <span>{previewSubtitle ?? "Select an asset, clip, or storyboard scene to preview."}</span>
                 </div>
               ) : null}
-              {!isThinking && !isMediaProcessing && !isLoadingWorkspace && clipThumbnailUrl ? (
+              {!isLoadingWorkspace && clipThumbnailUrl ? (
                 <div className="preview-thumbnail-chip">
                   <img src={clipThumbnailUrl} alt={previewTitle} />
                 </div>

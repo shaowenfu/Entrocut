@@ -400,7 +400,7 @@ class InMemoryProjectStore:
         active_tasks = [
             task
             for task in record.get("active_tasks", [])
-            if task.get("status") in {"queued", "running"}
+            if task.get("status") in {"queued", "running", "paused"}
         ]
         active_tasks.sort(key=self._task_priority)
         record["active_tasks"] = active_tasks
@@ -409,7 +409,7 @@ class InMemoryProjectStore:
     def _upsert_active_task(self, record: dict[str, Any], task: TaskModel | dict[str, Any]) -> dict[str, Any]:
         normalized_task = TaskModel.model_validate(task).model_dump()
         active_tasks = [item for item in record.get("active_tasks", []) if item.get("id") != normalized_task["id"]]
-        if normalized_task["status"] in {"queued", "running"}:
+        if normalized_task["status"] in {"queued", "running", "paused"}:
             active_tasks.append(normalized_task)
         record["active_tasks"] = active_tasks
         self._sync_active_task_compat(record)
@@ -730,6 +730,24 @@ class InMemoryProjectStore:
             subscribers = self._subscribers.get(project_id)
             if subscribers is not None:
                 subscribers.discard(queue)
+
+    async def delete_project(self, project_id: str) -> None:
+        # 404 check
+        self.get_project_or_raise(project_id)
+
+        # Cancel any running background tasks for this project
+        tasks = self._background_tasks.pop(project_id, set())
+        for task in tasks:
+            task.cancel()
+
+        # Clean memory state under lock
+        async with self._lock:
+            self._projects.pop(project_id, None)
+            self._subscribers.pop(project_id, None)
+
+        # Clean persistence and disk
+        self._repository.delete_project_records(project_id)
+        self._workspace_manager.delete_project_workspace(project_id)
 
     def reset_for_test(self) -> None:
         self._projects.clear()
@@ -1595,6 +1613,63 @@ class InMemoryProjectStore:
             {"task": succeeded_task},
         )
 
+    async def _finalize_chat_ask_user(
+        self,
+        *,
+        project_id: str,
+        running_task: TaskModel,
+        decision: Any,
+        next_draft: EditDraftModel,
+        next_runtime_state: dict[str, Any],
+        agent_steps: list[dict[str, Any]],
+    ) -> None:
+        from contracts import AgentAskTurnModel
+
+        record = self.get_project_or_raise(project_id)
+        self._ensure_record_defaults(record)
+        record["edit_draft"] = next_draft.model_dump()
+        next_runtime_state["execution_state"].update(
+            {
+                "agent_run_state": "waiting_user",
+                "current_task_id": None,
+                "updated_at": next_draft.updated_at,
+            }
+        )
+        next_runtime_state["updated_at"] = next_draft.updated_at
+        record["runtime_state"] = ProjectRuntimeState.model_validate(next_runtime_state).model_dump()
+        record["project"]["updated_at"] = next_draft.updated_at
+        record["summary_state"] = self._derive_summary_state(record)
+
+        question = decision.question
+        ask_turn = AgentAskTurnModel(
+            id=_entity_id("turn"),
+            role="assistant",
+            type="question",
+            question=question.question,
+            options=[option.model_dump() for option in question.options],
+            context_brief=question.context_brief,
+        )
+        record["chat_turns"].append(ask_turn.model_dump())
+
+        await self.emit(project_id, "chat.turn.created", {"turn": ask_turn.model_dump()})
+        await self.emit(
+            project_id,
+            "agent.question.created",
+            {"question": question.model_dump()},
+        )
+        await self.emit(project_id, "edit_draft.updated", {"edit_draft": next_draft.model_dump()})
+        await self.emit(project_id, "project.updated", {"project": record["project"]})
+
+        paused = running_task.model_copy(
+            update={"status": "paused", "message": "Waiting for user input", "updated_at": _now_iso()}
+        )
+        paused_task = self._upsert_active_task(record, paused)
+        await self.emit(
+            project_id,
+            "task.updated",
+            {"task": paused_task},
+        )
+
     async def _run_chat(
         self,
         project_id: str,
@@ -1665,6 +1740,18 @@ class InMemoryProjectStore:
             decision = loop_result.final_decision
             next_draft = loop_result.draft
             next_runtime_state = loop_result.runtime_state.model_dump()
+
+            if decision.status == "ask_user":
+                await self._finalize_chat_ask_user(
+                    project_id=project_id,
+                    running_task=running,
+                    decision=decision,
+                    next_draft=next_draft,
+                    next_runtime_state=next_runtime_state,
+                    agent_steps=loop_result.agent_steps,
+                )
+                return
+
             reply_text = (decision.assistant_reply or "").strip()
             ops = [
                 AssistantDecisionOperationModel(

@@ -13,6 +13,7 @@ import {
   Plus,
   Search,
   Sparkles,
+  Trash2,
   X,
 } from "lucide-react";
 import AccountMenu from "../components/account/AccountMenu";
@@ -75,6 +76,7 @@ function LaunchpadPage() {
   const createEmptyProject = useLaunchpadStore((state) => state.createEmptyProject);
   const openWorkspace = useLaunchpadStore((state) => state.openWorkspace);
   const renameProject = useLaunchpadStore((state) => state.renameProject);
+  const deleteProject = useLaunchpadStore((state) => state.deleteProject);
   const clearLastError = useLaunchpadStore((state) => state.clearLastError);
 
   const isLoadingProjects = projectsLoadState === "loading";
@@ -396,6 +398,19 @@ function LaunchpadPage() {
                         title="Rename workspace"
                       >
                         <Pencil size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (window.confirm("Delete this workspace?")) {
+                            deleteProject(project.id);
+                          }
+                        }}
+                        aria-label="delete workspace"
+                        title="Delete workspace"
+                      >
+                        <Trash2 size={13} />
                       </button>
                     </div>
                   </div>

@@ -592,6 +592,14 @@ export async function clearProjectChatTurns(projectId: string): Promise<GetWorks
   });
 }
 
+// 删除完整项目及其所有数据。
+export async function deleteProject(projectId: string): Promise<void> {
+  await requestJson<void>(buildCoreUrl(`/api/v1/projects/${projectId}`), {
+    method: "DELETE",
+    authRequired: false,
+  });
+}
+
 // 把 server 登录态同步到本地 core。
 export async function syncCoreAuthSession(
   accessToken: string,

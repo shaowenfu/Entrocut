@@ -8,6 +8,7 @@ import {
 } from "../services/electronBridge";
 import {
   createProject,
+  deleteProject as deleteProjectApi,
   listProjects,
   toMediaReference,
   updateProject,
@@ -45,6 +46,7 @@ export type SystemStatus = "connecting" | "ready" | "error";
 export type CreateState = "idle" | "creating" | "failed";
 export type ImportState = "idle" | "picking_media" | "importing" | "failed";
 export type NavigationState = "idle" | "entering_workspace" | "failed";
+export type DeleteState = "idle" | "deleting" | "failed";
 
 interface StartLaunchInput extends MediaPickInput {
   prompt?: string;
@@ -74,6 +76,9 @@ type LaunchpadEvent =
   | { type: "NAVIGATION_STARTED" }
   | { type: "NAVIGATION_SUCCEEDED" }
   | { type: "NAVIGATION_FAILED"; error: LaunchpadError }
+  | { type: "PROJECT_DELETE_STARTED" }
+  | { type: "PROJECT_DELETE_SUCCEEDED"; projectId: string }
+  | { type: "PROJECT_DELETE_FAILED"; error: LaunchpadError }
   | { type: "CLEAR_ERROR" };
 
 interface LaunchpadState {
@@ -85,6 +90,7 @@ interface LaunchpadState {
   createState: CreateState;
   importState: ImportState;
   navigationState: NavigationState;
+  deleteState: DeleteState;
   lastError: LaunchpadError | null;
   fetchRecentProjects: () => Promise<void>;
   startWorkspaceFromLaunchpad: (input?: StartLaunchInput) => Promise<string | null>;
@@ -93,6 +99,7 @@ interface LaunchpadState {
   createEmptyProject: () => Promise<string>;
   createProjectFromPrompt: (prompt: string, folderPath?: string) => Promise<string>;
   renameProject: (projectId: string, title: string) => Promise<void>;
+  deleteProject: (projectId: string) => Promise<void>;
   openWorkspace: (project: ProjectMeta) => void;
   clearActiveWorkspace: () => void;
   clearLastError: () => void;
@@ -188,6 +195,7 @@ function reduceLaunchpadState(
     | "createState"
     | "importState"
     | "navigationState"
+    | "deleteState"
     | "lastError"
   >,
   event: LaunchpadEvent
@@ -290,6 +298,15 @@ function reduceLaunchpadState(
         navigationState: "failed",
         lastError: event.error,
       };
+    case "PROJECT_DELETE_STARTED":
+      return { deleteState: "deleting", lastError: null };
+    case "PROJECT_DELETE_SUCCEEDED":
+      return {
+        deleteState: "idle",
+        recentProjects: state.recentProjects.filter((p) => p.id !== event.projectId),
+      };
+    case "PROJECT_DELETE_FAILED":
+      return { deleteState: "failed", lastError: event.error };
     case "CLEAR_ERROR":
       return {
         lastError: null,
@@ -340,6 +357,7 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => {
     createState: "idle",
     importState: "idle",
     navigationState: "idle",
+    deleteState: "idle",
     lastError: null,
 
     fetchRecentProjects: async () => {
@@ -506,6 +524,19 @@ export const useLaunchpadStore = create<LaunchpadState>((set, get) => {
         dispatch({
           type: "PROJECT_RENAME_FAILED",
           error: toLaunchpadErrorFromUnknown(error, "CORE_REQUEST_FAILED", "rename_project_failed"),
+        });
+      }
+    },
+
+    deleteProject: async (projectId) => {
+      dispatch({ type: "PROJECT_DELETE_STARTED" });
+      try {
+        await deleteProjectApi(projectId);
+        dispatch({ type: "PROJECT_DELETE_SUCCEEDED", projectId });
+      } catch (error) {
+        dispatch({
+          type: "PROJECT_DELETE_FAILED",
+          error: toLaunchpadErrorFromUnknown(error, "CORE_REQUEST_FAILED", "delete_project_failed"),
         });
       }
     },
