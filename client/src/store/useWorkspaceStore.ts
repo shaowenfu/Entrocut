@@ -561,6 +561,20 @@ function appendTurn(turns: ChatTurn[], nextTurn: ChatTurn): ChatTurn[] {
   return [...turns, nextTurn];
 }
 
+function mergeChatTurns(
+  currentTurns: ChatTurn[],
+  snapshotTurns: CoreChatTurn[]
+): ChatTurn[] {
+  const base = mapTurns(snapshotTurns);
+  const baseIds = new Set(base.map((t) => t.id));
+  for (const turn of currentTurns) {
+    if (!baseIds.has(turn.id)) {
+      base.push(turn);
+    }
+  }
+  return base;
+}
+
 function findRunningTask(tasks: ActiveTask[], slot?: TaskSlot): ActiveTask | null {
   const match = tasks.find((task) => {
     if (task.status !== "queued" && task.status !== "running") {
@@ -766,8 +780,13 @@ function reduceWorkspaceState(
         eventStreamState: "disconnected",
       };
     case "WORKSPACE_SNAPSHOT_RECEIVED":
+      if (event.sequence <= state.lastEventSequence) {
+        return {};
+      }
+      const mapped = mapWorkspace(event.workspace);
       return {
-        ...mapWorkspace(event.workspace),
+        ...mapped,
+        chatTurns: mergeChatTurns(state.chatTurns, event.workspace.chat_turns),
         loadState: "ready",
         chatState: deriveChatState(mapActiveTasks(event.workspace.active_tasks), event.workspace.runtime_state),
         previewResult: event.workspace.preview_result ?? state.previewResult,

@@ -2096,12 +2096,16 @@ function WorkspacePage({ workspaceId, workspaceName, onBackLaunchpad }: Workspac
           <div className="chat-thread">
             {/* 1. Historical Turns */}
             {chatTurns.map((turn, index) => {
-              const finalizedSteps =
-                turn.role === "assistant"
-                  ? persistedAgentStepHistoryByAssistantId[turn.id] ??
-                    agentStepHistoryByAssistantId[turn.id] ??
-                    (index === chatTurns.length - 1 && isAgentRunFinalized ? visibleAgentSteps : [])
-                  : [];
+              const finalizedSteps = turn.role === "assistant"
+                ? (() => {
+                    const persisted = persistedAgentStepHistoryByAssistantId[turn.id];
+                    if (persisted && persisted.length > 0) return persisted;
+                    const captured = agentStepHistoryByAssistantId[turn.id];
+                    if (captured && captured.length > 0) return captured;
+                    if (index === chatTurns.length - 1 && isAgentRunFinalized) return visibleAgentSteps;
+                    return [];
+                  })()
+                : [];
 
               return (
                 <div key={turn.id} className="chat-turn-group">
