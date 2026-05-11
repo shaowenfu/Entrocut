@@ -19,6 +19,19 @@ def _shot_duration_ms(source_in_ms: int, source_out_ms: int) -> int:
     return max(0, int(source_out_ms) - int(source_in_ms))
 
 
+def _format_duration_ms(ms: int) -> str:
+    total_seconds = ms // 1000
+    minutes = total_seconds // 60
+    seconds = total_seconds % 60
+    return f"{ms}ms ({minutes}:{seconds:02d})"
+
+
+def _truncate(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "…"
+
+
 def _shots_by_id(draft: EditDraftModel) -> dict[str, Any]:
     return {shot.id: shot for shot in draft.shots}
 
@@ -71,6 +84,92 @@ def _storyline_rows(draft: EditDraftModel) -> list[str]:
     return rows
 
 
+def render_asset_clip_inventory(edit_draft: EditDraftModel) -> str:
+    lines = ["=== 2. Asset & Clip Inventory（素材与片段清单） ===", ""]
+
+    # --- 1. Asset Summary ---
+    lines.append("Asset Summary（素材摘要）:")
+    active_assets = [a for a in edit_draft.assets if a.lifecycle_state == "active"]
+    if not active_assets:
+        lines.append("  (no assets)")
+    else:
+        for asset in active_assets:
+            lines.append(
+                f"  - asset_id: {asset.id} | name: {asset.name} | type: {asset.type} | "
+                f"duration: {_format_duration_ms(asset.duration_ms)} | "
+                f"clips: {asset.indexed_clip_count}/{asset.clip_count} | "
+                f"stage: {asset.processing_stage}"
+            )
+    lines.append("")
+
+    # --- 2. Timeline Shot-to-Clip Mapping ---
+    clips_by_id = {c.id: c for c in edit_draft.clips}
+    shots_by_id = {s.id: s for s in edit_draft.shots}
+
+    lines.append("Timeline Shot-to-Clip Mapping（时间线镜头-片段映射）:")
+    if not edit_draft.scenes:
+        lines.append("  (no timeline)")
+    else:
+        scenes = sorted(edit_draft.scenes, key=lambda s: s.order)
+        for scene in scenes:
+            lines.append(f"  Scene: {scene.id} (order: {scene.order}) \"{_text(scene.label)}\"")
+            if not scene.shot_ids:
+                lines.append("    (no shots)")
+            else:
+                for shot_id in scene.shot_ids:
+                    shot = shots_by_id.get(shot_id)
+                    if shot is None:
+                        lines.append(f"    - shot_id: {shot_id} | (shot not found)")
+                        continue
+                    clip_exists = shot.clip_id in clips_by_id
+                    clip_id_display = shot.clip_id if clip_exists else f"{shot.clip_id} (not found in active clips)"
+                    shot_duration = _shot_duration_ms(shot.source_in_ms, shot.source_out_ms)
+                    lines.append(
+                        f"    - shot_id: {shot.id} | clip_id: {clip_id_display} | "
+                        f"source: {shot.source_in_ms}-{shot.source_out_ms}ms ({shot_duration // 1000}s) | "
+                        f"intent: {_text(shot.intent)}"
+                    )
+    lines.append("")
+
+    # --- 3. Unused Clip Pool ---
+    # Collect clip_ids that are referenced by shots AND exist in the clip list
+    referenced_clip_ids: set[str] = set()
+    for shot in edit_draft.shots:
+        if shot.clip_id in clips_by_id:
+            referenced_clip_ids.add(shot.clip_id)
+
+    unused_clips = [c for c in edit_draft.clips if c.id not in referenced_clip_ids]
+
+    lines.append("Unused Clip Pool（未使用片段池）:")
+    if not unused_clips:
+        lines.append("  (all clips are referenced by timeline shots)")
+    else:
+        # Group unused clips by asset
+        unused_by_asset: dict[str, list] = {}
+        for clip in unused_clips:
+            unused_by_asset.setdefault(clip.asset_id, []).append(clip)
+
+        active_assets_by_id = {a.id: a for a in active_assets}
+        for asset_id, clips_list in unused_by_asset.items():
+            asset = active_assets_by_id.get(asset_id)
+            asset_name = asset.name if asset else asset_id
+            lines.append(f"  Asset: {asset_id} \"{asset_name}\" ({len(clips_list)} clips)")
+            for clip in clips_list:
+                clip_duration = max(0, clip.source_end_ms - clip.source_start_ms)
+                tags = clip.semantic_tags[:4]
+                tags_str = json.dumps(tags, ensure_ascii=False)
+                desc = clip.visual_description or clip.visual_desc
+                visual = _truncate(desc, 80)
+                lines.append(
+                    f"    - clip_id: {clip.id} | "
+                    f"source: {clip.source_start_ms}-{clip.source_end_ms}ms ({clip_duration // 1000}s) | "
+                    f"tags: {tags_str} | "
+                    f"visual: {visual}"
+                )
+
+    return "\n".join(lines)
+
+
 def _assistant_tools(turn: dict[str, Any]) -> str:
     tools: list[str] = []
     for step in turn.get("agent_steps") or []:
@@ -113,7 +212,8 @@ def render_static_agent_prompt() -> str:
 8. 不要输出 Markdown（标记语言）。
 9. 不要输出解释性推理过程。
 10. 每轮只能请求一个 Tool（工具）或给出一个 final（最终）回复。
-11. 当你遇到需要用户品味判断、意图澄清或方向选择时，使用 ask_user 状态。向用户提出一个明确的用中文书写的问题，并给出 2-4 个具体选项。"""
+11. 当你遇到需要用户品味判断、意图澄清或方向选择时，使用 ask_user 状态。向用户提出一个明确的用中文书写的问题，并给出 2-4 个具体选项。
+12. 不要对同一个 Clip（片段）重复调用 inspect 或 read。若工具观察结果中已包含所需信息，直接基于已有信息做出 final 回复或调用其他工具。"""
 
 
 def render_system_context_and_global_state(
@@ -150,7 +250,7 @@ def render_system_context_and_global_state(
 
 def render_chat_history(chat_turns: list[ChatTurnModel | dict[str, Any]]) -> str:
     recent_turns = [_turn_to_dict(turn) for turn in chat_turns[-10:]]
-    lines = ["=== 2. Chat History（对话历史） ===", ""]
+    lines = ["=== 3. Chat History（对话历史） ===", ""]
     if not recent_turns:
         lines.append("暂无。")
         return "\n".join(lines)
@@ -180,7 +280,7 @@ def render_chat_history(chat_turns: list[ChatTurnModel | dict[str, Any]]) -> str
 
 
 def render_current_loop_observations(tool_observations: list[ToolObservationModel | dict[str, Any]]) -> str:
-    lines = ["=== 3. Current Loop Observations（当前循环观测） ===", ""]
+    lines = ["=== 4. Current Loop Observations（当前循环观测） ===", ""]
     if not tool_observations:
         lines.append("暂无。")
         return "\n".join(lines)
@@ -201,7 +301,7 @@ def render_current_loop_observations(tool_observations: list[ToolObservationMode
 
 
 def render_available_tools() -> str:
-    return """=== 4. Available Tools（可用工具） ===
+    return """=== 5. Available Tools（可用工具） ===
 
 1. read
 作用：读取当前剪辑业务事实和系统信息。它是 Agent 的显微镜，用于从骨架上下文进入局部细节。
@@ -266,7 +366,7 @@ Input:
 
 
 def render_strict_json_output_contract() -> str:
-    return """=== 5. Strict JSON Output（严格 JSON 输出） ===
+    return """=== 6. Strict JSON Output（严格 JSON 输出） ===
 
 必须只输出一个合法 JSON 对象，不要输出 Markdown、代码围栏、解释文本或字符串化 JSON。
 
@@ -316,6 +416,7 @@ def build_agent_prompt(
             selected_scene_id=selected_scene_id,
             selected_shot_id=selected_shot_id,
         ),
+        render_asset_clip_inventory(edit_draft),
         render_chat_history(chat_turns),
         render_current_loop_observations(tool_observations),
         render_available_tools(),

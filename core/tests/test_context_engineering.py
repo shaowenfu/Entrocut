@@ -82,10 +82,11 @@ class AgentPromptAssemblyTest(unittest.TestCase):
         )
 
         self.assertIn("=== 1. System Context & Global State", prompt)
-        self.assertIn("=== 2. Chat History", prompt)
-        self.assertIn("=== 3. Current Loop Observations", prompt)
-        self.assertIn("=== 4. Available Tools", prompt)
-        self.assertIn("=== 5. Strict JSON Output", prompt)
+        self.assertIn("=== 2. Asset & Clip Inventory", prompt)
+        self.assertIn("=== 3. Chat History", prompt)
+        self.assertIn("=== 4. Current Loop Observations", prompt)
+        self.assertIn("=== 5. Available Tools", prompt)
+        self.assertIn("=== 6. Strict JSON Output", prompt)
         self.assertIn("什么时候调用", prompt)
         self.assertIn("inspection_goal", prompt)
         self.assertIn("insert_shot", prompt)
@@ -102,7 +103,7 @@ class AgentPromptAssemblyTest(unittest.TestCase):
             selected_shot_id="shot_1",
         )
 
-        first_section = prompt.split("=== 2. Chat History", maxsplit=1)[0]
+        first_section = prompt.split("=== 2. Asset & Clip Inventory", maxsplit=1)[0]
         self.assertIn("scene_1", first_section)
         self.assertIn("shot_1", first_section)
         self.assertNotIn("blue ocean with open horizon", first_section)

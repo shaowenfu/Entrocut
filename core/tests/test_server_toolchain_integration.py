@@ -256,7 +256,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
             self.assertEqual(len(json["messages"]), 1)
             prompt_text = json["messages"][0]["content"]
             self.assertIn("=== 1. System Context & Global State", prompt_text)
-            self.assertIn("=== 4. Available Tools", prompt_text)
+            self.assertIn("=== 5. Available Tools", prompt_text)
             self.assertIn("什么时候调用", prompt_text)
             self.assertNotIn("Workspace Capability", prompt_text)
             self.assertNotIn("Tool Availability", prompt_text)
@@ -539,7 +539,7 @@ class CoreChatPlannerSkeletonTest(unittest.TestCase):
 
         prompt_text = captured_prompt["content"]
         self.assertIn("selected_scene_id: scene_focus_1", prompt_text)
-        self.assertIn("=== 4. Available Tools", prompt_text)
+        self.assertIn("=== 5. Available Tools", prompt_text)
         self.assertIn("什么时候调用", prompt_text)
         self.assertNotIn("planner_input", prompt_text)
         self.assertNotIn("Workspace Capability", prompt_text)
