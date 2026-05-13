@@ -61,7 +61,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: entrocut-${{ runner.os }}
-          path: client/release/**/*
+          path: |
+            client/release/*.AppImage
+            client/release/*.deb
+            client/release/*.dmg
+            client/release/*.exe
+            client/release/*.zip
+            client/release/*.blockmap
+            client/release/latest*.yml
 
   release:
     needs: build
