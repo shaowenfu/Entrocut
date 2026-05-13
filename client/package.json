@@ -1,7 +1,7 @@
 {
   "name": "entrocut-client",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Chat-to-Cut video editing agent",
   "author": {
     "name": "shaowenfu",

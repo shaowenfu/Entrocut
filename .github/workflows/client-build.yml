@@ -36,6 +36,17 @@ jobs:
         with:
           node-version: 22
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install core dependencies
+        working-directory: core
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
       - name: Install dependencies
         run: |
           node -e "const fs=require('fs'); const p='package-lock.json'; if(fs.existsSync(p)) fs.unlinkSync(p)"
